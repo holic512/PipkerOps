@@ -43,7 +43,8 @@ export function Applications() {
   const q = useQuery<AppData[]>("applications.list");
   const nodes = useQuery<NodeData[]>("nodes.list");
   const [show, setShow] = useState(false);
-  const [selected, setSelected] = useState<AppData | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = q.data?.find((a) => a.id === selectedId);
   const [view, setView] = useState<"cards" | "table">("cards");
   const op = useOperation(() => {
     void q.mutate();
@@ -64,7 +65,7 @@ export function Applications() {
         <Button
           onClick={() => {
             setShow(!show);
-            setSelected(null);
+            setSelectedId(null);
           }}
         >
           <Plus size={16} />
@@ -141,7 +142,7 @@ export function Applications() {
               <button
                 key={a.id}
                 className={`app-card ${selected?.id === a.id ? "app-selected" : ""}`}
-                onClick={() => setSelected(a)}
+                onClick={() => setSelectedId(a.id)}
               >
                 <div className="app-card-header">
                   <span className="app-symbol">
@@ -173,7 +174,7 @@ export function Applications() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => setSelected(a)}
+                    onClick={() => setSelectedId(a.id)}
                   >
                     管理实例
                   </Button>
@@ -199,7 +200,7 @@ export function Applications() {
                       id: selected.id,
                       confirmed: true,
                     });
-                    setSelected(null);
+                    setSelectedId(null);
                     return r;
                   },
                 )

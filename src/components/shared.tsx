@@ -197,8 +197,14 @@ export function useOperation(onSuccess?: () => void) {
   return {
     busy,
     run,
-    ask: (title: string, description: string, action: () => Promise<unknown>) =>
-      setConfirmation({ title, description, action }),
+    ask: (
+      title: string,
+      description: string,
+      action: () => Promise<unknown>,
+    ) => {
+      setFeedback(null);
+      setConfirmation({ title, description, action });
+    },
     feedback,
     clear: () => setFeedback(null),
     ui: (
@@ -209,6 +215,7 @@ export function useOperation(onSuccess?: () => void) {
           description={confirmation?.description ?? ""}
           open={!!confirmation}
           busy={busy}
+          error={feedback?.error ? feedback.message : undefined}
           onClose={() => setConfirmation(null)}
           onConfirm={() => {
             if (confirmation) void run(confirmation.action);

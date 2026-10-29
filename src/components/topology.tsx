@@ -3,21 +3,23 @@
  * @project PipkerOps
  * @module topology-ui
  * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 基于业务资源构建有向图，探针健康标记依赖；矩阵只显示真实探测结果。
+ * @logic 基于业务资源构建有向图，资源增减后适配画布；探针健康标记依赖，矩阵只显示真实探测结果。
  * @dependencies React Flow, RPC, shared UI
  * @index_tags topology, connectivity, ui
  * @author holic512
  */
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ReactFlow,
+  applyNodeChanges,
   Background,
   Controls,
   MiniMap,
   type Node,
   type Edge,
+  type ReactFlowInstance,
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -59,10 +61,11 @@ type GraphData = {
 export function Topology() {
   const q = useQuery<GraphData>("topology");
   const [tab, setTab] = useState("graph");
-  const [selected, setSelected] = useState<Node | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [show, setShow] = useState(false);
-  const [positions, setPositions] = useState<
-    Record<string, { x: number; y: number }>
+  const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
+  const [layout, setLayout] = useState<
+    Record<string, Pick<Node, "position" | "measured" | "selected">>
   >({});
   const op = useOperation(() => void q.mutate());
   const graph = useMemo(() => {
@@ -196,6 +199,14 @@ export function Topology() {
     });
     return { nodes, edges };
   }, [q.data]);
+  const resourceIds = graph.nodes
+    .map((n) => n.id)
+    .sort()
+    .join("|");
+  const selected = graph.nodes.find((n) => n.id === selectedId);
+  useEffect(() => {
+    void flow?.fitView();
+  }, [flow, resourceIds]);
   const targets = [...new Set(q.data?.probes.map((p) => p.target) ?? [])];
   return (
     <>
@@ -276,27 +287,41 @@ export function Topology() {
           <div className="topology-layout">
             <section className="topology-canvas">
               <ReactFlow
+                onInit={setFlow}
                 nodes={graph.nodes.map((n) => ({
                   ...n,
-                  position: positions[n.id] ?? n.position,
+                  ...layout[n.id],
                 }))}
                 onNodesChange={(changes) =>
-                  setPositions((previous) => {
-                    const next = { ...previous };
-                    for (const change of changes)
-                      if (change.type === "position" && change.position)
-                        next[change.id] = change.position;
-                    return next;
-                  })
+                  setLayout((previous) =>
+                    Object.fromEntries(
+                      applyNodeChanges(
+                        changes,
+                        graph.nodes.map((n) => ({ ...n, ...previous[n.id] })),
+                      ).map(({ id, position, measured, selected }) => [
+                        id,
+                        { position, measured, selected },
+                      ]),
+                    ),
+                  )
                 }
+                deleteKeyCode={null}
                 edges={graph.edges}
                 fitView
                 minZoom={0.2}
                 maxZoom={1.8}
                 nodesDraggable
-                onNodeClick={(_, node) => setSelected(node)}
-                onPaneClick={() => setSelected(null)}
+                nodesConnectable={false}
+                onNodeClick={(_, node) => setSelectedId(node.id)}
+                onPaneClick={() => setSelectedId(null)}
                 aria-label="应用与节点拓扑"
+                ariaLabelConfig={{
+                  "controls.ariaLabel": "拓扑视图操作",
+                  "controls.zoomIn.ariaLabel": "放大拓扑",
+                  "controls.zoomOut.ariaLabel": "缩小拓扑",
+                  "controls.fitView.ariaLabel": "适配全部资源",
+                  "controls.interactive.ariaLabel": "切换拓扑交互",
+                }}
               >
                 <Background color="#dce3eb" gap={24} />
                 <Controls />

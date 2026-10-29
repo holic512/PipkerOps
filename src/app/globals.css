@@ -1159,6 +1159,9 @@ td.inline-actions {
   padding: 17px !important;
   box-shadow: 0 3px 8px #1822300b !important;
 }
+.topology-canvas .react-flow__attribution a {
+  color: #526173;
+}
 .graph-healthy {
   border-color: #78b995 !important;
 }

@@ -7,6 +7,7 @@ export function ConfirmDialog({
   description,
   open,
   busy,
+  error,
   onConfirm,
   onClose,
 }: {
@@ -14,6 +15,7 @@ export function ConfirmDialog({
   description: string;
   open: boolean;
   busy: boolean;
+  error?: string;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -29,6 +31,11 @@ export function ConfirmDialog({
         <Dialog.Content className="dialog-content">
           <Dialog.Title>{title}</Dialog.Title>
           <Dialog.Description>{description}</Dialog.Description>
+          {error && (
+            <p role="alert" className="error-text">
+              {error}
+            </p>
+          )}
           <div className="dialog-actions">
             <Button variant="outline" onClick={onClose} disabled={busy}>
               取消
