@@ -2,7 +2,7 @@
  * @file contracts.ts
  * @project PipkerOps
  * @module business-contracts
- * @description Web/MCP 共享业务方法、输入校验与工具参数发现契约。
+ * @description Web/MCP 共享业务方法和输入校验，以及核心方法的JSON输出契约。
  * @logic 方法参数只维护一份；任务按类型公开对应payload，实际执行仍重查权限与持久资源。
  * @dependencies Zod, task specifications
  * @index_tags api, mcp, validation, contracts
@@ -295,3 +295,107 @@ export const mcpTaskInput = z.discriminatedUnion(
     ...(typeof taskVariants)[number][],
   ],
 );
+
+const wireDate = z.iso.datetime();
+const wireTask = z
+  .object({
+    id,
+    type: z.string(),
+    nodeId: z.string().nullable(),
+    status: z.enum([
+      "QUEUED",
+      "DISPATCHED",
+      "RUNNING",
+      "SUCCEEDED",
+      "FAILED",
+      "CANCELLED",
+      "UNKNOWN",
+    ]),
+    source: z.enum(["WEB", "MCP", "CRON", "SYSTEM"]),
+    payload: object,
+    result: object,
+    output: z.string().nullable(),
+    error: z.string().nullable(),
+    idempotent: z.boolean(),
+    attempts: z.number().int().nonnegative(),
+    maxAttempts: z.number().int().positive(),
+    createdAt: wireDate,
+    startedAt: wireDate.nullable(),
+    finishedAt: wireDate.nullable(),
+    logs: z
+      .array(
+        z
+          .object({
+            sequence: z.number().int().nonnegative(),
+            stream: z.string(),
+            message: z.string(),
+            createdAt: wireDate,
+          })
+          .passthrough(),
+      )
+      .optional(),
+  })
+  .passthrough();
+const wireNode = z
+  .object({
+    id,
+    name: z.string(),
+    hostname: z.string().nullable(),
+    status: z.enum(["PENDING", "APPROVED", "REJECTED", "REVOKED"]),
+    connected: z.boolean(),
+    lastSeenAt: wireDate.nullable(),
+    metrics: z.array(
+      z
+        .object({
+          recordedAt: wireDate,
+          cpuPercent: z.number(),
+          memoryPercent: z.number(),
+          payload: object,
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+const wireApplication = z
+  .object({
+    id,
+    name: z.string(),
+    description: z.string().nullable(),
+    labels: z.array(z.string()),
+    businessData: object,
+    deployments: z.array(
+      z
+        .object({
+          id,
+          applicationId: id,
+          nodeId: id,
+          name: z.string(),
+          type: z.string(),
+          target: z.string(),
+          status: z.string(),
+        })
+        .passthrough(),
+    ),
+    probes: z.array(
+      z
+        .object({
+          id,
+          name: z.string(),
+          status: z.string(),
+          enabled: z.boolean(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+
+/** Wire contracts after the shared business result's normal JSON serialization. */
+export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
+  "nodes.list": z.object({ data: z.array(wireNode) }),
+  "applications.list": z.object({ data: z.array(wireApplication) }),
+  "tasks.create": z.object({ data: wireTask }),
+  "tasks.get": z.object({
+    data: wireTask.extend({ logs: wireTask.shape.logs.unwrap() }),
+  }),
+  "tasks.list": z.object({ data: z.array(wireTask) }),
+};

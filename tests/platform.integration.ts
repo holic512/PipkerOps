@@ -673,6 +673,120 @@ test(
         arguments: { params: { nodeId, kind: "disk", hours: 1 } },
       });
       assert.equal(restrictedHistory.isError, true);
+      for (const name of [
+        "nodes_list",
+        "applications_list",
+        "tasks_create",
+        "tasks_get",
+        "tasks_list",
+      ]) {
+        assert.ok(
+          toolList.tools.find((tool) => tool.name === name)?.outputSchema,
+          `${name} output schema missing`,
+        );
+      }
+      assert.deepEqual(list.structuredContent, { data: [] });
+      const executionKey = await call<{ id: string; key: string }>(
+        cookie,
+        "keys.create",
+        {
+          name: run + "-workflow",
+          scopes: [
+            "nodes:read",
+            "apps:read",
+            "tasks:read",
+            "tasks:write",
+            "system:read",
+          ],
+          nodeIds: [nodeId],
+          days: 1,
+          confirmed: true,
+        },
+      );
+      keyIds.push(executionKey.id);
+      const workflow = new Client({
+        name: "pipkerops-structured-workflow",
+        version: "1.0.0",
+      });
+      await workflow.connect(
+        new StreamableHTTPClientTransport(new URL(origin + "/api/mcp"), {
+          requestInit: {
+            headers: { Authorization: `Bearer ${executionKey.key}` },
+          },
+        }),
+      );
+      try {
+        const resources = await workflow.callTool({
+          name: "nodes_list",
+          arguments: { params: {} },
+        });
+        assert.equal(resources.isError, undefined);
+        const discovered = (resources.structuredContent as { data: NodeData[] })
+          .data;
+        assert.equal(discovered.length, 1);
+        assert.equal(discovered[0].id, nodeId);
+        const applications = await workflow.callTool({
+          name: "applications_list",
+          arguments: { params: {} },
+        });
+        assert.equal(applications.isError, undefined);
+        assert.ok(
+          (
+            applications.structuredContent as { data: { id: string }[] }
+          ).data.some((a) => a.id === appId),
+        );
+        const queued = await workflow.callTool({
+          name: "tasks_create",
+          arguments: {
+            params: {
+              type: "system.info",
+              nodeId: discovered[0].id,
+              payload: {},
+            },
+          },
+        });
+        assert.equal(queued.isError, undefined);
+        const created = (queued.structuredContent as { data: TaskData }).data;
+        assert.ok(created.id);
+        assert.equal(created.nodeId, nodeId);
+        assert.equal(created.source, "MCP");
+        const completed = await waitFor(
+          async () => {
+            const result = await workflow.callTool({
+              name: "tasks_get",
+              arguments: { params: { id: created.id } },
+            });
+            assert.equal(result.isError, undefined);
+            const structured = (result.structuredContent as { data: TaskData })
+              .data;
+            assert.deepEqual(
+              JSON.parse((result.content as { text: string }[])[0].text),
+              structured,
+            );
+            return structured;
+          },
+          (task) => ["SUCCEEDED", "FAILED", "UNKNOWN"].includes(task.status),
+          "standard MCP structured workflow",
+        );
+        assert.equal(completed.status, "SUCCEEDED");
+        assert.ok(completed.finishedAt && completed.result.os);
+        assert.ok(Array.isArray(completed.logs));
+        await call(cookie, "keys.revoke", {
+          id: executionKey.id,
+          confirmed: true,
+        });
+        await assert.rejects(() =>
+          workflow.callTool({
+            name: "tasks_get",
+            arguments: { params: { id: created.id } },
+          }),
+        );
+      } finally {
+        await workflow.close();
+      }
+      console.log(
+        "Verified standard MCP structured resource query, application query, task creation/result/log tracking and key revocation",
+      );
       await call(cookie, "keys.revoke", { id: key.id, confirmed: true });
       await assert.rejects(() =>
         mcp.callTool({ name: "nodes_list", arguments: { params: {} } }),

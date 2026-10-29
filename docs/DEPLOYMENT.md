@@ -136,3 +136,5 @@ CAPACITY_NODES=50 npm run test:capacity
 设备长期历史增量迁移 `202610290006_device_hourly` 已在隔离PGlite、一次性PostgreSQL17及当前环境配置的数据库执行成功。迁移只新增设备小时表/水位并替换函数，历史回填与清理由后续例行维护事务执行。升级Agent后才有可证明连续性的网络/IO身份；旧采样的长期计数速率保留缺口。当前36项测试、schema校验及生产构建通过，独立数据库5项并发/设备SQL检查通过。
 
 设备身份与长查询真实Linux复验：本轮Agent从sysfs返回非空网络身份，节点7天磁盘历史在维护前即可返回真实原始尾部；容器、Compose、拓扑、PTY和任务对账路径同时回归通过。
+
+最新平台/MCP联调约79秒通过：真实本机Agent注册/审批/mTLS/证书轮换、任务结果、探针/计划权限及撤销；标准SDK检查五个核心工具outputSchema，执行节点/应用查询→system.info任务→tasks_get结果/日志，核对structuredContent.data与原文本一致，并验证执行Key吊销拒绝访问。客户端没有使用自建MCP替代实现。

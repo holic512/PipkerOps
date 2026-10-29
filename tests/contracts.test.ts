@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
-import { methodSchemas, mcpTaskInput } from "../src/lib/services/contracts";
+import {
+  methodSchemas,
+  mcpTaskInput,
+  methodOutputSchemas,
+} from "../src/lib/services/contracts";
 import { execute } from "../src/lib/services/platform";
 import { validateTask } from "../src/lib/services/tasks";
 
@@ -66,4 +70,63 @@ test("未知和继承原型的方法名明确拒绝，不进入数据库", async
       status: 404,
     });
   }
+});
+
+test("核心输出Schema公开任务状态、结果与日志约束且拒绝缺失字段", () => {
+  for (const method of [
+    "nodes.list",
+    "applications.list",
+    "tasks.list",
+  ] as const) {
+    assert.equal(
+      methodOutputSchemas[method]!.safeParse({ data: [] }).success,
+      true,
+    );
+    assert.equal(
+      methodOutputSchemas[method]!.safeParse({ data: {} }).success,
+      false,
+    );
+  }
+  const schema = methodOutputSchemas["tasks.get"]!;
+  assert.equal(
+    schema.safeParse({ data: { id: "missing-state" } }).success,
+    false,
+  );
+  const task = {
+    id: "task",
+    type: "system.info",
+    nodeId: "node",
+    status: "SUCCEEDED",
+    source: "MCP",
+    payload: {},
+    result: { os: "linux" },
+    output: null,
+    error: null,
+    idempotent: true,
+    attempts: 1,
+    maxAttempts: 3,
+    createdAt: "2026-10-29T12:00:00.000Z",
+    startedAt: null,
+    finishedAt: "2026-10-29T12:00:01.000Z",
+    logs: [],
+  };
+  assert.equal(schema.safeParse({ data: task }).success, true);
+  assert.equal(
+    schema.safeParse({ data: { ...task, status: "DONE" } }).success,
+    false,
+  );
+  assert.equal(
+    schema.safeParse({ data: { ...task, createdAt: "not-a-date" } }).success,
+    false,
+  );
+  assert.equal(
+    schema.safeParse({ data: { ...task, logs: [{ sequence: -1 }] } }).success,
+    false,
+  );
+  const json = JSON.stringify(z.toJSONSchema(schema));
+  assert.ok(
+    json.includes('"UNKNOWN"') &&
+      json.includes('"result"') &&
+      json.includes('"logs"'),
+  );
 });

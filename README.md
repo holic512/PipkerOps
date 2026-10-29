@@ -46,7 +46,7 @@ cd agent && go test ./...
 
 ## API 与任务
 
-Web 使用 `POST /api/rpc`，请求格式为 `{ "method":"nodes.list", "params":{} }`。MCP 使用 `/api/mcp` 的无状态 Streamable HTTP；工具名将方法名的 `.` 换成 `_`，参数放在 `params` 中。
+Web 使用 `POST /api/rpc`，请求格式为 `{ "method":"nodes.list", "params":{} }`。MCP 使用 `/api/mcp` 的无状态 Streamable HTTP；工具名将方法名的 `.` 换成 `_`，参数放在 `params` 中。节点/应用列表及任务创建、详情、列表同时公开输出 Schema 与 `structuredContent.data`，保留原 JSON 文本兼容。
 
 独立 API Key 使用 `Authorization: Bearer ...`。服务端统一校验角色、scope、节点范围及高危操作许可。空节点列表表示无节点权限，`["*"]` 表示全部节点。
 

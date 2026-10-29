@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module mcp-server
  * @description 通过标准 Streamable HTTP 向 AI 开放平台业务接口。
- * @logic 每次请求重新验证独立 API Key，所有工具调用复用 Web 同一授权/业务服务。
+ * @logic 每次请求重新验证独立 API Key，所有工具调用复用 Web 同一授权/业务服务；核心查询与任务输出公开结构化契约并保留文本兼容。
  * @dependencies MCP SDK, Zod, shared platform services
  * @index_tags mcp, tools, api-keys
  * @author holic512
@@ -18,6 +18,7 @@ import {
   mutation,
   methodSchemas,
   mcpTaskInput,
+  methodOutputSchemas,
 } from "@/lib/services/contracts";
 import { errorResponse } from "@/lib/http";
 import { appOrigin } from "@/lib/config";
@@ -43,6 +44,9 @@ export async function POST(request: Request) {
             params:
               method === "tasks.create" ? mcpTaskInput : methodSchemas[method],
           },
+          ...(methodOutputSchemas[method]
+            ? { outputSchema: methodOutputSchemas[method]!.shape }
+            : {}),
           annotations: {
             readOnlyHint: !mutation(method),
             destructiveHint: mutation(method),
@@ -53,8 +57,12 @@ export async function POST(request: Request) {
         async ({ params }) => {
           try {
             const data = await execute(actor, method, params);
+            const text = JSON.stringify(data);
             return {
-              content: [{ type: "text" as const, text: JSON.stringify(data) }],
+              content: [{ type: "text" as const, text }],
+              ...(methodOutputSchemas[method]
+                ? { structuredContent: { data: JSON.parse(text) } }
+                : {}),
             };
           } catch (e) {
             return {

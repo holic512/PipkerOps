@@ -89,3 +89,9 @@ Nginx 上游仅在同代理节点发起的已启用 HTTP 探针中，找到唯�
 systemd 周期采样新增 `payload.services`，仅包含已加载的服务单元 `{name,active,sub}`，最多200项，约3秒命令超时；不读取服务环境或命令。拓扑按同节点完整单元名匹配 systemd 部署并共用顶点，只显示关联服务；不将 `nginx` 猜测为 `nginx.service`。非 systemd 主机返回空集，采集失败保留 collectionErrors。
 
 设备长期接口不对缺采样补零；任一计数重置、身份变化或断采样会令对应长期桶返回null。旧Agent无设备身份时，网络/IO长期速率保守为空；请升级Agent后积累有效身份采样。磁盘长期使用率不依赖累计计数身份。
+
+## MCP核心结构化输出
+
+`nodes_list`、`applications_list`、`tasks_create`、`tasks_get`、`tasks_list` 的 `tools/list` 声明 `outputSchema`。成功响应同时提供 `structuredContent: {data: <业务结果>}` 与原有 `content[0].text = JSON.stringify(<业务结果>)`，现有文本客户端无需改动。日期统一JSON ISO字符串；Schema约束资源身份、任务状态/来源/尝试次数、结果对象及日志字段。`tasks_get`要求返回日志数组，即使尚无日志也返回空数组。SDK在服务端和标准客户端校验输出，未声明的方法继续使用已有文本返回。
+
+任务创建只表示已记录执行意图，用返回ID调用 `tasks_get` 追踪到最终状态；FAILED/UNKNOWN必须检查error和日志，非幂等UNKNOWN不可盲目重提。工具错误保留isError及现有文本反馈，不伪装成成功data。结构化返回复用统一业务结果，不另建MCP业务查询或执行逻辑。
