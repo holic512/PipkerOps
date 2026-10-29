@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module topology-ui
  * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 准确身份合并部署容器，配置端点关联站点上游；刷新保留布局与详情，画布尺寸变化时重新适配资源。
+ * @logic 准确身份合并部署容器，配置端点关联站点上游；刷新保留布局与详情，矩阵固定目标列序，画布尺寸变化时重新适配资源。
  * @dependencies React Flow, RPC, shared UI
  * @index_tags topology, connectivity, ui
  * @author holic512
@@ -272,7 +272,9 @@ export function Topology() {
     resize.observe(canvas);
     return () => resize.disconnect();
   }, [flow, resourceIds, tab]);
-  const targets = [...new Set(q.data?.probes.map((p) => p.target) ?? [])];
+  const targets = [
+    ...new Set(q.data?.probes.map((p) => p.target) ?? []),
+  ].sort();
   return (
     <>
       <PageTitle
@@ -480,7 +482,12 @@ export function Topology() {
               emptyTitle="暂无连通性结果"
               emptyText="创建从指定节点到其他节点端口的 TCP/HTTP 探针后，矩阵会显示真实结果。"
             >
-              <div className="table-wrap">
+              <div
+                className="table-wrap"
+                role="region"
+                aria-label="探针来源与目标矩阵，可横向滚动"
+                tabIndex={0}
+              >
                 <table>
                   <thead>
                     <tr>
