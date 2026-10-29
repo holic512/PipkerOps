@@ -560,6 +560,7 @@ function OperationsForm({
   const current = config.actions.find((a) => a.type === action)!;
   const selectedNode = q.data?.find((n) => n.id === node);
   const launch = async (data: Record<string, unknown>) => {
+    setTask("");
     const result = await submitTask<TaskData>("tasks.create", {
       type: action,
       nodeId: node,

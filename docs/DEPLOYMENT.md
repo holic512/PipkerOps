@@ -173,8 +173,8 @@ CAPACITY_NODES=50 npm run test:capacity
 | MCP Key | 单节点nodes:read、禁止高危、一天有效期；确认创建、一次性展示后隐藏、权限列表、确认吊销及已吊销状态；390px截图检查 |
 | Key权限边界 | 隔离浏览器对本地源附加专用Bearer；docker:read缺失显示拒绝，docker:write但无高危许可的确认请求拒绝，范围外实例链接禁用并通过真实请求核对403；空范围没有节点；四个Key均未创建任务，吊销后请求401 |
 | 实例动作 | 应用Docker实例进入动作页，准确预填节点与target；确认后任务日志回显同一容器目标，任务详情显示来源WEB和成功结果 |
-| Compose更新 | 专用项目确认部署更新，任务输出Recreated/Started；配置读回新日志标记，状态返回running，容器日志返回新标记；拓扑完整容器ID随重建更新且只保留新资源 |
-| systemd入口 | 第二个专用systemd节点关联nginx.service；从应用进入状态页返回准确单元active/running，管理页确认停止后真实inactive，再启动恢复active；任务均成功 |
+| Compose更新 | 专用项目确认部署更新，任务输出Recreated/Started；配置/日志返回新标记、状态running；拓扑只保留新完整容器ID。后续非法YAML明确失败，原配置摘要/容器ID/运行状态保持、暂存文件移除；Escape取消前后部署任务数均4 |
+| systemd入口 | 专用节点关联nginx.service，准确查询及停止/启动通过；缺失单元返回明确失败；reload/restart通过且PID变化、服务active；Enter键确认和390px确认/结果布局已检查 |
 | 节点离线与恢复 | 停止专用Agent，等心跳有效期后页面显示离线并禁用提交；恢复Agent后按钮可用，真实日志任务再次成功；自然退出容器由页面启动成功 |
 | 键盘 | 共用表格有可访问名称和焦点轮廓；390px下方向键使scrollLeft从0增至42，能访问横向溢出的列 |
 | 拓扑 | Docker部署与准确容器合并，Compose按项目标签连到同一容器，systemd部署合并实际服务；节点失联详情变故障、恢复变正常；服务停止/启动后详情随发现更新；服务节点键盘下移5px后刷新坐标保留 |
@@ -193,6 +193,8 @@ CAPACITY_NODES=50 npm run test:capacity
 站点应用与删除确认补充准确节点/域名，应用时同时展示上游，Escape取消通过。专用站点实际删除任务成功，受管配置、拓扑节点与连线均移除；页面显示结果与日志。专用探针已删除并恢复空态。TypeScript、ESLint和生产构建通过。本轮后续具体页面缺口集中维护在[验收矩阵](UI_ACCEPTANCE.md)。
 
 文件目录验收补充发现并修复共用任务日志空态：运维页与任务详情统一按QUEUED/DISPATCHED/RUNNING/SUCCEEDED/FAILED/CANCELLED/UNKNOWN说明。实际无日志成功/失败任务已在浏览器验证，失败不再误报等待或结果待确认；成功任务保留结构化结果入口。其他状态的文案未计作逐态浏览器通过。本次39项自动测试、TypeScript、ESLint、生产构建和设计静态检查通过，专用目录已删除。
+
+同操作重复提交补充修复：开始提交时清除上次任务ID，避免编辑参数后新请求处理中仍显示旧成功。真实reload提交中确认框busy=true时旧任务链接与结果区均不存在，随后出现新ID且执行成功；TypeScript、ESLint、生产构建和设计静态检查通过。Compose语法失败保护不代表运行阶段所有失败均可回滚，后者仍待验收。
 
 Key页面验收发现并修复：拼写错误scope曾被保存为生效但无实际能力，创建契约现限定支持枚举，Web/MCP共用；相同输入返回400且未创建记录。已有Key不自动变更，通配和空范围语义保留。运维与终端空节点提示明确检查审批与授权范围。实际页面另验证非法nodeIds对象拒绝、0/366天原生边界反馈和Escape取消；旧问题Key与四个权限测试Key均已吊销，原文临时文件已删除。标准MCP SDK检查运行中keys_create枚举及单节点查询通过；40项自动测试、TypeScript、ESLint和生产构建通过。
 
