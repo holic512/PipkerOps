@@ -1582,6 +1582,9 @@ export function TerminalPage() {
   const [split, setSplit] = useState(false);
   const [active, setActive] = useState("");
   const op = useOperation();
+  const selectedNode = q.data?.find(
+    (n) => n.id === node && n.status === "APPROVED",
+  );
   return (
     <>
       <PageTitle
@@ -1621,11 +1624,13 @@ export function TerminalPage() {
               onChange={(e) => setContainerId(e.target.value)}
             />
             <Button
-              disabled={!node || op.busy || sessions.length >= 6}
+              disabled={
+                !selectedNode?.connected || op.busy || sessions.length >= 6
+              }
               onClick={() =>
                 op.ask(
                   "打开远程终端？",
-                  "将以 Agent 系统用户启动交互式 Shell。请确认节点与权限；会话建立和结束将被审计。",
+                  `节点：${selectedNode?.name}，目标：${containerId || "节点 Shell"}。将以 Agent 系统用户启动交互式 Shell，会话建立和结束将被审计。`,
                   async () => {
                     const ticket = await rpc<{ url: string }>(
                       "terminal.ticket",
@@ -1684,9 +1689,25 @@ export function TerminalPage() {
             </div>
           ))}
         </div>
+        {node && !q.isLoading && !q.error && !selectedNode?.connected && (
+          <p role="alert" className="error-text">
+            {selectedNode
+              ? "节点离线，恢复连接后可新建会话。"
+              : "节点不存在或无权访问，请重新选择节点。"}
+          </p>
+        )}
+        {sessions.length > 0 && q.error && (
+          <QueryState
+            error={q.error}
+            loading={false}
+            retry={() => void q.mutate()}
+          >
+            {null}
+          </QueryState>
+        )}
         <QueryState
-          error={q.error}
-          loading={q.isLoading}
+          error={sessions.length ? undefined : q.error}
+          loading={!sessions.length && q.isLoading}
           retry={() => void q.mutate()}
           empty={!sessions.length}
           emptyTitle="开始一个终端会话"
