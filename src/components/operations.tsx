@@ -600,7 +600,8 @@ function OperationsForm({
                 fields={current.fields.map((f) =>
                   ["id", "project", "name"].includes(f.name) &&
                   target &&
-                  node === requestedNode
+                  node === requestedNode &&
+                  action.split(".")[0] === requestedAction.split(".")[0]
                     ? { ...f, defaultValue: target }
                     : f,
                 )}
@@ -644,7 +645,13 @@ function OperationsForm({
                 <pre className="terminal-output">
                   {taskQuery.data?.output ||
                     taskQuery.data?.logs?.map((l) => l.message).join("") ||
-                    "等待 Agent 执行…"}
+                    (taskQuery.data?.status === "SUCCEEDED"
+                      ? "执行成功，无文本日志；结构化结果见下方。"
+                      : ["FAILED", "CANCELLED", "UNKNOWN"].includes(
+                            taskQuery.data?.status ?? "",
+                          )
+                        ? "任务已结束或结果待确认，无文本日志，请检查状态和错误。"
+                        : "等待 Agent 执行…")}
                 </pre>
                 {taskQuery.data?.result &&
                   Object.keys(taskQuery.data.result).length > 0 && (

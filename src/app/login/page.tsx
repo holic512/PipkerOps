@@ -1,10 +1,8 @@
 "use client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Network, ArrowRight, LockKeyhole } from "lucide-react";
 import { Button } from "@/components/ui/button";
 export default function Login() {
-  const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   return (
@@ -36,7 +34,8 @@ export default function Login() {
               });
               const data = await response.json();
               if (!response.ok) throw new Error(data.error);
-              router.replace("/");
+              // 新身份使用全新查询缓存，避免旧401再次触发登录跳转。
+              window.location.replace("/");
             } catch (e) {
               setError(e instanceof Error ? e.message : "登录失败，请重试");
             } finally {
