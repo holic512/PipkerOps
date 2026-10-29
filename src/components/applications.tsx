@@ -304,7 +304,7 @@ export function Applications() {
                             onClick={() =>
                               op.ask(
                                 "解除实例关联？",
-                                "只删除平台关联记录，运行中的服务继续保留。",
+                                `应用：${selected.name}；实例：${d.name}；节点：${d.node?.name ?? d.nodeId}；类型：${d.type}；运行目标：${d.target}。只删除平台关联记录，节点上的资源继续保留。`,
                                 () =>
                                   rpc("deployments.delete", {
                                     id: d.id,
