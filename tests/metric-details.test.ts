@@ -175,6 +175,81 @@ test("资源历史：真实SQL设备隔离、累计速率、重置断点和窗�
         [null, 10, null, 10],
       );
     }
+    await pg.exec(
+      `INSERT INTO "Node" (id,name,"updatedAt") VALUES ('dense','dense',now())`,
+    );
+    await insert("dense-baseline", -10, 0, 0, 10, "dense", "stable");
+    await insert("dense-first", 0, 100, 200, 10, "dense", "stable");
+    await insert("dense-reset", 10, 5, 10, 10, "dense", "stable");
+    await insert("dense-after", 20, 105, 210, 10, "dense", "stable");
+    for (const [kind, device] of [
+      ["network", "eth0"],
+      ["io", "sda"],
+    ] as const) {
+      const q = detailHistoryQuery("dense", kind, 48, device, end);
+      const result = (
+        await pg.query<{
+          points: { recordedAt: string; value: number | null }[];
+        }>(q.query.text, q.query.values)
+      ).rows[0];
+      assert.ok(
+        result.points
+          .filter((p) => new Date(p.recordedAt).getTime() === start)
+          .every((p) => p.value === null),
+        "a reset inside a dense bucket must remain a gap",
+      );
+    }
+    await pg.query(
+      `INSERT INTO "MetricSample" (id,"nodeId","recordedAt",payload,"cpuPercent","memoryPercent") VALUES ('dense-invalid','dense',$1,'{"network":[{"name":"eth0","bytesRecv":"NaN","bytesSent":"NaN"}],"deviceIdentity":{"network":{"eth0":"stable"}}}'::jsonb,0,0)`,
+      [new Date(start + 30000)],
+    );
+    await insert("dense-invalid-after", 40, 305, 610, 10, "dense", "stable");
+    const invalidQuery = detailHistoryQuery("dense", "network", 1, "eth0", end);
+    const invalidResult = (
+      await pg.query<{
+        points: { recordedAt: string; value: number | null }[];
+      }>(invalidQuery.query.text, invalidQuery.query.values)
+    ).rows[0];
+    assert.ok(
+      invalidResult.points
+        .filter((p) =>
+          [start + 30000, start + 40000].includes(
+            new Date(p.recordedAt).getTime(),
+          ),
+        )
+        .every((p) => p.value === null),
+      "invalid counter and its next interval cannot be bridged",
+    );
+    await pg.exec(
+      `INSERT INTO "Node" (id,name,"updatedAt") VALUES ('weighted','weighted',now())`,
+    );
+    await insert("weighted-baseline", -10, 0, 0, 10, "weighted", "stable");
+    await insert("weighted-first", 0, 100, 200, 10, "weighted", "stable");
+    await insert("weighted-second", 10, 200, 400, 10, "weighted", "stable");
+    await insert("weighted-third", 30, 600, 1200, 10, "weighted", "stable");
+    const weightedQuery = detailHistoryQuery(
+      "weighted",
+      "network",
+      48,
+      "eth0",
+      end,
+    );
+    const weightedResult = (
+      await pg.query<{
+        points: {
+          recordedAt: string;
+          direction: string;
+          value: number | null;
+        }[];
+      }>(weightedQuery.query.text, weightedQuery.query.values)
+    ).rows[0];
+    assert.equal(
+      weightedResult.points.find(
+        (p) =>
+          p.direction === "接收" && new Date(p.recordedAt).getTime() === start,
+      )?.value,
+      15,
+    );
     const missing = await query("network", "missing");
     assert.equal(missing.device, null);
     assert.deepEqual(missing.points, []);

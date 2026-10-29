@@ -142,6 +142,18 @@ test(
             .rows[0];
           assert.equal(result.points.at(-1)?.value, 10);
           assert.equal(result.points[0].value, null);
+          await pool!.query(
+            `INSERT INTO "MetricSample" (id,"nodeId","recordedAt",payload,"cpuPercent","memoryPercent") VALUES ('device-reset','devices',date_trunc('hour',now())-interval '2 hours'+interval '30 seconds','{"network":[{"name":"eth0","bytesRecv":5}],"deviceIdentity":{"network":{"eth0":"boot:1:mac"}}}',0,0);`,
+          );
+          const short = detailHistoryQuery("devices", "network", 48, "eth0");
+          const resetResult = (
+            await pool!.query(short.query.text, short.query.values)
+          ).rows[0];
+          assert.equal(
+            resetResult.points.at(-1)?.value,
+            null,
+            "dense raw bucket must preserve actual counter reset",
+          );
           const year = detailHistoryQuery("devices", "network", 8760, "eth0");
           assert.ok(
             (await pool!.query(year.query.text, year.query.values)).rows[0]

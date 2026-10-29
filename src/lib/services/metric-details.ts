@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module metric-history-details
  * @description 从原始采样与长期小时摘要查询设备历史，累计计数转换为速率。
- * @logic 按窗口分桶并仅返回选中设备；计数回退、设备身份变化或采样中断保留空值，避免伪造零速率。
+ * @logic 按窗口分桶并仅返回选中设备；计数回退、设备身份变化或采样中断保留空值，分桶内任一区间不可靠则保留缺口，按有效时长加权。
  * @dependencies Prisma SQL, authorization, retained metric samples
  * @index_tags metrics, disk, network, io, history
  * @author holic512
@@ -86,7 +86,7 @@ export function detailHistoryQuery(
     WHERE s."nodeId"=${nodeId} AND s."recordedAt">=${new Date(since.getTime() - 120000)}::timestamptz AND s."recordedAt"<${now}::timestamptz`;
   const base = Prisma.sql`WITH extracted AS (${extraction}), valid AS (
     SELECT "recordedAt", device, direction, identity, CASE WHEN length(value)<=40 AND value ~ '^[0-9]+([.][0-9]+)?$' THEN value::double precision END AS value FROM extracted
-    WHERE device IS NOT NULL AND length(device) BETWEEN 1 AND 200 AND length(value)<=40 AND value ~ '^[0-9]+([.][0-9]+)?$'
+    WHERE device IS NOT NULL AND length(device) BETWEEN 1 AND 200
     ), devices AS (SELECT DISTINCT device FROM valid WHERE "recordedAt">=${since}::timestamptz ORDER BY device), chosen AS (
     SELECT device FROM devices WHERE ${device ?? null}::text IS NULL OR device=${device ?? null}::text ORDER BY device LIMIT 1
     ), selected AS (SELECT v.* FROM valid v JOIN chosen c USING(device))`;
@@ -95,7 +95,8 @@ export function detailHistoryQuery(
       ? Prisma.sql`SELECT device,direction,date_bin(${bucketSeconds}::integer * interval '1 second',"recordedAt",${since}::timestamptz) AS "recordedAt", avg(value) AS value
     FROM selected WHERE value BETWEEN 0 AND 100 GROUP BY device,direction,3`
       : Prisma.sql`SELECT device,direction,date_bin(${bucketSeconds}::integer * interval '1 second',"recordedAt",${since}::timestamptz) AS "recordedAt",
-    avg(CASE WHEN identity IS NOT DISTINCT FROM previous_identity AND value>=previous AND elapsed>0 AND elapsed<=120 THEN (value-previous)/elapsed END) AS value
+    CASE WHEN bool_and(coalesce(identity IS NOT DISTINCT FROM previous_identity AND value>=previous AND elapsed>0 AND elapsed<=120,false))
+      THEN sum(value-previous)/nullif(sum(elapsed),0) END AS value
     FROM (SELECT *,lag(value) OVER w AS previous,lag(identity) OVER w AS previous_identity,extract(epoch FROM "recordedAt"-lag("recordedAt") OVER w) AS elapsed
     FROM selected WINDOW w AS (PARTITION BY device,direction ORDER BY "recordedAt")) deltas
     WHERE "recordedAt">=${since}::timestamptz GROUP BY device,direction,3`;
