@@ -1,6 +1,6 @@
 # API 与 MCP 契约
 
-Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{error}`；HTTP状态区分401/403/400/404/409/500。会话写请求必须与 `APP_ORIGIN` 同源。独立API Key使用Bearer。MCP为 `/api/mcp` 标准无状态Streamable HTTP，只接受Bearer；方法中的点替换为下划线，工具参数 `{params:{...}}`。
+Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{error}`；HTTP状态区分401/403/400/404/409/500。会话写请求必须与 `APP_ORIGIN` 同源。独立API Key使用Bearer。MCP为 `/api/mcp` 标准无状态Streamable HTTP，只接受Bearer；方法中的点替换为下划线，工具参数 `{params:{...}}`。`tools/list`公开每个方法的字段/必填项/枚举/默认值，`tasks_create`按任务类型公开对应payload；与Web调用共用 `src/lib/services/contracts.ts` 输入契约。工具参数中的confirmed没有默认true，不能将工具发现视为操作者授权。
 
 所有节点操作在服务端校验角色、scope、节点范围与高危许可。VIEWER不能写；节点审批、Key管理、平台审计需要ADMIN。Key空 `nodeIds`无节点权限，`["*"]`全节点。Key原文仅创建时返回一次。当前Key不能创建其他Key；持久Cron和探针保留创建Key身份并在每次调度与执行前重授权；升级前没有授权创建者的旧探针会停用，重新保存后恢复。API列表至多返回近期记录，不能当作全量数据导出。
 

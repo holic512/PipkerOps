@@ -17,70 +17,9 @@ import * as nodes from "./nodes";
 import { createTask, listTasks, getTask, taskSpecs } from "./tasks";
 import { redis } from "../redis";
 import { privateHost } from "../config";
-const label = z.string().trim().min(1).max(120);
 const id = z.string().min(1).max(100);
-const object = z.record(z.string(), z.unknown());
-export const METHODS = [
-  "overview",
-  "nodes.list",
-  "nodes.token",
-  "nodes.approve",
-  "nodes.reject",
-  "nodes.revoke",
-  "nodes.metrics",
-  "nodes.update",
-  "applications.list",
-  "applications.save",
-  "applications.delete",
-  "deployments.save",
-  "deployments.delete",
-  "dependencies.save",
-  "dependencies.delete",
-  "probes.list",
-  "probes.save",
-  "probes.run",
-  "probes.history",
-  "probes.delete",
-  "topology",
-  "tasks.list",
-  "tasks.get",
-  "tasks.create",
-  "tasks.cancel",
-  "sites.list",
-  "sites.save",
-  "sites.apply",
-  "sites.certificate",
-  "sites.acme",
-  "sites.https",
-  "sites.renew",
-  "sites.delete",
-  "actions.list",
-  "actions.save",
-  "actions.run",
-  "actions.delete",
-  "schedules.list",
-  "schedules.save",
-  "schedules.delete",
-  "alerts.list",
-  "alerts.save",
-  "alerts.delete",
-  "notifications.list",
-  "notifications.read",
-  "keys.list",
-  "keys.create",
-  "keys.revoke",
-  "audit.list",
-  "terminal.ticket",
-  "users.me",
-] as const;
-export type Method = (typeof METHODS)[number];
-export const mutation = (method: string) =>
-  !["overview", "topology"].includes(method) &&
-  !method.endsWith(".list") &&
-  !method.endsWith(".get") &&
-  !method.endsWith(".history") &&
-  !method.endsWith(".metrics") &&
-  method !== "users.me";
+export { METHODS, mutation } from "./contracts";
+import { methodSchemas } from "./contracts";
 function nodeWhere(actor: Actor) {
   return actor.apiKeyId && !actor.nodeIds?.includes("*")
     ? { nodeId: { in: actor.nodeIds ?? [] } }
@@ -138,20 +77,6 @@ async function audit(
     },
   });
 }
-const probeSchema = z.object({
-  id: id.optional(),
-  name: label,
-  type: z.enum(["HTTP", "TCP"]),
-  target: z.string().min(1).max(2048),
-  sourceNodeId: id.nullable().optional(),
-  applicationId: id.nullable().optional(),
-  intervalSeconds: z.number().int().min(10).max(86400).default(60),
-  timeoutMs: z.number().int().min(100).max(30000).default(5000),
-  failureThreshold: z.number().int().min(1).max(100).default(3),
-  enabled: z.boolean().default(true),
-  config: object.default({}),
-  mapping: z.record(z.string(), z.string()).default({}),
-});
 export function validateProbeTarget(type: string, target: string) {
   if (type === "HTTP") {
     const url = new URL(target);
@@ -174,7 +99,10 @@ export async function execute(
   method: string,
   input: unknown = {},
 ): Promise<unknown> {
-  const p = z.record(z.string(), z.unknown()).parse(input);
+  if (!Object.hasOwn(methodSchemas, method))
+    throw new ApiError(404, "未知业务方法");
+  const schema = methodSchemas[method as keyof typeof methodSchemas];
+  const p = schema.passthrough().parse(input);
   switch (method) {
     case "users.me":
       return db().user.findUnique({
@@ -182,9 +110,7 @@ export async function execute(
         select: { id: true, email: true, displayName: true, role: true },
       });
     case "nodes.update": {
-      const data = z
-        .object({ id, name: label, labels: z.array(label).max(50).default([]) })
-        .parse(p);
+      const data = methodSchemas["nodes.update"].parse(p);
       authorize(actor, "nodes:write", data.id);
       await db().node.update({
         where: { id: data.id },
@@ -310,15 +236,7 @@ export async function execute(
       });
     case "applications.save": {
       authorize(actor, "apps:write");
-      const data = z
-        .object({
-          id: id.optional(),
-          name: label,
-          description: z.string().max(2000).optional(),
-          labels: z.array(label).max(20).default([]),
-          businessData: object.default({}),
-        })
-        .parse(p);
+      const data = methodSchemas["applications.save"].parse(p);
       const { id: appId, ...fields } = data;
       const app = appId
         ? await db().application.update({
@@ -351,25 +269,7 @@ export async function execute(
       return { id: appId };
     }
     case "deployments.save": {
-      const d = z
-        .object({
-          id: id.optional(),
-          applicationId: id,
-          nodeId: id,
-          name: label,
-          type: z.enum([
-            "docker",
-            "compose",
-            "systemd",
-            "process",
-            "database",
-            "nginx",
-          ]),
-          target: z.string().min(1).max(500),
-          healthUrl: z.url().nullable().optional(),
-          metadata: object.default({}),
-        })
-        .parse(p);
+      const d = methodSchemas["deployments.save"].parse(p);
       authorize(actor, "apps:write", d.nodeId);
       if (d.id) {
         const old = await db().deployment.findUnique({ where: { id: d.id } });
@@ -452,14 +352,7 @@ export async function execute(
     }
     case "dependencies.save": {
       authorize(actor, "apps:write");
-      const d = z
-        .object({
-          fromApplicationId: id,
-          toApplicationId: id,
-          type: label.default("depends_on"),
-          description: z.string().max(500).optional(),
-        })
-        .parse(p);
+      const d = methodSchemas["dependencies.save"].parse(p);
       if (d.fromApplicationId === d.toApplicationId)
         throw new ApiError(400, "应用不能依赖自身");
       const result = await db().dependency.upsert({
@@ -488,28 +381,9 @@ export async function execute(
       });
     }
     case "probes.save": {
-      const d = probeSchema.parse(p);
+      const d = methodSchemas["probes.save"].omit({ confirmed: true }).parse(p);
       authorize(actor, "probes:write", d.sourceNodeId ?? undefined);
       validateProbeTarget(d.type, d.target);
-      if (d.type === "HTTP")
-        d.config = z
-          .object({
-            method: z
-              .enum([
-                "GET",
-                "HEAD",
-                "POST",
-                "PUT",
-                "PATCH",
-                "DELETE",
-                "OPTIONS",
-              ])
-              .default("GET"),
-            headers: z.record(z.string(), z.string().max(8192)).default({}),
-            body: z.string().max(131072).optional(),
-            expectedStatus: z.number().int().min(100).max(599).optional(),
-          })
-          .parse(d.config);
       if (d.id) {
         const old = await db().probe.findUnique({ where: { id: d.id } });
         if (!old) throw new ApiError(404, "探针不存在");
@@ -622,18 +496,7 @@ export async function execute(
         orderBy: { createdAt: "desc" },
       });
     case "sites.save": {
-      const d = z
-        .object({
-          id: id.optional(),
-          name: label,
-          nodeId: id,
-          domain: z
-            .string()
-            .regex(/^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/),
-          upstream: z.url(),
-          config: z.string().max(131072).default(""),
-        })
-        .parse(p);
+      const d = methodSchemas["sites.save"].parse(p);
       authorize(actor, "sites:write", d.nodeId);
       if (d.id) {
         const old = await db().site.findUnique({ where: { id: d.id } });
@@ -789,15 +652,7 @@ export async function execute(
       authorize(actor, "keys:write", undefined, true);
       confirm(p.confirmed);
       if (actor.apiKeyId) throw new ApiError(403, "API Key 不能创建新的密钥");
-      const d = z
-        .object({
-          name: label,
-          scopes: z.array(z.string().max(80)).min(1).max(50),
-          nodeIds: z.array(id).max(100).default([]),
-          allowDangerous: z.boolean().default(false),
-          days: z.number().int().min(1).max(365).default(30),
-        })
-        .parse(p);
+      const d = methodSchemas["keys.create"].parse(p);
       const token = "pko_" + randomToken();
       const key = await db().apiKey.create({
         data: {
@@ -872,28 +727,7 @@ export async function execute(
         orderBy: { createdAt: "desc" },
       });
     case "alerts.save": {
-      const d = z
-        .object({
-          id: id.optional(),
-          enabled: z.boolean().default(true),
-          name: label,
-          nodeId: id.optional(),
-          probeId: id.optional(),
-          metric: z.enum([
-            "cpuPercent",
-            "memoryPercent",
-            "offline",
-            "probeFailure",
-          ]),
-          operator: z.enum(["gt", "lt"]).default("gt"),
-          threshold: z.number().finite(),
-          durationSeconds: z.number().int().min(0).max(86400).default(60),
-          webhookUrl: z
-            .url()
-            .refine((v) => v.startsWith("https://"))
-            .optional(),
-        })
-        .parse(p);
+      const d = methodSchemas["alerts.save"].parse(p);
       authorize(actor, "alerts:write", d.nodeId);
       if (
         d.metric === "probeFailure"
@@ -958,19 +792,7 @@ export async function execute(
     case "schedules.save": {
       authorize(actor, "schedules:write");
 
-      const d = z
-        .object({
-          id: id.optional(),
-          enabled: z.boolean().default(true),
-          name: label,
-          cron: z.string().max(100),
-          timezone: z.string().max(80).default("Asia/Shanghai"),
-          taskType: z.string(),
-          nodeId: id.optional(),
-          payload: object.default({}),
-          confirmed: z.boolean().optional(),
-        })
-        .parse(p);
+      const d = methodSchemas["schedules.save"].parse(p);
       const spec = taskSpecs[d.taskType];
       if (!spec) throw new ApiError(400, "未知任务类型");
       authorize(actor, spec.scope, d.nodeId, spec.dangerous);
@@ -1029,25 +851,8 @@ export async function execute(
     case "actions.save": {
       authorize(actor, "actions:write", undefined, true);
       confirm(p.confirmed);
-      const d = z
-        .object({
-          id: id.optional(),
-          name: label,
-          type: z.enum(["shell.exec", "docker.action", "HTTP", "URL"]),
-          description: z.string().max(1000).optional(),
-          config: object,
-          parameters: z
-            .array(
-              z.object({
-                name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
-                label: label,
-                required: z.boolean().default(true),
-              }),
-            )
-            .max(20)
-            .default([]),
-          nodeIds: z.array(id).max(100).default([]),
-        })
+      const d = methodSchemas["actions.save"]
+        .omit({ confirmed: true })
         .parse(p);
       for (const n of d.nodeIds) authorize(actor, "actions:write", n, true);
       const { id: actionId, ...data } = d;

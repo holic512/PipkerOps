@@ -12,7 +12,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { authenticate, ApiError } from "@/lib/auth";
-import { execute, METHODS, mutation } from "@/lib/services/platform";
+import { execute } from "@/lib/services/platform";
+import {
+  METHODS,
+  mutation,
+  methodSchemas,
+  mcpTaskInput,
+} from "@/lib/services/contracts";
 import { errorResponse } from "@/lib/http";
 import { appOrigin } from "@/lib/config";
 export const runtime = "nodejs";
@@ -34,7 +40,8 @@ export async function POST(request: Request) {
           title: method,
           description: `PipkerOps 业务方法 ${method}，params 使用平台 API 契约。远程执行返回 Task；危险操作必须 confirmed:true。`,
           inputSchema: {
-            params: z.record(z.string(), z.unknown()).default({}),
+            params:
+              method === "tasks.create" ? mcpTaskInput : methodSchemas[method],
           },
           annotations: {
             readOnlyHint: !mutation(method),

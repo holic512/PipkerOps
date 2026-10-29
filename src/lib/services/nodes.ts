@@ -15,6 +15,7 @@ import { randomToken, hashToken } from "../crypto";
 import { issueCertificate, validateCsr, pkiFiles } from "../pki";
 import { readFileSync } from "node:fs";
 import { X509Certificate } from "node:crypto";
+import { methodSchemas } from "./contracts";
 export async function listNodes(actor: Actor) {
   authorize(actor, "nodes:read");
   const now = Date.now();
@@ -39,13 +40,7 @@ export async function listNodes(actor: Actor) {
 }
 export async function enrollmentToken(actor: Actor, input: unknown) {
   authorize(actor, "nodes:approve");
-  const data = z
-    .object({
-      name: z.string().min(1).max(120),
-      maxUses: z.number().int().min(1).max(50).default(1),
-      hours: z.number().min(1).max(168).default(24),
-    })
-    .parse(input);
+  const data = methodSchemas["nodes.token"].parse(input);
   const token = randomToken();
   const result = await db().$transaction(async (tx) => {
     const t = await tx.enrollmentToken.create({

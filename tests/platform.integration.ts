@@ -578,6 +578,23 @@ test(
       await mcp.connect(transport);
       const toolList = await mcp.listTools();
       assert.ok(toolList.tools.some((t) => t.name === "nodes_list"));
+      const metricsSchema = JSON.stringify(
+        toolList.tools.find((t) => t.name === "nodes_metrics")?.inputSchema,
+      );
+      assert.ok(
+        metricsSchema.includes('"nodeId"') && metricsSchema.includes('"hours"'),
+      );
+      const taskSchema = JSON.stringify(
+        toolList.tools.find((t) => t.name === "tasks_create")?.inputSchema,
+      );
+      assert.ok(
+        taskSchema.includes('"shell.exec"') && taskSchema.includes('"script"'),
+      );
+      const invalidTool = await mcp.callTool({
+        name: "nodes_metrics",
+        arguments: { params: { hours: 1 } },
+      });
+      assert.equal(invalidTool.isError, true);
       const list = await mcp.callTool({
         name: "nodes_list",
         arguments: { params: {} },
