@@ -2,7 +2,7 @@
 // @project PipkerOps
 // @module agent/probes
 // @description HTTP/TCP 探测、耗时测量和受限 JSON 字段映射。
-// @logic 显式超时、限制响应体、拒绝自动跨协议重定向；HTTP 配置复用可信系统 CA。
+// @logic 显式超时、限制响应体、拒绝自动重定向，避免重复有副作用的请求；HTTP 配置复用可信系统 CA。
 // @dependencies Go standard library
 // @index_tags agent, http, tcp, probes
 // @author holic512
@@ -96,13 +96,7 @@ func runProbe(ctx context.Context, payload json.RawMessage) (map[string]any, err
 		transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Proxy: http.ProxyFromEnvironment}
 		defer transport.CloseIdleConnections()
 		client := &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			if req.URL.Scheme != u.Scheme || req.URL.Host != u.Host {
-				return errors.New("cross-origin redirect rejected")
-			}
-			return nil
+			return errors.New("automatic redirects are disabled")
 		}}
 		resp, e := client.Do(req)
 		probeErr = e
