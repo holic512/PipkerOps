@@ -79,3 +79,9 @@ QUEUED→DISPATCHED→RUNNING→SUCCEEDED/FAILED；失去执行证据为UNKNOWN�
 应用中心的部署实例提供 Docker 详情/日志/生命周期/终端、Compose 状态/配置/部署更新、systemd 状态/管理及自定义动作入口。运维页面支持 `node`、`target`、`action` 查询参数，终端使用 `node`、`target`；参数只预填，不触发执行。切换节点后不继续预填原节点目标。任务入队后查看页面结果或任务详情；服务端照常校验角色、scope、节点范围和高危许可。
 
 自定义动作页接收 `node`、`target`、`applicationId`、`deploymentId`，仅为动作声明的同名参数预填；用户选择动作并检查全部参数后确认执行，不猜测其他参数含义。节点选项受动作节点范围限制。
+
+## 拓扑资源身份
+
+`topology` 继续返回授权范围内原始资源；界面用共用 `topologyLinks` 计算关系，不新增持久化猜测边。Docker 仅匹配同节点完整 ID 或准确名称（可去除名称前导 `/`）；Compose 使用 `com.docker.compose.project` 的准确标签。Docker 匹配后共用发现容器顶点，Compose 保留项目顶点和成员边。容器数据使用最新采样，最多沿用 Agent 的200容器采集上限，不再只显示前12个。
+
+Nginx 上游仅在同代理节点发起的已启用 HTTP 探针中，找到唯一应用的相同 URL origin 才关联到应用；不使用名称、DNS 猜测或跨来源回环端点匹配。此关系证明配置指向相同端点，不等于确认实际 Nginx 生效配置。无匹配或多个应用共享端点时详情显示“上游未关联”。

@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { db } from "../src/lib/db";
+import { topologyLinks } from "../src/lib/topology-links";
 const origin = process.env.APP_ORIGIN ?? "http://127.0.0.1:3000";
 const docker = (...args: string[]) =>
   execFileSync("docker", args, {
@@ -38,6 +39,8 @@ test(
     let nodeId = "";
     let tokenId = "";
     let siteId = "";
+    let applicationId = "";
+    let probeId = "";
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
       headers: { Origin: origin, "Content-Type": "application/json" },
@@ -302,6 +305,8 @@ test(
         "/" + run + "-sleeper-1",
       );
       await task("docker.inspect", { id: "missing-" + run }, false);
+      assert.ok(!JSON.stringify(inspected).includes('"Env"'));
+      assert.ok(!JSON.stringify(inspected).includes('"Cmd"'));
       await task("compose.list");
       await task("docker.action", { id, action: "stop" });
       await task("docker.action", { id, action: "start" });
@@ -320,6 +325,57 @@ test(
           'server { listen 8088; server_name linux-acceptance.example.invalid; location / { return 200 "nginx-verified"; } }',
       });
       siteId = site.id;
+      const app = await rpc<{ id: string }>("applications.save", { name: run });
+      applicationId = app.id;
+      const deployment = await rpc<{ id: string }>("deployments.save", {
+        applicationId,
+        nodeId,
+        name: run,
+        type: "docker",
+        target: run + "-sleeper-1",
+      });
+      const composeDeployment = await rpc<{ id: string }>("deployments.save", {
+        applicationId,
+        nodeId,
+        name: run + "-compose",
+        type: "compose",
+        target: run,
+      });
+      const probe = await rpc<{ id: string }>("probes.save", {
+        name: run,
+        type: "HTTP",
+        sourceNodeId: nodeId,
+        applicationId,
+        target: "http://127.0.0.1:8080/health",
+      });
+      probeId = probe.id;
+      const related = await wait(
+        async () =>
+          topologyLinks(
+            await rpc<Parameters<typeof topologyLinks>[0]>("topology"),
+          ),
+        (r) => r.deploymentLinks.some((l) => l.deploymentId === deployment.id),
+        "discovered topology container",
+      );
+      assert.ok(
+        related.deploymentLinks.some(
+          (l) => l.deploymentId === composeDeployment.id,
+        ),
+      );
+      assert.ok(
+        related.siteLinks.some(
+          (l) => l.siteId === siteId && l.applicationId === applicationId,
+        ),
+      );
+      await rpc("deployments.delete", { id: deployment.id, confirmed: true });
+      assert.ok(
+        !topologyLinks(
+          await rpc<Parameters<typeof topologyLinks>[0]>("topology"),
+        ).deploymentLinks.some((l) => l.deploymentId === deployment.id),
+      );
+      console.log(
+        "Verified actual topology container identity, Compose labels, configured Nginx upstream and deployment removal",
+      );
       const applied = await rpc<{ id: string }>("sites.apply", {
         id: siteId,
         confirmed: true,
@@ -442,6 +498,9 @@ test(
     } finally {
       if (container) docker("rm", "-fv", container);
       if (siteId) await db().site.deleteMany({ where: { id: siteId } });
+      if (probeId) await db().probe.deleteMany({ where: { id: probeId } });
+      if (applicationId)
+        await db().application.deleteMany({ where: { id: applicationId } });
       if (nodeId) {
         await db().task.deleteMany({ where: { nodeId } });
         await db().node.deleteMany({ where: { id: nodeId } });

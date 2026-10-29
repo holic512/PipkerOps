@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module topology-ui
  * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 基于业务资源构建有向图，资源增减后适配画布；探针健康标记依赖，矩阵只显示真实探测结果。
+ * @logic 准确身份合并部署容器，配置端点关联站点上游；资源刷新保留布局并更新详情与健康状态。
  * @dependencies React Flow, RPC, shared UI
  * @index_tags topology, connectivity, ui
  * @author holic512
@@ -40,6 +40,7 @@ import {
 } from "./shared";
 import { Button } from "./ui/button";
 import { rpc } from "@/lib/client";
+import { topologyLinks } from "@/lib/topology-links";
 type GraphData = {
   applications: AppData[];
   nodes: NodeData[];
@@ -55,6 +56,7 @@ type GraphData = {
     name: string;
     nodeId: string;
     domain: string;
+    upstream: string;
     status: string;
   }[];
 };
@@ -73,6 +75,7 @@ export function Topology() {
     const edges: Edge[] = [];
     const d = q.data;
     if (!d) return { nodes, edges };
+    const links = topologyLinks(d);
     let deploymentRow = 0;
     d.applications.forEach((a) => {
       const probes = d.probes.filter(
@@ -92,31 +95,50 @@ export function Topology() {
         className: `graph-entity graph-${state.toLowerCase()}`,
       });
       a.deployments.forEach((deployment) => {
-        nodes.push({
-          id: `deployment:${deployment.id}`,
-          position: { x: 350, y: deploymentRow++ * 105 },
-          data: {
-            label: `${deployment.type} · ${deployment.name}`,
-            kind: "部署实例",
-            target: deployment.target,
-            state: deployment.status,
-          },
-          className: "graph-entity",
-        });
+        const matched = links.deploymentLinks.filter(
+          (l) => l.deploymentId === deployment.id,
+        );
+        const merged = deployment.type === "docker" && matched.length === 1;
+        const deploymentGraphId = merged
+          ? matched[0].resourceId
+          : `deployment:${deployment.id}`;
+        if (!merged)
+          nodes.push({
+            id: deploymentGraphId,
+            position: { x: 350, y: deploymentRow++ * 105 },
+            data: {
+              label: `${deployment.type} · ${deployment.name}`,
+              kind: "部署实例",
+              target: deployment.target,
+              association: matched.length
+                ? `已关联 ${matched.length} 个容器`
+                : "运行目标未关联到已发现资源",
+              state: matched.length
+                ? matched.every((l) => l.state === "HEALTHY")
+                  ? "HEALTHY"
+                  : "UNHEALTHY"
+                : d.nodes.find((n) => n.id === deployment.nodeId)?.connected ===
+                    false
+                  ? "UNHEALTHY"
+                  : deployment.status,
+            },
+            className: "graph-entity",
+          });
         edges.push({
           id: `app-deploy:${deployment.id}`,
           source: `app:${a.id}`,
-          target: `deployment:${deployment.id}`,
-          label: "部署",
+          target: deploymentGraphId,
+          label: `部署 · ${deployment.name}`,
           markerEnd: { type: MarkerType.ArrowClosed },
         });
-        edges.push({
-          id: `deploy-node:${deployment.id}`,
-          source: `deployment:${deployment.id}`,
-          target: `node:${deployment.nodeId}`,
-          label: "运行于",
-          markerEnd: { type: MarkerType.ArrowClosed },
-        });
+        if (!merged)
+          edges.push({
+            id: `deploy-node:${deployment.id}`,
+            source: `deployment:${deployment.id}`,
+            target: `node:${deployment.nodeId}`,
+            label: "运行于",
+            markerEnd: { type: MarkerType.ArrowClosed },
+          });
       });
       if (!a.deployments.length) deploymentRow++;
     });
@@ -135,21 +157,20 @@ export function Topology() {
         },
         className: `graph-entity graph-${state.toLowerCase()}`,
       });
-      const containers = n.metrics[0]?.payload.containers;
-      if (Array.isArray(containers))
-        containers.slice(0, 12).forEach((c, j) => {
-          if (!c || typeof c !== "object") return;
-          const obj = c as Record<string, unknown>;
-          const id = `container:${n.id}:${String(obj.id ?? j)}`;
+      links.resources
+        .filter((r) => r.nodeId === n.id)
+        .forEach((obj) => {
+          const id = obj.id;
           nodes.push({
             id,
             position: { x: 1050, y: nodeRow++ * 90 },
             data: {
-              label: `容器 · ${String(obj.name ?? obj.id ?? "未命名")}`,
+              label: `容器 · ${obj.name}`,
+              target: obj.containerId,
               kind: "Docker 容器",
-              state: String(obj.state ?? "UNKNOWN"),
+              state: obj.state,
             },
-            className: "graph-entity",
+            className: `graph-entity graph-${obj.state.toLowerCase()}`,
           });
           edges.push({
             id: `node-container:${id}`,
@@ -161,6 +182,28 @@ export function Topology() {
         });
       nodeRow++;
     });
+    links.deploymentLinks.forEach((link) => {
+      const deployment = d.applications
+        .flatMap((a) => a.deployments)
+        .find((item) => item.id === link.deploymentId)!;
+      if (deployment.type === "docker") return;
+      edges.push({
+        id: `deployment-resource:${link.deploymentId}:${link.resourceId}`,
+        source: `deployment:${link.deploymentId}`,
+        target: link.resourceId,
+        label: "项目容器",
+        markerEnd: { type: MarkerType.ArrowClosed },
+      });
+    });
+    links.siteLinks.forEach((link) =>
+      edges.push({
+        id: `site-upstream:${link.siteId}`,
+        source: `site:${link.siteId}`,
+        target: `app:${link.applicationId}`,
+        label: "上游端点",
+        markerEnd: { type: MarkerType.ArrowClosed },
+      }),
+    );
     d.dependencies.forEach((dep) => {
       const unhealthy = d.probes.some(
         (p) =>
@@ -186,7 +229,15 @@ export function Topology() {
           x: 350,
           y: Math.max(1, deploymentRow) * 105 + i * 90,
         },
-        data: { label: `Nginx · ${s.domain}`, kind: "站点", state: s.status },
+        data: {
+          label: `Nginx · ${s.domain}`,
+          kind: "站点",
+          state: s.status,
+          target: s.upstream,
+          association: links.siteLinks.some((l) => l.siteId === s.id)
+            ? "已关联唯一配置端点"
+            : "上游未关联",
+        },
         className: "graph-entity",
       });
       edges.push({
@@ -387,6 +438,9 @@ export function Topology() {
                 <h2>{String(selected.data.kind)}</h2>
                 <strong>{String(selected.data.label)}</strong>
                 <Status value={String(selected.data.state ?? "UNKNOWN")} />
+                {selected.data.association ? (
+                  <p>{String(selected.data.association)}</p>
+                ) : null}
                 {selected.data.target ? (
                   <code>{String(selected.data.target)}</code>
                 ) : null}
