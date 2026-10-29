@@ -124,6 +124,7 @@ export type ProbeData = {
 export type TaskData = {
   idempotent: boolean;
   attempts: number;
+  maxAttempts: number;
   id: string;
   type: string;
   nodeId: string | null;

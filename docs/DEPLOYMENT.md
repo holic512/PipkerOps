@@ -88,3 +88,26 @@ LINUX_AGENT_BINARY=/absolute/path/pipkerops-agent-linux-arm64 npm run test:conne
 ## 告警联调
 
 开发Worker需使用 `NODE_EXTRA_CA_CERTS=/absolute/path/ca.crt` 信任本地HTTPS夹具，Web/Gateway/Worker运行后执行 `npm run test:alerts`。测试真实HTTP健康目标与本地HTTPS Webhook，验证连续失败、只发送一次、恢复通知、下一次故障重新发送，以及失败HTTP状态的审计记录；不会向第三方服务发消息。2026-10-29实际通过，用时26秒。
+
+
+## 进程崩溃与执行对账
+
+在可信开发环境先停止自己启动的Worker（本测试需要独占开发任务调度；不停止未知进程），保持Web运行，然后执行：
+
+```sh
+RECOVERY_WORKER_EXCLUSIVE=true AGENT_BINARY=/absolute/path/pipkerops-agent npm run test:recovery
+```
+
+测试启动并仅杀死自己的9643/9644 Gateway、Worker和本机Agent进程：Agent执行有副作用POST期间SIGKILL Gateway，结果通过Agent持久journal在重连后对账成功，实际请求计数始终1；主控POST开始后SIGKILL Worker，将本次测试任务租约设为过期后重启，任务进入UNKNOWN、attempts=1且不重放。新任务仍可执行。2026-10-29实际通过，用时21.2秒。完成后重新启动开发Worker；不对任何未知或生产进程执行kill。
+
+
+## 多节点短时容量验收
+
+```sh
+CAPACITY_NODES=10 npm run test:capacity
+CAPACITY_NODES=50 npm run test:capacity
+```
+
+使用真实独立Linux容器Agent；仅在开发机资源充足且9543/9544验收Gateway运行时执行，节点数限定2–50。创建独立注册令牌，审批所有节点，等待实际mTLS指标；随后向每个节点分发system.info并检查全部成功，查询真实总览。容器不需要privileged或宿主挂载。测试按本次前缀和ID清理，审计保留。
+
+2026-10-29：10台接入/首采样13.9秒，10任务批次3.6秒，总览166ms；50台接入/首采样25.8秒，50任务批次11.5秒，总览279ms，采样87条。以上是同一开发机和当前数据库网络条件下的短时观测，包含本地容器启动与注册审批，不能外推为跨公网50台的长期SLA。
