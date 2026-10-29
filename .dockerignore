@@ -1,0 +1,15 @@
+.git
+node_modules
+.next
+.env
+.env.*
+!.env.example
+.data
+certs
+secrets
+agent
+coverage
+test-results
+*.log
+*.tsbuildinfo
+.impeccable

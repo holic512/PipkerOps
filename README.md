@@ -2,7 +2,7 @@
 
 面向个人开发者与 10–50 台 Linux 节点的轻量集群运维平台。Go Agent 主动连接主控；Next.js 管理端、Gateway 与 Worker 共用 PostgreSQL 任务事实源。
 
-项目正在开发，整体尚未验收完成。功能阶段、验收缺口及技术决策见 [开发计划](docs/PLAN.md)，数据模型见 [数据库文档](docs/database.md)。页面不填充模拟节点或业务数据。
+项目正在开发，整体尚未验收完成。功能阶段、验收缺口及技术决策见 [开发计划](docs/PLAN.md)，数据模型见 [数据库文档](docs/database.md)，部署与恢复见 [部署文档](docs/DEPLOYMENT.md)，接口与工具参数见 [API契约](docs/API.md)。页面不填充模拟节点或业务数据。
 
 ## 本地启动
 
@@ -16,6 +16,7 @@ npm run db:generate
 npm run db:deploy
 npm run bootstrap
 npm run pki:init
+# 本地开发设置 APP_ORIGIN=http://127.0.0.1:3000
 npm run dev
 # 分别在另外两个终端运行
 npm run gateway
@@ -39,7 +40,7 @@ npm run build
 cd agent && go test ./...
 ```
 
-真实联调还需运行 Gateway/Worker、注册并批准 Agent。权限、任务恢复及部署验证记录维护在开发计划中，不将单独构建成功视为整体功能通过。
+真实联调使用 `AGENT_BINARY=/absolute/path/to/pipkerops-agent npm run test:integration`（需运行Web/Gateway/Worker，Worker用 NODE_EXTRA_CA_CERTS 指向私有CA以验证本地HTTPS夹具）。`npm run test:linux`另需Docker-in-Docker镜像与9543/9544验收Gateway，见部署文档。真实联调会创建唯一前缀资源并清理，保留审计。权限、任务恢复及部署验证记录维护在开发计划中，不将单独构建成功视为整体功能通过。
 
 ## API 与 MCP
 
