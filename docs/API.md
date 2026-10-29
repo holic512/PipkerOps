@@ -92,8 +92,10 @@ systemd 周期采样新增 `payload.services`，仅包含已加载的服务单�
 
 ## MCP核心结构化输出
 
-`nodes_list`、`applications_list`、`tasks_create`、`tasks_get`、`tasks_list` 的 `tools/list` 声明 `outputSchema`。成功响应同时提供 `structuredContent: {data: <业务结果>}` 与原有 `content[0].text = JSON.stringify(<业务结果>)`，现有文本客户端无需改动。日期统一JSON ISO字符串；Schema约束资源身份、任务状态/来源/尝试次数、结果对象及日志字段。`tasks_get`要求返回日志数组，即使尚无日志也返回空数组。SDK在服务端和标准客户端校验输出，未声明的方法继续使用已有文本返回。
+`nodes_list`、`nodes_metrics`、`nodes_history`、`applications_list`、`tasks_create`、`tasks_get`、`tasks_list` 的 `tools/list` 声明 `outputSchema`。成功响应同时提供 `structuredContent: {data: <业务结果>}` 与原有 `content[0].text = JSON.stringify(<业务结果>)`，现有文本客户端无需改动。日期统一JSON ISO字符串；Schema约束资源身份、任务状态/来源/尝试次数、结果对象及日志字段。`tasks_get`要求返回日志数组，即使尚无日志也返回空数组。SDK在服务端和标准客户端校验输出，未声明的方法继续使用已有文本返回。
 
 任务创建只表示已记录执行意图，用返回ID调用 `tasks_get` 追踪到最终状态；FAILED/UNKNOWN必须检查error和日志，非幂等UNKNOWN不可盲目重提。工具错误保留isError及现有文本反馈，不伪装成成功data。结构化返回复用统一业务结果，不另建MCP业务查询或执行逻辑。
 
 运维表单及自定义动作在当前页面实例中为尚未收到成功响应的同一请求保留幂等键，显式再次提交时可恢复已创建任务；不自动重放。成功响应后新一次操作使用新键。`actions.run`将可选幂等键传入统一任务服务，键对应的配置改变时返回409。页面重载或切换后若旧结果不明，应先在任务中心核对，不能通过新键盲目重提。任务找回不意味着重新入队，页面提示“任务已记录”，实际状态以任务详情为准。
+
+节点指标历史输出通过resolution区分raw与hour，分别约束recordedAt/cpuPercent/memoryPercent和bucketAt/cpuAvg/memoryAvg；两种分支均声明样本数和峰值。设备历史约束单位、设备选择、方向和时间点，保留null及空集；接受PostgreSQL JSON时间的显式UTC偏移，不将缺口转换为零。标准客户端覆盖1小时和7天两种窗口。

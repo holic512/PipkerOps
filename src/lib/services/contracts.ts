@@ -390,9 +390,62 @@ const wireApplication = z
   })
   .passthrough();
 
+const wireMetricValues = z.object({
+  sampleCount: z.number().int().positive(),
+  cpuMax: z.number(),
+  memoryMax: z.number(),
+});
+const wireMetricHistory = z.discriminatedUnion("resolution", [
+  z.object({
+    resolution: z.literal("raw"),
+    bucketSeconds: z.number().int().positive(),
+    samples: z
+      .array(
+        wireMetricValues.extend({
+          recordedAt: wireDate,
+          cpuPercent: z.number(),
+          memoryPercent: z.number(),
+        }),
+      )
+      .max(1440),
+  }),
+  z.object({
+    resolution: z.literal("hour"),
+    bucketSeconds: z.literal(3600),
+    samples: z
+      .array(
+        wireMetricValues.extend({
+          bucketAt: wireDate,
+          cpuAvg: z.number(),
+          memoryAvg: z.number(),
+        }),
+      )
+      .max(8761),
+  }),
+]);
+const wireDeviceHistory = z.object({
+  unit: z.enum(["%", "B/s"]),
+  bucketSeconds: z.number().int().positive(),
+  devices: z.array(z.string()),
+  device: z.string().nullable(),
+  series: z.array(
+    z.object({
+      name: z.string(),
+      points: z.array(
+        z.object({
+          recordedAt: z.iso.datetime({ offset: true }),
+          value: z.number().nullable(),
+        }),
+      ),
+    }),
+  ),
+});
+
 /** Wire contracts after the shared business result's normal JSON serialization. */
 export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
   "nodes.list": z.object({ data: z.array(wireNode) }),
+  "nodes.metrics": z.object({ data: wireMetricHistory }),
+  "nodes.history": z.object({ data: wireDeviceHistory }),
   "applications.list": z.object({ data: z.array(wireApplication) }),
   "tasks.create": z.object({ data: wireTask }),
   "tasks.get": z.object({

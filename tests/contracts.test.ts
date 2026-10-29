@@ -152,3 +152,62 @@ test("核心输出Schema公开任务状态、结果与日志约束且拒绝缺�
       json.includes('"logs"'),
   );
 });
+
+test("节点历史输出保留分辨率、时区时间戳、空数据和真实缺口", () => {
+  const metric = methodOutputSchemas["nodes.metrics"]!;
+  assert.equal(
+    metric.safeParse({
+      data: { resolution: "raw", bucketSeconds: 5, samples: [] },
+    }).success,
+    true,
+  );
+  assert.equal(
+    metric.safeParse({
+      data: { resolution: "hour", bucketSeconds: 3600, samples: [] },
+    }).success,
+    true,
+  );
+  assert.equal(
+    metric.safeParse({
+      data: {
+        resolution: "raw",
+        bucketSeconds: 5,
+        samples: [{ bucketAt: "2026-10-29T12:00:00Z" }],
+      },
+    }).success,
+    false,
+  );
+  const history = methodOutputSchemas["nodes.history"]!;
+  const data = {
+    unit: "B/s",
+    bucketSeconds: 3600,
+    devices: ["eth0"],
+    device: "eth0",
+    series: [
+      {
+        name: "接收",
+        points: [
+          { recordedAt: "2026-10-29T12:00:00+00:00", value: null },
+          { recordedAt: "2026-10-29T13:00:00Z", value: 10 },
+        ],
+      },
+    ],
+  };
+  assert.equal(history.safeParse({ data }).success, true);
+  assert.equal(
+    history.safeParse({ data: { ...data, unit: "invented" } }).success,
+    false,
+  );
+  assert.equal(
+    history.safeParse({
+      data: {
+        unit: "%",
+        bucketSeconds: 3600,
+        devices: [],
+        device: null,
+        series: [],
+      },
+    }).success,
+    true,
+  );
+});

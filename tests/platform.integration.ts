@@ -706,6 +706,8 @@ test(
       assert.equal(restrictedHistory.isError, true);
       for (const name of [
         "nodes_list",
+        "nodes_metrics",
+        "nodes_history",
         "applications_list",
         "tasks_create",
         "tasks_get",
@@ -756,6 +758,39 @@ test(
           .data;
         assert.equal(discovered.length, 1);
         assert.equal(discovered[0].id, nodeId);
+        for (const hours of [1, 168]) {
+          for (const name of ["nodes_metrics", "nodes_history"]) {
+            const result = await workflow.callTool({
+              name,
+              arguments: {
+                params: {
+                  nodeId,
+                  hours,
+                  ...(name === "nodes_history" ? { kind: "disk" } : {}),
+                },
+              },
+            });
+            assert.equal(
+              result.isError,
+              undefined,
+              JSON.stringify(result.content),
+            );
+            const data = result.structuredContent as {
+              data: Record<string, unknown>;
+            };
+            assert.deepEqual(
+              JSON.parse((result.content as { text: string }[])[0].text),
+              data.data,
+            );
+            if (name === "nodes_metrics") {
+              assert.equal(data.data.resolution, hours === 1 ? "raw" : "hour");
+              assert.ok(Array.isArray(data.data.samples));
+            } else {
+              assert.equal(data.data.unit, "%");
+              assert.ok(Array.isArray(data.data.series));
+            }
+          }
+        }
         const applications = await workflow.callTool({
           name: "applications_list",
           arguments: { params: {} },
