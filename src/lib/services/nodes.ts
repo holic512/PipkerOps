@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module nodes
  * @description 节点注册、审批、吊销、指标查询的统一服务。
- * @logic 原子消费注册令牌；获批后签发绑定节点的证书；查询按 API Key 节点范围过滤。
+ * @logic 原子消费注册令牌；证书绑定节点；历史指标按时间桶聚合并合并原始尾部；查询按 API Key 节点范围过滤。
  * @dependencies Prisma, PKI, authorization
  * @index_tags nodes, enrollment, metrics
  * @author holic512
@@ -16,6 +16,7 @@ import { issueCertificate, validateCsr, pkiFiles } from "../pki";
 import { readFileSync } from "node:fs";
 import { X509Certificate } from "node:crypto";
 import { methodSchemas } from "./contracts";
+import { Prisma } from "@/generated/prisma/client";
 export async function listNodes(actor: Actor) {
   authorize(actor, "nodes:read");
   const now = Date.now();
@@ -200,25 +201,79 @@ export async function changeNode(actor: Actor, id: string, action: string) {
 }
 export async function metrics(actor: Actor, nodeId: string, hours = 24) {
   authorize(actor, "nodes:read", nodeId);
+  const history = metricHistoryQuery(nodeId, hours);
+  return {
+    resolution: history.resolution,
+    bucketSeconds: history.bucketSeconds,
+    samples: await db().$queryRaw<MetricHistorySample[]>(history.query),
+  };
+}
+
+type MetricHistorySample = {
+  recordedAt?: Date;
+  bucketAt?: Date;
+  sampleCount: number;
+  cpuPercent?: number;
+  memoryPercent?: number;
+  cpuAvg?: number;
+  memoryAvg?: number;
+  cpuMax: number;
+  memoryMax: number;
+};
+
+/** Parameterized SQL is shared with isolated PostgreSQL tests; no payload is read. */
+export function metricHistoryQuery(
+  nodeId: string,
+  hours: number,
+  now = new Date(),
+) {
   if (!Number.isFinite(hours) || hours < 1 || hours > 8760)
     throw new ApiError(400, "查询时间范围无效");
-  const since = new Date(Date.now() - hours * 3600000);
+  const since = new Date(now.getTime() - hours * 3600000);
   if (hours > 48)
     return {
-      resolution: "hour",
-      samples: await db().metricHourly.findMany({
-        where: { nodeId, bucketAt: { gte: since } },
-        orderBy: { bucketAt: "asc" },
-        take: 9000,
-      }),
+      resolution: "hour" as const,
+      bucketSeconds: 3600,
+      // Raw data wins for every bucket that still has retained samples. This
+      // includes late arrivals since daily maintenance, without double counting.
+      query: Prisma.sql`
+        WITH raw AS MATERIALIZED (
+          SELECT date_trunc('hour', "recordedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS "bucketAt",
+                 count(*)::integer AS "sampleCount",
+                 avg("cpuPercent") AS "cpuAvg", max("cpuPercent") AS "cpuMax",
+                 avg("memoryPercent") AS "memoryAvg", max("memoryPercent") AS "memoryMax"
+          FROM "MetricSample"
+          WHERE "nodeId" = ${nodeId}
+            AND "recordedAt" >= ${since}::timestamptz AND "recordedAt" < ${now}::timestamptz
+          GROUP BY 1
+        )
+        SELECT "bucketAt", "sampleCount", "cpuAvg", "cpuMax", "memoryAvg", "memoryMax"
+        FROM raw
+        UNION ALL
+        SELECT h."bucketAt", h."sampleCount", h."cpuAvg", h."cpuMax", h."memoryAvg", h."memoryMax"
+        FROM "MetricHourly" h
+        WHERE h."nodeId" = ${nodeId}
+          AND h."bucketAt" >= date_trunc('hour', ${since}::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+          AND h."bucketAt" < ${now}::timestamptz
+          AND NOT EXISTS (SELECT 1 FROM raw r WHERE r."bucketAt" = h."bucketAt")
+        ORDER BY "bucketAt" ASC`,
     };
+  const bucketSeconds = Math.ceil((hours * 3600) / 1440);
   return {
-    resolution: "raw",
-    samples: await db().metricSample.findMany({
-      where: { nodeId, recordedAt: { gte: since } },
-      orderBy: { recordedAt: "desc" },
-      take: 3000,
-    }),
+    resolution: "raw" as const,
+    bucketSeconds,
+    // Half-open bounds and an origin at the requested start cap the result at
+    // 1440 points, including both ends of the requested range without LIMIT loss.
+    query: Prisma.sql`
+      SELECT date_bin(${bucketSeconds}::integer * interval '1 second', "recordedAt", ${since}::timestamptz) AS "recordedAt",
+             count(*)::integer AS "sampleCount",
+             avg("cpuPercent") AS "cpuPercent", max("cpuPercent") AS "cpuMax",
+             avg("memoryPercent") AS "memoryPercent", max("memoryPercent") AS "memoryMax"
+      FROM "MetricSample"
+      WHERE "nodeId" = ${nodeId}
+        AND "recordedAt" >= ${since}::timestamptz AND "recordedAt" < ${now}::timestamptz
+      GROUP BY 1
+      ORDER BY "recordedAt" ASC`,
   };
 }
 

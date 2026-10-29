@@ -603,7 +603,7 @@ function HistoryChart({
         CPU <span className="memory-legend" />
         内存{" "}
         <span className="muted">
-          {hourly ? "小时均值" : "原始采样"} · {data.length} 条
+          {hourly ? "小时均值" : "采样聚合"} · {data.length} 个点
         </span>
       </div>
       <svg

@@ -96,7 +96,6 @@ model ApiKey {
   revokedAt      DateTime?    @db.Timestamptz(3)
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tasks          Task[]
   auditEvents    AuditEvent[]
 
   @@index([userId, revokedAt])
@@ -182,6 +181,14 @@ model MetricHourly {
 
   @@id([nodeId, bucketAt])
   @@index([bucketAt], type: Brin)
+}
+
+// The SQL singleton constraint and function serialize durable maintenance progress.
+model MetricMaintenanceState {
+  id                String    @id @default("metrics")
+  aggregatedThrough DateTime? @db.Timestamptz(3)
+  lastSucceededAt   DateTime? @db.Timestamptz(3)
+  summary           Json      @default("{}")
 }
 
 model Application {
@@ -288,6 +295,7 @@ model Task {
   status         TaskStatus  @default(QUEUED)
   nodeId         String?
   actorId        String?
+  // Retain the original key identity: deletion must fail reauthorization.
   apiKeyId       String?
   source         TaskSource  @default(WEB)
   idempotencyKey String?     @unique
@@ -305,7 +313,6 @@ model Task {
   updatedAt      DateTime    @updatedAt @db.Timestamptz(3)
   node           Node?       @relation(fields: [nodeId], references: [id], onDelete: Restrict)
   actor          User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  apiKey         ApiKey?     @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
   logs           TaskLog[]
 
   @@index([status, createdAt])
