@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module operations-ui
  * @description 任务、Docker、文件、系统、站点、自动化和PTY页面，操作统一进入任务队列。
- * @logic 用户确认危险操作并轮询任务；终端一次性票据连接、显示断线状态且不重放输入；URL预填目标但不执行，提交失败保留幂等键。
+ * @logic 危险操作确认后轮询任务，按状态解释无日志结果；终端一次性票据连接且不重放输入；URL只预填目标，提交失败保留幂等键。
  * @dependencies React, shared UI, RPC, xterm
  * @index_tags operations, tasks, terminal, automation, ui
  * @author holic512
@@ -35,6 +35,15 @@ import {
 } from "./shared";
 import { Button } from "./ui/button";
 import { createTaskSubmission } from "@/lib/task-submission";
+const taskLogMessages: Record<string, string> = {
+  QUEUED: "任务已入队，等待派发…",
+  DISPATCHED: "任务已派发，等待执行端开始执行…",
+  RUNNING: "任务正在执行，等待执行端返回日志…",
+  SUCCEEDED: "执行成功，未返回文本日志；如有结构化结果，请在下方查看。",
+  FAILED: "执行失败，未返回文本日志；请查看错误信息。",
+  CANCELLED: "任务已取消，未执行。",
+  UNKNOWN: "执行结果未知，请先查看任务状态与对账结果，勿直接重试。",
+};
 export function Tasks() {
   const q = useQuery<TaskData[]>("tasks.list");
   const [filter, setFilter] = useState("");
@@ -159,7 +168,7 @@ export function TaskDetail({ id }: { id: string }) {
               <pre className="terminal-output">
                 {task.logs?.length
                   ? task.logs.map((l) => `[${l.stream}] ${l.message}`).join("")
-                  : task.output || "等待执行端返回日志…"}
+                  : task.output || taskLogMessages[task.status]}
               </pre>
             </section>
             {Object.keys(task.result ?? {}).length > 0 && (
@@ -652,13 +661,7 @@ function OperationsForm({
                 <pre className="terminal-output">
                   {taskQuery.data?.output ||
                     taskQuery.data?.logs?.map((l) => l.message).join("") ||
-                    (taskQuery.data?.status === "SUCCEEDED"
-                      ? "执行成功，无文本日志；结构化结果见下方。"
-                      : ["FAILED", "CANCELLED", "UNKNOWN"].includes(
-                            taskQuery.data?.status ?? "",
-                          )
-                        ? "任务已结束或结果待确认，无文本日志，请检查状态和错误。"
-                        : "等待 Agent 执行…")}
+                    taskLogMessages[taskQuery.data?.status ?? "QUEUED"]}
                 </pre>
                 {taskQuery.data?.result &&
                   Object.keys(taskQuery.data.result).length > 0 && (
