@@ -225,6 +225,7 @@ export const methodSchemas = {
     .extend({ confirmed: confirmation }),
   "actions.run": z.object({
     id,
+    idempotencyKey: taskInput.shape.idempotencyKey,
     nodeId: id.optional(),
     values: z.record(z.string(), z.string().max(4000)).default({}),
     confirmed: confirmation,

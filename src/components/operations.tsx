@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module operations-ui
  * @description 任务、Docker、文件、系统、站点、自动化和PTY页面，操作统一进入任务队列。
- * @logic 用户确认危险操作，服务端执行权限校验；轮询任务日志；终端一次性票据连接；URL 预填节点与目标但不自动执行。
+ * @logic 用户确认危险操作，服务端执行权限校验；轮询任务日志；终端一次性票据连接；URL 预填节点与目标但不自动执行，提交失败保留幂等键。
  * @dependencies React, shared UI, RPC, xterm
  * @index_tags operations, tasks, terminal, automation, ui
  * @author holic512
@@ -34,6 +34,7 @@ import {
   type Field,
 } from "./shared";
 import { Button } from "./ui/button";
+import { createTaskSubmission } from "@/lib/task-submission";
 export function Tasks() {
   const q = useQuery<TaskData[]>("tasks.list");
   const [filter, setFilter] = useState("");
@@ -517,6 +518,7 @@ function OperationsForm({
       : config.actions[0].type,
   );
   const [task, setTask] = useState("");
+  const [submitTask] = useState(() => createTaskSubmission());
   const taskQuery = useQuery<TaskData>(
     task ? "tasks.get" : null,
     { id: task },
@@ -526,12 +528,11 @@ function OperationsForm({
   const current = config.actions.find((a) => a.type === action)!;
   const selectedNode = q.data?.find((n) => n.id === node);
   const launch = async (data: Record<string, unknown>) => {
-    const result = await rpc<TaskData>("tasks.create", {
+    const result = await submitTask<TaskData>("tasks.create", {
       type: action,
       nodeId: node,
       payload: data,
       confirmed: current.dangerous,
-      idempotencyKey: crypto.randomUUID(),
     });
     setTask(result.id);
     return result;
@@ -610,9 +611,13 @@ function OperationsForm({
                       `${current.label}？`,
                       `此操作将在 ${selectedNode?.name} 上执行，参数：${JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => ["id", "name", "project", "path", "action"].includes(key))))}。操作将被审计。`,
                       () => launch(data),
-                      "任务已加入队列",
+                      "任务已记录，请查看状态与结果",
                     );
-                  } else await op.run(() => launch(data), "任务已加入队列");
+                  } else
+                    await op.run(
+                      () => launch(data),
+                      "任务已记录，请查看状态与结果",
+                    );
                 }}
               />
             ) : (
@@ -725,6 +730,7 @@ export function Resources({ mode }: { mode: string }) {
   );
   const [siteTask, setSiteTask] = useState("");
   const [actionTask, setActionTask] = useState("");
+  const [submitAction] = useState(() => createTaskSubmission());
   const [actionUrl, setActionUrl] = useState("");
   const [runAction, setRunAction] = useState<GenericRow | null>(null);
   const op = useOperation(() => {
@@ -1372,7 +1378,7 @@ export function Resources({ mode }: { mode: string }) {
                 `执行 ${runAction.name}？`,
                 "参数将发送到服务端校验，远程操作进入任务队列并记录审计。",
                 async () => {
-                  const r = await rpc<{ id?: string; url?: string }>(
+                  const r = await submitAction<{ id?: string; url?: string }>(
                     "actions.run",
                     { id: runAction.id, nodeId, values, confirmed: true },
                   );
@@ -1382,7 +1388,9 @@ export function Resources({ mode }: { mode: string }) {
                   setActionUrl(r.url ?? "");
                   return r;
                 },
-                runAction.type === "URL" ? "链接已生成" : "操作任务已加入队列",
+                runAction.type === "URL"
+                  ? "链接已生成"
+                  : "任务已记录，请查看状态与结果",
               );
             }}
           />
@@ -1396,7 +1404,7 @@ export function Resources({ mode }: { mode: string }) {
       )}
       {mode === "actions" && actionTask && (
         <p className="inline-feedback">
-          任务已加入队列：
+          任务已记录：
           <Link href={`/tasks/${actionTask}`}>查看执行日志与结果</Link>
         </p>
       )}

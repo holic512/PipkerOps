@@ -17,6 +17,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { db } from "../src/lib/db";
 import { hashPassword } from "../src/lib/crypto";
+import { createTaskSubmission } from "../src/lib/task-submission";
 import type { NodeData, TaskData, ProbeData } from "../src/lib/client";
 const origin = process.env.APP_ORIGIN ?? "http://127.0.0.1:3000";
 async function waitFor<T>(
@@ -89,12 +90,14 @@ test(
     const address = target.address();
     assert.ok(address && typeof address !== "string");
     const targetUrl = `http://127.0.0.1:${address.port}/health`;
+    let actionRequests = 0;
     const httpsTarget = createHttpsServer(
       {
         key: readFileSync(".data/pki/server-linux.key"),
         cert: readFileSync(".data/pki/server-linux.crt"),
       },
       (req, res) => {
+        actionRequests++;
         res.setHeader("Content-Type", "application/json");
         res.end(
           JSON.stringify({ method: req.method, value: "http-action-verified" }),
@@ -440,11 +443,34 @@ test(
         parameters: [],
         confirmed: true,
       });
-      const actionTask = await call<TaskData>(cookie, "actions.run", {
+      let loseResponse = true;
+      let recordedTask: TaskData | undefined;
+      const submitAction = createTaskSubmission(
+        async <T>(method: string, params: Record<string, unknown> = {}) => {
+          const result = await call<T>(cookie, method, params);
+          if (loseResponse) {
+            loseResponse = false;
+            recordedTask = result as TaskData;
+            throw new Error("response lost after commit");
+          }
+          return result;
+        },
+      );
+      const actionInput = { id: action.id, values: {}, confirmed: true };
+      await assert.rejects(
+        submitAction<TaskData>("actions.run", actionInput),
+        /response lost after commit/,
+      );
+      const actionTask = await submitAction<TaskData>("actions.run", {
         id: action.id,
         values: {},
         confirmed: true,
       });
+      assert.equal(
+        actionTask.id,
+        recordedTask?.id,
+        "retry must recover committed task instead of creating another",
+      );
       actionTaskId = actionTask.id;
       const httpResult = await waitFor(
         () => call<TaskData>(cookie, "tasks.get", { id: actionTask.id }),
@@ -458,6 +484,11 @@ test(
       );
       assert.equal(httpResult.idempotent, false);
       assert.equal(httpResult.attempts, 1);
+      assert.equal(
+        actionRequests,
+        1,
+        "lost response and explicit retry must execute POST once",
+      );
       const cronKey = await call<{ id: string; key: string }>(
         cookie,
         "keys.create",

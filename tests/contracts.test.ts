@@ -72,6 +72,28 @@ test("未知和继承原型的方法名明确拒绝，不进入数据库", async
   }
 });
 
+test("自定义动作可公开并校验与任务一致的幂等键", () => {
+  assert.equal(
+    methodSchemas["actions.run"].safeParse({
+      id: "action",
+      idempotencyKey: "short",
+    }).success,
+    false,
+  );
+  assert.equal(
+    methodSchemas["actions.run"].parse({
+      id: "action",
+      idempotencyKey: "request-123",
+    }).idempotencyKey,
+    "request-123",
+  );
+  assert.ok(
+    JSON.stringify(z.toJSONSchema(methodSchemas["actions.run"])).includes(
+      '"idempotencyKey"',
+    ),
+  );
+});
+
 test("核心输出Schema公开任务状态、结果与日志约束且拒绝缺失字段", () => {
   for (const method of [
     "nodes.list",

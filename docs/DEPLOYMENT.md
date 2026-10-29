@@ -138,3 +138,5 @@ CAPACITY_NODES=50 npm run test:capacity
 设备身份与长查询真实Linux复验：本轮Agent从sysfs返回非空网络身份，节点7天磁盘历史在维护前即可返回真实原始尾部；容器、Compose、拓扑、PTY和任务对账路径同时回归通过。
 
 最新平台/MCP联调约79秒通过：真实本机Agent注册/审批/mTLS/证书轮换、任务结果、探针/计划权限及撤销；标准SDK检查五个核心工具outputSchema，执行节点/应用查询→system.info任务→tasks_get结果/日志，核对structuredContent.data与原文本一致，并验证执行Key吊销拒绝访问。客户端没有使用自建MCP替代实现。
+
+提交响应丢失回归（本轮约84秒平台联调通过）：真实actions.run已落库后模拟调用方未收到响应，通过页面使用的提交器显式重提，返回同一任务ID；真实HTTPS目标POST计数保持1。服务端仍重查授权和当前动作配置，未自动重放任务；页面刷新后不保留内存中的恢复键，结果不明时须先查任务中心。

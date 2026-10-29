@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module business-api
  * @description Web 与 MCP 共用的资源服务入口，显式路由业务方法与输入契约。
- * @logic 查询执行 scope/节点过滤，写入验证后审计，实际远端操作转换为持久化任务。
+ * @logic 查询执行 scope/节点过滤，写入验证后审计，实际远端操作转换为持久化任务，动作透传幂等键与执行来源。
  * @dependencies Prisma, authorization, node/task services, cron-parser
  * @index_tags api, apps, probes, topology, automation
  * @author holic512
@@ -953,17 +953,27 @@ export async function execute(
         return { url };
       }
       if (a.type === "HTTP")
-        return createTask(actor, {
-          type: "http.request",
+        return createTask(
+          actor,
+          {
+            type: "http.request",
+            payload: config,
+            confirmed: p.confirmed,
+            idempotencyKey: p.idempotencyKey,
+          },
+          actor.apiKeyId ? "MCP" : "WEB",
+        );
+      return createTask(
+        actor,
+        {
+          type: a.type,
+          nodeId,
           payload: config,
           confirmed: p.confirmed,
-        });
-      return createTask(actor, {
-        type: a.type,
-        nodeId,
-        payload: config,
-        confirmed: p.confirmed,
-      });
+          idempotencyKey: p.idempotencyKey,
+        },
+        actor.apiKeyId ? "MCP" : "WEB",
+      );
     }
     case "terminal.ticket": {
       const nodeId = id.parse(p.nodeId);

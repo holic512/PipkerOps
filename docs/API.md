@@ -27,7 +27,7 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | sites.apply | id,confirmed:true | sites:write高危；Nginx写入、语法检查、成功后reload，失败回滚 |
 | sites.certificate / acme / renew / https | id,staging?；acme另需email；写操作confirmed:true | 生产到期信息由真实结果更新；https先检查有效证书，Web默认建立每日续期计划 |
 | sites.delete | id,confirmed:true | sites:write高危；返回nginx.remove任务，受管配置删除并reload成功后才移除站点/续期计划；保留证书 |
-| actions.list / save / run | save:{id?,name,type,config,parameters?,nodeIds?,confirmed:true}；run:{id,nodeId?,values,confirmed:true} | actions:read/write；Shell/docker.action/HTTP/URL；HTTP与URL无需nodeId |
+| actions.list / save / run | save:{id?,name,type,config,parameters?,nodeIds?,confirmed:true}；run:{id,nodeId?,values,idempotencyKey?,confirmed:true} | actions:read/write；Shell/docker.action/HTTP/URL；HTTP与URL无需nodeId |
 | actions.delete | id,confirmed:true | actions:write高危+原节点范围 |
 | schedules.list / save / delete | save:{id?,enabled?,name,cron,timezone,taskType,nodeId?,payload,confirmed:true}；delete:{id,confirmed:true} | schedules:read/write与任务本身权限；每次执行重授权，失效停用并通知 |
 | alerts.list / save | id?,enabled?,name,nodeId?或probeId?,metric,operator(gt/lt),threshold,durationSeconds,webhookUrl? | alerts:read/write；指标cpuPercent/memoryPercent/offline/probeFailure |
@@ -95,3 +95,5 @@ systemd 周期采样新增 `payload.services`，仅包含已加载的服务单�
 `nodes_list`、`applications_list`、`tasks_create`、`tasks_get`、`tasks_list` 的 `tools/list` 声明 `outputSchema`。成功响应同时提供 `structuredContent: {data: <业务结果>}` 与原有 `content[0].text = JSON.stringify(<业务结果>)`，现有文本客户端无需改动。日期统一JSON ISO字符串；Schema约束资源身份、任务状态/来源/尝试次数、结果对象及日志字段。`tasks_get`要求返回日志数组，即使尚无日志也返回空数组。SDK在服务端和标准客户端校验输出，未声明的方法继续使用已有文本返回。
 
 任务创建只表示已记录执行意图，用返回ID调用 `tasks_get` 追踪到最终状态；FAILED/UNKNOWN必须检查error和日志，非幂等UNKNOWN不可盲目重提。工具错误保留isError及现有文本反馈，不伪装成成功data。结构化返回复用统一业务结果，不另建MCP业务查询或执行逻辑。
+
+运维表单及自定义动作在当前页面实例中为尚未收到成功响应的同一请求保留幂等键，显式再次提交时可恢复已创建任务；不自动重放。成功响应后新一次操作使用新键。`actions.run`将可选幂等键传入统一任务服务，键对应的配置改变时返回409。页面重载或切换后若旧结果不明，应先在任务中心核对，不能通过新键盲目重提。任务找回不意味着重新入队，页面提示“任务已记录”，实际状态以任务详情为准。
