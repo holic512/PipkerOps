@@ -33,6 +33,7 @@ import {
   JsonView,
 } from "./shared";
 import { Button } from "./ui/button";
+import { ResourceHistory } from "./resource-history";
 const online = (node: NodeData) => node.connected;
 export function Overview() {
   const q = useQuery<{
@@ -512,6 +513,7 @@ export function NodeDetail({ id }: { id: string }) {
             <div className="inner-tabs">
               {[
                 ["metrics", "历史监控"],
+                ["resources", "磁盘 / 网络 / IO"],
                 ["details", "采集详情"],
               ].map(([key, name]) => (
                 <button
@@ -558,6 +560,8 @@ export function NodeDetail({ id }: { id: string }) {
                   />
                 </QueryState>
               </section>
+            ) : tab === "resources" ? (
+              <ResourceHistory nodeId={id} />
             ) : (
               <section className="panel form-panel">
                 <h2>最近一次完整采样</h2>

@@ -204,6 +204,11 @@ test(
         "approved mTLS metrics",
       );
       console.log("Verified real Agent enrollment, approval, mTLS and metrics");
+      const diskHistory = await call<{
+        device: string;
+        series: { points: unknown[] }[];
+      }>(cookie, "nodes.history", { nodeId, kind: "disk", hours: 1 });
+      assert.ok(diskHistory.device && diskHistory.series[0]?.points.length);
       const task = await call<TaskData>(cookie, "tasks.create", {
         type: "system.info",
         nodeId,
@@ -625,6 +630,13 @@ test(
       await mcp.connect(transport);
       const toolList = await mcp.listTools();
       assert.ok(toolList.tools.some((t) => t.name === "nodes_list"));
+      const historySchema = JSON.stringify(
+        toolList.tools.find((t) => t.name === "nodes_history")?.inputSchema,
+      );
+      assert.ok(
+        historySchema.includes('"network"') &&
+          historySchema.includes('"device"'),
+      );
       const metricsSchema = JSON.stringify(
         toolList.tools.find((t) => t.name === "nodes_metrics")?.inputSchema,
       );
@@ -656,6 +668,11 @@ test(
         arguments: { params: { nodeId, hours: 1 } },
       });
       assert.equal(restricted.isError, true);
+      const restrictedHistory = await mcp.callTool({
+        name: "nodes_history",
+        arguments: { params: { nodeId, kind: "disk", hours: 1 } },
+      });
+      assert.equal(restrictedHistory.isError, true);
       await call(cookie, "keys.revoke", { id: key.id, confirmed: true });
       await assert.rejects(() =>
         mcp.callTool({ name: "nodes_list", arguments: { params: {} } }),

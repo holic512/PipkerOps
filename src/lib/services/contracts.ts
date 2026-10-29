@@ -33,6 +33,7 @@ export const METHODS = [
   "nodes.reject",
   "nodes.revoke",
   "nodes.metrics",
+  "nodes.history",
   "nodes.update",
   "applications.list",
   "applications.save",
@@ -100,6 +101,12 @@ export const methodSchemas = {
   "nodes.metrics": z.object({
     nodeId: id,
     hours: z.number().min(1).max(8760).default(24),
+  }),
+  "nodes.history": z.object({
+    nodeId: id,
+    kind: z.enum(["disk", "network", "io"]),
+    hours: z.number().min(1).max(48).default(1),
+    device: z.string().min(1).max(200).optional(),
   }),
   "nodes.update": z.object({
     id,

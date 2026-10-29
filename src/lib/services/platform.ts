@@ -14,6 +14,7 @@ import { db } from "../db";
 import { ApiError, authorize, confirm, nodeFilter, type Actor } from "../auth";
 import { randomToken, hashToken } from "../crypto";
 import * as nodes from "./nodes";
+import { metricDetails } from "./metric-details";
 import { createTask, validateTask, listTasks, getTask } from "./tasks";
 import { redis } from "../redis";
 import { privateHost } from "../config";
@@ -140,6 +141,16 @@ export async function execute(
         id.parse(p.nodeId),
         p.hours ? z.number().parse(p.hours) : 24,
       );
+    case "nodes.history": {
+      const data = p as z.infer<(typeof methodSchemas)["nodes.history"]>;
+      return metricDetails(
+        actor,
+        data.nodeId,
+        data.kind,
+        data.hours,
+        data.device,
+      );
+    }
     case "tasks.create":
       return createTask(actor, p, actor.apiKeyId ? "MCP" : "WEB");
     case "tasks.list":

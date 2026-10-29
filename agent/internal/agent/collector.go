@@ -54,6 +54,14 @@ func Collect(ctx context.Context) map[string]any {
 	} else {
 		errors = append(errors, "disk: "+err.Error())
 	}
+	// Container overlay mounts are omitted by Partitions(false); root capacity is still real.
+	if len(filesystems) == 0 {
+		if usage, err := disk.UsageWithContext(ctx, "/"); err == nil {
+			filesystems = append(filesystems, map[string]any{"mountpoint": "/", "total": usage.Total, "used": usage.Used, "free": usage.Free, "usedPercent": usage.UsedPercent})
+		} else {
+			errors = append(errors, "disk /: "+err.Error())
+		}
+	}
 	result["disk"] = filesystems
 	if network, err := gnet.IOCountersWithContext(ctx, true); err == nil {
 		if len(network) > 64 {

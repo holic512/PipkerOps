@@ -235,10 +235,21 @@ test(
       assert.ok(node);
       nodeId = node.id;
       await rpc("nodes.approve", { id: nodeId, confirmed: true });
-      await wait(
+      const telemetry = await wait(
         () => db().metricSample.findFirst({ where: { nodeId } }),
         Boolean,
         "Linux metrics",
+      );
+      assert.ok(
+        Array.isArray((telemetry!.payload as Record<string, unknown>).disk),
+      );
+      const disk = await rpc<{
+        device: string | null;
+        series: { points: unknown[] }[];
+      }>("nodes.history", { nodeId, kind: "disk", hours: 1 });
+      assert.ok(
+        disk.device && disk.series[0]?.points.length,
+        "overlay root must expose real capacity history",
       );
       const info = await task("system.info");
       assert.equal((info.result as { os: string }).os, "linux");

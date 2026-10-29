@@ -996,6 +996,43 @@ td.inline-actions {
   min-height: 200px;
   max-height: 370px;
 }
+.resource-history-controls {
+  flex-wrap: wrap;
+}
+.resource-history-controls h2 {
+  margin-right: auto;
+}
+.resource-history-controls select {
+  max-width: 100%;
+}
+.resource-history-legend {
+  flex-wrap: wrap;
+}
+.resource-history-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.resource-history-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+}
+.resource-history-values {
+  margin-top: 12px;
+}
+.resource-chart-scroll {
+  overflow-x: auto;
+}
+.resource-chart-scroll svg {
+  display: block;
+  min-width: 700px;
+}
+.resource-history-values summary {
+  cursor: pointer;
+  color: #526173;
+  padding: 6px 0;
+}
 .app-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

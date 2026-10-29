@@ -11,6 +11,7 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | users.me | 无 | 当前身份基本信息 |
 | overview | 无 | nodes:read；节点/最新监控，任务计数另需tasks:read |
 | nodes.list / nodes.metrics | metrics需要nodeId,hours(1–8760) | nodes:read；<=48h按窗口聚合最多1440点（不返回payload），超过为小时历史+最新原始小时桶去重合并 |
+| nodes.history | nodeId,kind(disk/network/io),hours(1–48),device? | nodes:read+目标节点；返回设备列表及选中设备，每个方向最多720个时间桶，磁盘为%，网络/IO为B/s；省略设备选字典序首个 |
 | nodes.update | id,name,labels? | nodes:write+目标节点；更新名称和标签 |
 | nodes.token | name,maxUses(1–50),hours(1–168) | nodes:approve；单次返回token/gateway/enrollUrl |
 | nodes.approve / reject / revoke | id,confirmed:true | nodes:approve；审批签发mTLS，吊销断开 |
