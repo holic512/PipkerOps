@@ -45,12 +45,14 @@ HTTP探针公网目标必须HTTPS；私网/回环允许HTTP用于内网健康检
 
 | type | payload | scope | 高危 |
 | --- | --- | --- | --- |
-| system.info / systemd.list / firewall.list | {} | system:read | 否 |
+| system.info / firewall.list | {} | system:read | 否 |
 | shell.exec | script,timeoutSeconds(1–300) | system:write | 是 |
+| systemd.list | name?（准确服务名；省略列出全部，未加载或不存在时任务失败） | system:read | 否 |
 | systemd.action | name,action(start/stop/restart/reload/enable/disable) | system:write | 是 |
 | firewall.rule | action(allow/deny/reject/delete),port,protocol(tcp/udp),ruleAction?(allow/deny/reject) | system:write | 是 |
 | software.install | name(nginx/docker/git/curl/wget/htop/unzip/certbot/ufw) | system:write | 是 |
 | docker.list / compose.list | {} | docker:read | 否 |
+| docker.inspect | id（准确容器名称或 ID）；返回 containers 详情（状态、镜像、挂载及端口，不返回环境变量和启动命令） | docker:read | 否 |
 | docker.stats / docker.logs | stats:{id?}；logs:{id,tail(1–2000)} | docker:read | 否 |
 | docker.action / docker.pull | action:{id,action(start/stop/restart/remove)}；pull:{image} | docker:write | action是 |
 | compose.read / compose.status | project | docker:read | 否 |
@@ -71,3 +73,9 @@ QUEUED→DISPATCHED→RUNNING→SUCCEEDED/FAILED；失去执行证据为UNKNOWN�
 获取ticket后连接返回的wss URL，浏览器Origin必须匹配APP_ORIGIN。发送 `{type:"terminal.input",data}` 或 `{type:"terminal.resize",cols,rows}`；接收terminal.output(data)、terminal.exit、terminal.error。ticket一次消费；关闭、注销、会话过期、Key吊销或节点吊销会结束会话。终端内容可能含敏感信息，平台审计记录建立/结束，不把交互内容作为任务脚本自动重放。
 
 专项技能位于 `skills/pipkerops-{deploy,monitor,troubleshoot}/SKILL.md`，可复制到用户技能目录使用；不会自动安装或写入外部客户端配置。
+
+## 应用实例运维入口
+
+应用中心的部署实例提供 Docker 详情/日志/生命周期/终端、Compose 状态/配置/部署更新、systemd 状态/管理及自定义动作入口。运维页面支持 `node`、`target`、`action` 查询参数，终端使用 `node`、`target`；参数只预填，不触发执行。切换节点后不继续预填原节点目标。任务入队后查看页面结果或任务详情；服务端照常校验角色、scope、节点范围和高危许可。
+
+自定义动作页接收 `node`、`target`、`applicationId`、`deploymentId`，仅为动作声明的同名参数预填；用户选择动作并检查全部参数后确认执行，不猜测其他参数含义。节点选项受动作节点范围限制。

@@ -44,6 +44,12 @@ export const taskSpecs: Record<
     idempotent: true,
     schema: z.object({}),
   },
+  "docker.inspect": {
+    scope: "docker:read",
+    dangerous: false,
+    idempotent: true,
+    schema: z.object({ id: name }),
+  },
   "docker.action": {
     scope: "docker:write",
     dangerous: true,
@@ -81,7 +87,12 @@ export const taskSpecs: Record<
     scope: "system:read",
     dangerous: false,
     idempotent: true,
-    schema: z.object({}),
+    schema: z.object({
+      name: z
+        .string()
+        .regex(/^[A-Za-z0-9][A-Za-z0-9_.@-]{0,199}$/)
+        .optional(),
+    }),
   },
   "systemd.action": {
     scope: "system:write",

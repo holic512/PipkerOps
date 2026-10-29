@@ -294,6 +294,14 @@ test(
       const compose = await task("compose.read", { project: run });
       assert.ok(String(compose.result.yaml).includes("sleeper"));
       await task("compose.status", { project: run });
+      const inspected = await task("docker.inspect", {
+        id: run + "-sleeper-1",
+      });
+      assert.equal(
+        (inspected.result.containers as { Name: string }[])[0].Name,
+        "/" + run + "-sleeper-1",
+      );
+      await task("docker.inspect", { id: "missing-" + run }, false);
       await task("compose.list");
       await task("docker.action", { id, action: "stop" });
       await task("docker.action", { id, action: "start" });

@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module operations-ui
  * @description 任务、Docker、文件、系统、站点、自动化和PTY页面，操作统一进入任务队列。
- * @logic 用户确认危险操作，服务端执行权限校验；轮询任务日志；终端一次性票据连接。
+ * @logic 用户确认危险操作，服务端执行权限校验；轮询任务日志；终端一次性票据连接；URL 预填节点与目标但不自动执行。
  * @dependencies React, shared UI, RPC, xterm
  * @index_tags operations, tasks, terminal, automation, ui
  * @author holic512
@@ -192,6 +192,12 @@ const ops: Record<
     actions: [
       { type: "docker.list", label: "发现容器", dangerous: false, fields: [] },
       {
+        type: "docker.inspect",
+        label: "容器详情",
+        dangerous: false,
+        fields: [{ name: "id", label: "容器名称或 ID", required: true }],
+      },
+      {
         type: "docker.stats",
         label: "容器监控",
         dangerous: false,
@@ -338,7 +344,12 @@ const ops: Record<
       "管理 systemd 服务、防火墙和常用软件，或执行有审计记录的脚本。",
     actions: [
       { type: "system.info", label: "系统信息", dangerous: false, fields: [] },
-      { type: "systemd.list", label: "服务列表", dangerous: false, fields: [] },
+      {
+        type: "systemd.list",
+        label: "服务状态",
+        dangerous: false,
+        fields: [{ name: "name", label: "服务名（留空列出全部）" }],
+      },
       {
         type: "systemd.action",
         label: "管理服务",
@@ -475,10 +486,36 @@ const ops: Record<
   },
 };
 export function Operations({ mode }: { mode: string }) {
+  const search = useSearchParams();
+  return (
+    <OperationsForm
+      key={`${mode}:${search.toString()}`}
+      mode={mode}
+      requestedNode={search.get("node") ?? ""}
+      requestedAction={search.get("action") ?? ""}
+      target={search.get("target") ?? ""}
+    />
+  );
+}
+function OperationsForm({
+  mode,
+  requestedNode,
+  requestedAction,
+  target,
+}: {
+  mode: string;
+  requestedNode: string;
+  requestedAction: string;
+  target: string;
+}) {
   const config = ops[mode];
   const q = useQuery<NodeData[]>("nodes.list");
-  const [node, setNode] = useState("");
-  const [action, setAction] = useState(config.actions[0].type);
+  const [node, setNode] = useState(requestedNode);
+  const [action, setAction] = useState(
+    config.actions.some((a) => a.type === requestedAction)
+      ? requestedAction
+      : config.actions[0].type,
+  );
   const [task, setTask] = useState("");
   const taskQuery = useQuery<TaskData>(
     task ? "tasks.get" : null,
@@ -487,6 +524,7 @@ export function Operations({ mode }: { mode: string }) {
   );
   const op = useOperation();
   const current = config.actions.find((a) => a.type === action)!;
+  const selectedNode = q.data?.find((n) => n.id === node);
   const launch = async (data: Record<string, unknown>) => {
     const result = await rpc<TaskData>("tasks.create", {
       type: action,
@@ -547,17 +585,30 @@ export function Operations({ mode }: { mode: string }) {
           </div>
           <div className="form-panel">
             <h2>{current.label}</h2>
+            {node && !selectedNode?.connected && !q.isLoading && (
+              <p role="alert" className="error-text">
+                {selectedNode
+                  ? "节点离线，请恢复连接后执行。"
+                  : "节点不存在或无权访问，请重新选择节点。"}
+              </p>
+            )}
             {node ? (
               <ResourceForm
-                key={action}
-                busy={op.busy}
-                fields={current.fields}
+                key={`${action}:${node}`}
+                busy={op.busy || !selectedNode?.connected}
+                fields={current.fields.map((f) =>
+                  ["id", "project", "name"].includes(f.name) &&
+                  target &&
+                  node === requestedNode
+                    ? { ...f, defaultValue: target }
+                    : f,
+                )}
                 submit={current.dangerous ? "确认并执行" : "执行"}
                 onSubmit={async (data) => {
                   if (current.dangerous) {
                     op.ask(
                       `${current.label}？`,
-                      `此操作将在 ${q.data?.find((n) => n.id === node)?.name} 上执行。请检查参数，操作将被审计。`,
+                      `此操作将在 ${selectedNode?.name} 上执行，参数：${JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => ["id", "name", "project", "path", "action"].includes(key))))}。操作将被审计。`,
                       () => launch(data),
                       "任务已加入队列",
                     );
@@ -653,6 +704,7 @@ type GenericRow = {
   readAt?: string;
 };
 export function Resources({ mode }: { mode: string }) {
+  const context = useSearchParams();
   const method =
     ({ mcp: "keys.list", audit: "audit.list" } as Record<string, string>)[
       mode
@@ -1268,10 +1320,20 @@ export function Resources({ mode }: { mode: string }) {
           ))}
         </DataTable>
       </QueryState>
+      {mode === "actions" && context.get("deploymentId") && (
+        <p className="inline-feedback">
+          应用实例目标：{context.get("target")} · 节点：
+          {nodes.data?.find((n) => n.id === context.get("node"))?.name ??
+            context.get("node")}
+          。选择动作后检查执行节点和全部参数；仅同名
+          target、applicationId、deploymentId 参数预填。
+        </p>
+      )}
       {runAction && (
         <section className="panel form-panel detail-panel">
           <h2>执行：{runAction.name}</h2>
           <ResourceForm
+            key={`${runAction.id}:${context.toString()}`}
             busy={op.busy}
             fields={[
               ...(["URL", "HTTP"].includes(runAction.type ?? "")
@@ -1282,13 +1344,25 @@ export function Resources({ mode }: { mode: string }) {
                       label: "执行节点",
                       type: "select" as const,
                       required: true,
-                      options: nodeOptions,
+                      defaultValue: context.get("node") ?? "",
+                      options: nodeOptions?.filter(
+                        (n) =>
+                          !runAction.nodeIds?.length ||
+                          runAction.nodeIds.includes(n.value),
+                      ),
                     },
                   ]),
               ...(runAction.parameters?.map((p) => ({
                 name: p.name,
                 label: p.label,
                 required: p.required,
+                defaultValue: [
+                  "target",
+                  "applicationId",
+                  "deploymentId",
+                ].includes(p.name)
+                  ? (context.get(p.name) ?? "")
+                  : "",
               })) ?? []),
             ]}
             submit="执行操作"
@@ -1490,14 +1564,18 @@ export function Resources({ mode }: { mode: string }) {
 }
 export function TerminalPage() {
   const q = useQuery<NodeData[]>("nodes.list");
-  const requested = useSearchParams().get("node") ?? "";
-  const [lastRequested, setLastRequested] = useState(requested);
+  const search = useSearchParams();
+  const requested = search.get("node") ?? "";
+  const target = search.get("target") ?? "";
+  const requestKey = `${requested}:${target}`;
+  const [lastRequested, setLastRequested] = useState(requestKey);
   const [node, setNode] = useState(requested);
-  if (requested !== lastRequested) {
-    setLastRequested(requested);
-    if (requested) setNode(requested);
+  const [containerId, setContainerId] = useState(target);
+  if (requestKey !== lastRequested) {
+    setLastRequested(requestKey);
+    setNode(requested);
+    setContainerId(target);
   }
-  const [containerId, setContainerId] = useState("");
   const [sessions, setSessions] = useState<
     { id: string; nodeId: string; name: string; url: string }[]
   >([]);
@@ -1522,7 +1600,10 @@ export function TerminalPage() {
             <select
               aria-label="终端节点"
               value={node}
-              onChange={(e) => setNode(e.target.value)}
+              onChange={(e) => {
+                setNode(e.target.value);
+                setContainerId("");
+              }}
             >
               <option value="">选择节点</option>
               {q.data

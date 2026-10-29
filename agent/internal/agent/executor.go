@@ -113,6 +113,11 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		return command("/bin/sh", "-c", p.Script)
 	case "docker.list":
 		return command("docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}")
+	case "docker.inspect":
+		if !objectName.MatchString(p.ID) {
+			return "", nil, errors.New("invalid container id or name")
+		}
+		return dockerJSON(ctx, log, "containers", []string{"inspect", "--type=container", "--format", `{"Id":{{json .Id}},"Name":{{json .Name}},"Created":{{json .Created}},"State":{{json .State}},"Image":{{json .Config.Image}},"RestartCount":{{json .RestartCount}},"Mounts":{{json .Mounts}},"Ports":{{json .NetworkSettings.Ports}}}`, "--", p.ID})
 	case "docker.stats":
 		return dockerStats(ctx, p, log)
 	case "docker.action":
@@ -154,7 +159,18 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 	case "compose.status":
 		return e.composeStatus(ctx, p, log)
 	case "systemd.list":
-		return command("systemctl", "list-units", "--type=service", "--all", "--no-pager", "--output=json")
+		args := []string{"list-units", "--type=service", "--all", "--no-pager", "--output=json"}
+		if p.Name != "" {
+			if !serviceName.MatchString(p.Name) {
+				return "", nil, errors.New("invalid systemd service name")
+			}
+			args = append(args, "--", p.Name)
+		}
+		output, result, err := command("systemctl", args...)
+		if err == nil && p.Name != "" && strings.TrimSpace(output) == "[]" {
+			return output, result, fmt.Errorf("service %s is not loaded or does not exist", p.Name)
+		}
+		return output, result, err
 	case "systemd.action":
 		if !serviceName.MatchString(p.Name) {
 			return "", nil, errors.New("invalid systemd service name")

@@ -207,6 +207,10 @@ test(
         Boolean,
         "systemd Agent metrics",
       );
+      const scoped = await task("systemd.list", { name: "nginx.service" });
+      const units = JSON.parse(scoped.output) as { unit: string }[];
+      assert.equal(units.length, 1);
+      assert.equal(units[0].unit, "nginx.service");
       const services = await task("systemd.list");
       assert.ok(JSON.stringify(services).includes("nginx"));
       await task("systemd.action", { name: "nginx.service", action: "start" });

@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module application-and-probe-ui
  * @description 应用独立建模、多实例关联和多源探针的创建、执行与历史查询。
- * @logic 表单调用统一业务API，部署关联节点，探针记录真实延迟与成功率。
+ * @logic 表单调用统一业务API，部署关联节点，探针记录真实延迟与成功率；实例入口携带准确节点和目标进入共用运维页面。
  * @dependencies React, shared UI, RPC
  * @index_tags apps, deployments, probes, ui
  * @author holic512
@@ -257,23 +257,65 @@ export function Applications() {
                         <Status value={d.status} />
                       </td>
                       <td>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            op.ask(
-                              "解除实例关联？",
-                              "只删除平台关联记录，运行中的服务继续保留。",
-                              () =>
-                                rpc("deployments.delete", {
-                                  id: d.id,
-                                  confirmed: true,
-                                }),
-                            )
-                          }
-                        >
-                          解除关联
-                        </Button>
+                        <div className="inline-actions">
+                          {(d.type === "docker"
+                            ? [
+                                ["容器详情", "/docker", "docker.inspect"],
+                                ["日志", "/docker", "docker.logs"],
+                                ["生命周期", "/docker", "docker.action"],
+                                ["终端", "/terminal", ""],
+                              ]
+                            : d.type === "compose"
+                              ? [
+                                  ["项目状态", "/docker", "compose.status"],
+                                  ["配置", "/docker", "compose.read"],
+                                  ["部署更新", "/docker", "compose.deploy"],
+                                ]
+                              : d.type === "systemd"
+                                ? [
+                                    ["服务状态", "/system", "systemd.list"],
+                                    ["管理服务", "/system", "systemd.action"],
+                                  ]
+                                : []
+                          ).map(([label, path, action]) => (
+                            <Button
+                              key={label}
+                              size="sm"
+                              variant="outline"
+                              asChild
+                            >
+                              <Link
+                                href={`${path}?${new URLSearchParams({ node: d.nodeId, target: d.target, action })}`}
+                              >
+                                {label}
+                              </Link>
+                            </Button>
+                          ))}
+                          <Button size="sm" variant="outline" asChild>
+                            <Link
+                              href={`/actions?${new URLSearchParams({ node: d.nodeId, target: d.target, applicationId: selected.id, deploymentId: d.id })}`}
+                            >
+                              自定义动作
+                            </Link>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              op.ask(
+                                "解除实例关联？",
+                                "只删除平台关联记录，运行中的服务继续保留。",
+                                () =>
+                                  rpc("deployments.delete", {
+                                    id: d.id,
+                                    confirmed: true,
+                                  }),
+                              )
+                            }
+                          >
+                            解除关联
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
