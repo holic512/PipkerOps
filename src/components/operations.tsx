@@ -559,6 +559,7 @@ function OperationsForm({
                 onChange={(e) => {
                   setNode(e.target.value);
                   setTask("");
+                  op.clear();
                 }}
               >
                 <option value="">选择节点</option>
@@ -577,7 +578,12 @@ function OperationsForm({
             {config.actions.map((a) => (
               <button
                 className={action === a.type ? "active" : ""}
-                onClick={() => setAction(a.type)}
+                onClick={() => {
+                  if (action === a.type) return;
+                  setAction(a.type);
+                  setTask("");
+                  op.clear();
+                }}
                 key={a.type}
               >
                 {a.label}
