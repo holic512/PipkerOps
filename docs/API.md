@@ -4,6 +4,19 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 
 所有节点操作在服务端校验角色、scope、节点范围与高危许可。VIEWER不能写；节点审批、Key管理、平台审计需要ADMIN。Key空 `nodeIds`无节点权限，`["*"]`全节点。Key原文仅创建时返回一次。当前Key不能创建其他Key；持久Cron和探针保留创建Key身份并在每次调度与执行前重授权；升级前没有授权创建者的旧探针会停用，重新保存后恢复。API列表至多返回近期记录，不能当作全量数据导出。
 
+`keys.create.scopes`只接受以下已知权限，拼写错误返回400；MCP输入Schema同步公开枚举。已有Key不因该创建校验自动变更；`*`仍受节点范围、高危许可及用户角色限制。
+
+| 范围 | 支持的scope |
+| --- | --- |
+| 全部工具 | `*` |
+| 节点 | `nodes:read`、`nodes:write`、`nodes:approve` |
+| 应用/探针 | `apps:read`、`apps:write`、`probes:read`、`probes:write` |
+| 容器/文件/系统 | `docker:read`、`docker:write`、`files:read`、`files:write`、`system:read`、`system:write` |
+| 站点/动作 | `sites:read`、`sites:write`、`actions:read`、`actions:write` |
+| 计划/告警 | `schedules:read`、`schedules:write`、`alerts:read`、`alerts:write` |
+| 任务/终端 | `tasks:read`、`tasks:write`、`terminal:write` |
+| 密钥/平台 | `keys:write`、`admin:write` |
+
 ## 资源方法
 
 | 方法 | 参数要点 | 权限/返回 |

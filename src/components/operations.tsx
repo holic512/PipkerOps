@@ -555,8 +555,8 @@ function OperationsForm({
         loading={q.isLoading}
         empty={!q.data?.some((n) => n.status === "APPROVED")}
         retry={() => void q.mutate()}
-        emptyTitle="尚无已批准节点"
-        emptyText="先接入并批准 Linux Agent，再执行节点运维操作。"
+        emptyTitle="暂无可访问的已批准节点"
+        emptyText="请检查节点审批状态与当前授权范围，再执行节点运维操作。"
       >
         <section className="panel">
           <div className="panel-header">
@@ -1610,6 +1610,7 @@ export function TerminalPage() {
   const selectedNode = q.data?.find(
     (n) => n.id === node && n.status === "APPROVED",
   );
+  const hasApprovedNodes = q.data?.some((n) => n.status === "APPROVED");
   return (
     <>
       <PageTitle
@@ -1735,8 +1736,14 @@ export function TerminalPage() {
           loading={!sessions.length && q.isLoading}
           retry={() => void q.mutate()}
           empty={!sessions.length}
-          emptyTitle="开始一个终端会话"
-          emptyText="选择已批准且在线的 Linux 节点，确认后打开远程 Shell。"
+          emptyTitle={
+            hasApprovedNodes ? "开始一个终端会话" : "暂无可访问的已批准节点"
+          }
+          emptyText={
+            hasApprovedNodes
+              ? "选择已批准且在线的 Linux 节点，确认后打开远程 Shell。"
+              : "请检查节点审批状态与当前授权范围。"
+          }
         >
           {" "}
           <div className={split ? "terminal-grid split" : "terminal-grid"}>

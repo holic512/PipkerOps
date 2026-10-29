@@ -56,6 +56,25 @@ test("业务契约公开必填节点、请求枚举并校验实际输入", () =>
   );
 });
 
+test("Key契约公开支持的scope并拒绝拼写错误，保留通配与空节点语义", () => {
+  const schema = methodSchemas["keys.create"];
+  assert.equal(
+    schema.safeParse({ name: "typo", scopes: ["docker:reed"] }).success,
+    false,
+  );
+  const key = schema.parse({
+    name: "scoped",
+    scopes: ["nodes:read", "docker:read"],
+  });
+  assert.deepEqual(key.nodeIds, []);
+  assert.equal(key.allowDangerous, false);
+  assert.equal(key.confirmed, undefined);
+  assert.deepEqual(schema.parse({ name: "all", scopes: ["*"] }).scopes, ["*"]);
+  const json = JSON.stringify(z.toJSONSchema(schema));
+  assert.ok(json.includes('"docker:read"') && json.includes('"enum"'));
+  assert.ok(!json.includes('"docker:reed"'));
+});
+
 test("未知和继承原型的方法名明确拒绝，不进入数据库", async () => {
   for (const method of ["toString", "__proto__", "constructor", "unknown"]) {
     await assert.rejects(

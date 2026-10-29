@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module business-contracts
  * @description Web/MCP 共享业务方法和输入校验，以及核心方法的JSON输出契约。
- * @logic 方法参数只维护一份；任务按类型公开对应payload，实际执行仍重查权限与持久资源。
+ * @logic 方法参数只维护一份；Key限定已知scope，任务公开对应payload，实际执行仍重查权限与持久资源。
  * @dependencies Zod, task specifications
  * @index_tags api, mcp, validation, contracts
  * @author holic512
@@ -267,7 +267,44 @@ export const methodSchemas = {
   "keys.create": z
     .object({
       name: label,
-      scopes: z.array(z.string().max(80)).min(1).max(50),
+      scopes: z
+        .array(
+          z.enum(
+            [
+              "*",
+              "nodes:read",
+              "nodes:write",
+              "nodes:approve",
+              "apps:read",
+              "apps:write",
+              "probes:read",
+              "probes:write",
+              "docker:read",
+              "docker:write",
+              "files:read",
+              "files:write",
+              "system:read",
+              "system:write",
+              "sites:read",
+              "sites:write",
+              "actions:read",
+              "actions:write",
+              "schedules:read",
+              "schedules:write",
+              "alerts:read",
+              "alerts:write",
+              "tasks:read",
+              "tasks:write",
+              "terminal:write",
+              "keys:write",
+              "admin:write",
+            ],
+            { error: "工具权限不受支持，请检查 scope 名称" },
+          ),
+        )
+        .min(1)
+        .max(50)
+        .describe("工具scope列表；*表示全部工具，仍受节点范围与高危许可限制"),
       nodeIds: z.array(id).max(100).default([]),
       allowDangerous: z.boolean().default(false),
       days: z.number().int().min(1).max(365).default(30),
