@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module background-worker
  * @description 持久化 Cron/多源探针调度、主控探针执行、租约恢复、告警及数据维护。
- * @logic PostgreSQL 行锁领取；非幂等失联仅 UNKNOWN；调度游标与任务同事务；Redis 只用于告警窗口。
+ * @logic PostgreSQL行锁领取；非幂等失联仅UNKNOWN；调度游标、任务及计划关联同事务；Redis只用于告警窗口。
  * @dependencies Prisma, Redis, shared task/probe services, cron-parser
  * @index_tags worker, cron, probes, alerts, recovery
  * @author holic512
@@ -95,7 +95,7 @@ async function schedules() {
             apiKeyId: s.createdByApiKeyId ?? undefined,
           });
           authorize(actor, "schedules:write", s.nodeId ?? undefined);
-          await createTask(
+          const task = await createTask(
             actor,
             {
               type: s.taskType,
@@ -107,6 +107,10 @@ async function schedules() {
             "CRON",
             tx,
           );
+          await tx.task.update({
+            where: { id: task.id },
+            data: { scheduleId: s.id },
+          });
           await tx.schedule.update({
             where: { id: s.id },
             data: { nextRunAt, lastRunAt: new Date() },

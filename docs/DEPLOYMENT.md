@@ -143,6 +143,16 @@ CAPACITY_NODES=50 npm run test:capacity
 
 节点历史MCP契约补充验收：标准SDK现检查七个核心工具的outputSchema，并调用1小时/7天的nodes_metrics和nodes_history，校验结构化数据、原文本一致及正确分辨率；本次真实Agent平台套件约69秒通过，39项自动测试及生产构建通过。
 
+## 计划执行记录验收（2026-10-30）
+
+迁移`202610300001_schedule_task_history`增加Task可空计划关联与索引，Worker同事务记录准确来源；计划页“执行记录”进入共用任务列表，`tasks.list`可选scheduleId且保留节点授权。旧任务不回填，删除计划置空关联并保留任务和日志。当前开发库迁移成功，Web/Worker已重新生成并加载客户端；生产需评估索引DDL锁和升级所有运行进程，见数据库文档。
+
+本次Prisma校验、TypeScript、ESLint、41项自动测试和生产构建通过，一次性PostgreSQL17全部迁移及5项维护/任务并发检查通过。新PGlite用例验证旧任务NULL、准确关联及删除保留。`SCHEDULE_TEST_NODE_ID=<授权专用节点ID> npm run test:schedules`使用真实Agent/Worker和标准MCP SDK，验证实际计划执行、筛选、无权限节点不可见、删除计划后结果可追踪；初次约14秒通过，增强授权MCP查询后约10.5秒再次通过。测试仅创建system.info任务，清理本次计划和Key，不用于生产节点。
+
+真实浏览器另验证非法Cron、非法时区及缺少脚本参数均400拒绝并保留表单，Escape取消通过。创建专用10秒只读计划后，从执行记录进入准确筛选，65条均为该节点/CRON来源，日志入口显示成功与真实系统结果；计划已停用后删除。390px任务详情截图检查通过。搜索无匹配显示空态；一次清空搜索后恢复未取得稳定证据，重新导航正常，未记作搜索恢复通过。
+
+完整Mac平台联调本轮两次分别约95/80秒失败于`approved mTLS metrics`等待，未到计划新增断言；重建Agent后仍失败，不能以专用Linux通过覆盖该失败。公开证书SAN包含localhost，抽样数据库无锁阻塞，私有Agent诊断无stderr，根因尚未确认。此前完整平台通过记录仍为历史，不改记本次通过。
+
 ## 已授权浏览器验收增量
 
 2026-10-29用户明确允许代理使用配置的开发账户登录，使用独立agent-browser会话，不接管系统登录态。真实隔离Docker-in-Docker节点与应用Docker/Compose部署关联：从应用中心日志入口核对节点和容器，提交后看到成功日志；生命周期确认准确展示节点/容器/restart，实际重启成功；缺失容器详情任务显示失败和No such container；Compose配置读取返回真实YAML。390px截图检查表单/操作栏，axe为0违规、1个提示覆盖背景的人工对比度确认项。

@@ -27,6 +27,7 @@
 - 默认任务非幂等且最多尝试一次，数据库 CHECK 禁止非幂等任务多次尝试。非幂等任务失联后等待 Agent journal 对账。
 - `idempotencyKey` 全局唯一；业务层将入口、动作、目标和调用者纳入去重身份。Worker/Gateway 在事务中用条件更新或 `FOR UPDATE SKIP LOCKED` 领取并更新租约。
 - `TaskLog(taskId,sequence)` 唯一约束支持重连日志去重。审计随任务创建写入事务，日志与审计不保存密码、令牌或完整环境变量。
+- `Task.scheduleId`记录准确计划来源，Worker与任务创建、调度游标在同一事务写入；`(scheduleId,createdAt DESC)`用于执行记录查询。删除计划将关联置空，保留任务、日志和CRON来源。迁移前任务保持NULL，不按时间/名称回填。
 
 ## 指标与历史
 
@@ -61,6 +62,7 @@ SELECT pipkerops_maintain_metrics(30, 365);
 ## 迁移与恢复
 
 - 部署执行 `prisma migrate deploy`。迁移包含分区、CHECK 和维护函数，不能用 `db push` 替代；无需额外时序数据库或 PostgreSQL 扩展。
+- `202610300001_schedule_task_history`仅新增可空计划关联、查询索引和SET NULL外键，不删除历史数据。升级先迁移，再生成Prisma Client并重启Web/Gateway/Worker；旧Worker在升级前创建的任务仍无关联。大规模Task表建索引的耗时与DDL锁等待需部署前评估，不由开发库结果推定。
 - 生产区分迁移与运行角色，限制 Web/Gateway/Worker 总连接数。维护函数需要相应 DDL 权限，未使用 `SECURITY DEFINER` 提权。
 - 生产外部数据库连接使用 TLS 或受保护通道，实际凭据只存环境配置。
 - 备份包含表、枚举、分区、函数、数据及 PKI；恢复到空目标后检查迁移、业务资源和 `UNKNOWN` 任务，见 [部署与恢复](DEPLOYMENT.md)。

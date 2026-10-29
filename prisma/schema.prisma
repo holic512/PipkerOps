@@ -312,6 +312,7 @@ model Task {
   payload        Json        @default("{}")
   status         TaskStatus  @default(QUEUED)
   nodeId         String?
+  scheduleId     String?
   actorId        String?
   // Retain the original key identity: deletion must fail reauthorization.
   apiKeyId       String?
@@ -330,6 +331,7 @@ model Task {
   createdAt      DateTime    @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime    @updatedAt @db.Timestamptz(3)
   node           Node?       @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  schedule       Schedule?   @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
   actor          User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
   logs           TaskLog[]
 
@@ -337,6 +339,7 @@ model Task {
   @@index([nodeId, status, createdAt])
   @@index([status, leaseExpiresAt])
   @@index([actorId, createdAt(sort: Desc)])
+  @@index([scheduleId, createdAt(sort: Desc)])
 }
 
 model TaskLog {
@@ -389,6 +392,8 @@ model Schedule {
   updatedAt   DateTime @updatedAt @db.Timestamptz(3)
   node        Node?    @relation(fields: [nodeId], references: [id], onDelete: Restrict)
   createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  tasks       Task[]
 
   @@index([enabled, nextRunAt])
   @@index([createdByApiKeyId])

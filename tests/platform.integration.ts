@@ -545,6 +545,22 @@ test(
         "scoped API Key Cron execution",
       );
       assert.ok(scheduled);
+      assert.equal(scheduled.scheduleId, schedule.id);
+      const scheduleTasks = await call<TaskData[]>(
+        "Bearer " + cronKey.key,
+        "tasks.list",
+        { scheduleId: schedule.id },
+      );
+      assert.ok(scheduleTasks.some((task) => task.id === scheduled.id));
+      assert.ok(
+        scheduleTasks.every(
+          (task) => task.scheduleId === schedule.id && task.nodeId === nodeId,
+        ),
+      );
+      assert.deepEqual(
+        await call(cookie, "tasks.list", { scheduleId: "missing-schedule" }),
+        [],
+      );
       await call(cookie, "keys.revoke", { id: cronKey.id, confirmed: true });
       await waitFor(
         () => db().schedule.findUniqueOrThrow({ where: { id: schedule.id } }),
@@ -704,6 +720,15 @@ test(
         arguments: { params: { nodeId, kind: "disk", hours: 1 } },
       });
       assert.equal(restrictedHistory.isError, true);
+      const hiddenScheduleTasks = await mcp.callTool({
+        name: "tasks_list",
+        arguments: { params: { scheduleId: schedule.id } },
+      });
+      assert.equal(hiddenScheduleTasks.isError, undefined);
+      assert.deepEqual(
+        (hiddenScheduleTasks.structuredContent as { data: unknown[] }).data,
+        [],
+      );
       for (const name of [
         "nodes_list",
         "nodes_metrics",

@@ -168,7 +168,7 @@ export const methodSchemas = {
   "probes.history": z.object({ id }),
   "probes.delete": z.object({ id, confirmed: confirmation }),
   topology: z.object({}),
-  "tasks.list": z.object({}),
+  "tasks.list": z.object({ scheduleId: id.optional() }),
   "tasks.get": z.object({ id }),
   "tasks.create": taskInput,
   "tasks.cancel": z.object({ id, confirmed: confirmation }),
@@ -340,6 +340,7 @@ const wireTask = z
     id,
     type: z.string(),
     nodeId: z.string().nullable(),
+    scheduleId: id.nullable().optional(),
     status: z.enum([
       "QUEUED",
       "DISPATCHED",

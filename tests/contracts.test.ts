@@ -36,6 +36,14 @@ test("MCP公开任务payload契约并拒绝缺少脚本、未知任务及软件�
 
 test("业务契约公开必填节点、请求枚举并校验实际输入", () => {
   assert.equal(
+    methodSchemas["tasks.list"].parse({ scheduleId: "plan" }).scheduleId,
+    "plan",
+  );
+  assert.equal(
+    methodSchemas["tasks.list"].safeParse({ scheduleId: "" }).success,
+    false,
+  );
+  assert.equal(
     methodSchemas["nodes.metrics"].safeParse({ hours: 1 }).success,
     false,
   );

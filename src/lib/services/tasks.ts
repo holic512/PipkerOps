@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module tasks
  * @description 统一校验任务类型、目标权限、高危确认与幂等键，持久化执行意图和审计。
- * @logic Web/MCP/Cron 均使用本服务；不接受调用者指定幂等性；非幂等任务只有一次尝试。
+ * @logic Web/MCP/Cron共用校验与执行；列表可按计划关联筛选且保留节点授权过滤；非幂等任务只有一次尝试。
  * @dependencies Prisma, Zod, authorization
  * @index_tags tasks, audit, execution
  * @author holic512
@@ -452,7 +452,7 @@ export async function createTask(
     throw error;
   }
 }
-export async function listTasks(actor: Actor) {
+export async function listTasks(actor: Actor, scheduleId?: string) {
   authorize(actor, "tasks:read");
   const where =
     actor.apiKeyId && !actor.nodeIds?.includes("*")
@@ -464,7 +464,7 @@ export async function listTasks(actor: Actor) {
         }
       : {};
   return db().task.findMany({
-    where,
+    where: { ...where, ...(scheduleId ? { scheduleId } : {}) },
     orderBy: { createdAt: "desc" },
     take: 100,
     include: { node: { select: { id: true, name: true } } },

@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module business-api
  * @description Web 与 MCP 共用的资源服务入口，显式路由业务方法与输入契约。
- * @logic 查询执行 scope/节点过滤，写入验证后审计，实际远端操作转换为持久化任务，动作透传幂等键与执行来源。
+ * @logic 查询执行scope/节点过滤，任务可按计划关联筛选；写入审计，远端操作统一转换为持久任务。
  * @dependencies Prisma, authorization, node/task services, cron-parser
  * @index_tags api, apps, probes, topology, automation
  * @author holic512
@@ -154,7 +154,7 @@ export async function execute(
     case "tasks.create":
       return createTask(actor, p, actor.apiKeyId ? "MCP" : "WEB");
     case "tasks.list":
-      return listTasks(actor);
+      return listTasks(actor, p.scheduleId as string | undefined);
     case "tasks.get":
       return getTask(actor, id.parse(p.id));
     case "tasks.cancel": {

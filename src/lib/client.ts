@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module client-api
  * @description 浏览器API边界与业务数据契约。
- * @logic RPC错误统一封装，数值空态保留未知语义。
+ * @logic RPC错误统一封装，任务携带可空计划关联，数值空态保留未知语义。
  * @dependencies fetch, Intl
  * @index_tags api, identity, entry
  * @author holic512
@@ -128,6 +128,7 @@ export type TaskData = {
   id: string;
   type: string;
   nodeId: string | null;
+  scheduleId?: string | null;
   status: string;
   source: string;
   createdAt: string;

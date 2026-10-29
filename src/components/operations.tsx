@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module operations-ui
  * @description 任务、Docker、文件、系统、站点、自动化和PTY页面，操作统一进入任务队列。
- * @logic 危险操作确认后轮询任务，按状态解释无日志结果；终端一次性票据连接且不重放输入；URL只预填目标，提交失败保留幂等键。
+ * @logic 任务按计划关联筛选并解释无日志状态；危险操作确认后执行；终端一次性票据连接且不重放输入，提交失败保留幂等键。
  * @dependencies React, shared UI, RPC, xterm
  * @index_tags operations, tasks, terminal, automation, ui
  * @author holic512
@@ -45,8 +45,16 @@ const taskLogMessages: Record<string, string> = {
   UNKNOWN: "执行结果未知，请先查看任务状态与对账结果，勿直接重试。",
 };
 export function Tasks() {
-  const q = useQuery<TaskData[]>("tasks.list");
+  const search = useSearchParams();
+  const scheduleId = search.get("schedule") ?? "";
+  const q = useQuery<TaskData[]>(
+    "tasks.list",
+    scheduleId ? { scheduleId } : {},
+  );
   const [filter, setFilter] = useState("");
+  const filtered = q.data?.filter((t) =>
+    (t.type + " " + (t.node?.name ?? "")).includes(filter),
+  );
   const op = useOperation(() => void q.mutate());
   return (
     <>
@@ -59,6 +67,11 @@ export function Tasks() {
           刷新
         </Button>
       </PageTitle>
+      {scheduleId && (
+        <p className="inline-feedback">
+          当前仅显示此计划关联的任务。<Link href="/tasks">查看全部任务</Link>
+        </p>
+      )}
       {op.ui}
       <div className="list-toolbar">
         <input
@@ -72,53 +85,63 @@ export function Tasks() {
       <QueryState
         loading={q.isLoading}
         error={q.error}
-        empty={!q.data?.length}
+        empty={!filtered?.length}
         retry={() => void q.mutate()}
-        emptyTitle="还没有执行任务"
-        emptyText="在节点、Docker 或系统运维页面发起操作后，任务会显示在这里。"
+        emptyTitle={
+          filter
+            ? "没有匹配的执行任务"
+            : scheduleId
+              ? "此计划暂无可访问的执行任务"
+              : "还没有执行任务"
+        }
+        emptyText={
+          filter
+            ? "请调整任务类型或节点搜索条件。"
+            : scheduleId
+              ? "仅显示记录计划关联后的任务；旧历史可在全部任务中查看。"
+              : "在节点、Docker 或系统运维页面发起操作后，任务会显示在这里。"
+        }
       >
         <DataTable
           headers={["任务 / 编号", "节点", "状态", "来源", "创建时间", "操作"]}
         >
-          {q.data
-            ?.filter((t) => (t.type + " " + t.node?.name).includes(filter))
-            .map((t) => (
-              <tr key={t.id}>
-                <td>
-                  <Link className="entity-link" href={`/tasks/${t.id}`}>
-                    {t.type}
-                  </Link>
-                  <small>{t.id}</small>
-                </td>
-                <td>{t.node?.name ?? "主控"}</td>
-                <td>
-                  <Status value={t.status} />
-                </td>
-                <td>{t.source}</td>
-                <td>{date(t.createdAt)}</td>
-                <td className="inline-actions">
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link href={`/tasks/${t.id}`}>查看日志</Link>
+          {filtered?.map((t) => (
+            <tr key={t.id}>
+              <td>
+                <Link className="entity-link" href={`/tasks/${t.id}`}>
+                  {t.type}
+                </Link>
+                <small>{t.id}</small>
+              </td>
+              <td>{t.node?.name ?? "主控"}</td>
+              <td>
+                <Status value={t.status} />
+              </td>
+              <td>{t.source}</td>
+              <td>{date(t.createdAt)}</td>
+              <td className="inline-actions">
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href={`/tasks/${t.id}`}>查看日志</Link>
+                </Button>
+                {t.status === "QUEUED" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      op.ask(
+                        "取消排队任务？",
+                        "已分发或正在执行的任务无法通过此操作取消。",
+                        () =>
+                          rpc("tasks.cancel", { id: t.id, confirmed: true }),
+                      )
+                    }
+                  >
+                    取消
                   </Button>
-                  {t.status === "QUEUED" && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        op.ask(
-                          "取消排队任务？",
-                          "已分发或正在执行的任务无法通过此操作取消。",
-                          () =>
-                            rpc("tasks.cancel", { id: t.id, confirmed: true }),
-                        )
-                      }
-                    >
-                      取消
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                )}
+              </td>
+            </tr>
+          ))}
         </DataTable>
       </QueryState>
     </>
@@ -1227,6 +1250,9 @@ export function Resources({ mode }: { mode: string }) {
                     <Status value={r.enabled ? "ACTIVE" : "PAUSED"} />
                   </td>
                   <td>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link href={`/tasks?schedule=${r.id}`}>执行记录</Link>
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
