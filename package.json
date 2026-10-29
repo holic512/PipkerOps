@@ -27,7 +27,8 @@
     "test:alerts": "tsx --env-file=.env --test tests/alerts.integration.ts",
     "test:recovery": "tsx --env-file=.env --test tests/recovery.integration.ts",
     "test:capacity": "tsx --env-file=.env --test tests/capacity.integration.ts",
-    "test:database": "node --import tsx --test tests/database-concurrency.integration.ts"
+    "test:database": "node --import tsx --test tests/database-concurrency.integration.ts",
+    "test:history-capacity": "DEVICE_HISTORY_CAPACITY=true node --import tsx --test tests/database-concurrency.integration.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.4.3",

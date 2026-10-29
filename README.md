@@ -40,7 +40,7 @@ npm run build
 cd agent && go test ./...
 ```
 
-`npm run test:database` 使用一次性 PostgreSQL 17 容器验证并发，不读取 `.env`。平台、Linux、systemd、连通性、告警、恢复和容量联调的运行条件见 [部署文档](docs/DEPLOYMENT.md)，需先启动对应服务和夹具。
+`npm run test:database` 使用一次性 PostgreSQL 17 容器验证并发，不读取 `.env`。`npm run test:history-capacity` 在同样的隔离流程中额外构造50节点30天设备摘要，检查查询、占用和维护前后结果；测试边界见数据库文档。平台、Linux、systemd、连通性、告警、恢复和容量联调的运行条件见 [部署文档](docs/DEPLOYMENT.md)，需先启动对应服务和夹具。
 
 提交前运行 `node scripts/check-secrets.mjs` 检查暂存区。配置、私钥、Agent 状态、备份和构建产物不入库。
 

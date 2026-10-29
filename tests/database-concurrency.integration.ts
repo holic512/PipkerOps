@@ -27,7 +27,9 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
 import { detailHistoryQuery } from "../src/lib/services/metric-details";
+import { verifyDeviceHistoryCapacity } from "./device-history-capacity";
 
+const historyCapacity = process.env.DEVICE_HISTORY_CAPACITY === "true";
 const runFile = promisify(execFile);
 const labelKey = "io.pipkerops.database-test";
 async function docker(...args: string[]) {
@@ -69,7 +71,7 @@ test(
         "--publish",
         "127.0.0.1::5432",
         "--tmpfs",
-        "/var/lib/postgresql/data:rw,nosuid,size=256m",
+        `/var/lib/postgresql/data:rw,nosuid,size=${historyCapacity ? "2g" : "256m"}`,
         "postgres:17-alpine",
       );
       created = true;
@@ -97,7 +99,7 @@ test(
         max: 4,
         connectionTimeoutMillis: 2000,
         idleTimeoutMillis: 10000,
-        statement_timeout: 20000,
+        statement_timeout: historyCapacity ? 60000 : 20000,
       });
       // Startup may reject connections until initdb has completed. Never include
       // its errors, pool configuration, or the environment file in test output.
@@ -313,6 +315,10 @@ test(
         a.release();
         b.release();
       }
+      if (historyCapacity)
+        await t.test("设备历史SQL规模：50节点30天摘要与构造采样尾部", () =>
+          verifyDeviceHistoryCapacity(pool!),
+        );
     } finally {
       try {
         await pool?.end();
