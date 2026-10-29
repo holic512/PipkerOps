@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module business-api
  * @description Web 与 MCP 共用的资源服务入口，显式路由业务方法与输入契约。
- * @logic 查询执行scope/节点过滤，任务可按计划关联筛选；写入审计，远端操作统一转换为持久任务。
+ * @logic 查询执行scope/节点过滤，总览在SQL限制逐节点最新采样；任务按计划筛选，远端操作统一持久化并审计。
  * @dependencies Prisma, authorization, node/task services, cron-parser
  * @index_tags api, apps, probes, topology, automation
  * @author holic512
@@ -190,7 +190,6 @@ export async function execute(
             certificateFingerprint: true,
             previousCertificateFingerprint: true,
           },
-          include: { metrics: { take: 1, orderBy: { recordedAt: "desc" } } },
           take: 50,
           orderBy: { createdAt: "desc" },
         }),
@@ -202,12 +201,13 @@ export async function execute(
             })
           : Promise.resolve([]),
       ]);
+      const latest = await nodes.withLatestMetrics(recent);
       return {
         total,
         online: approved,
         pending,
         offline: total - approved - pending,
-        nodes: recent.map((n) => ({
+        nodes: latest.map((n) => ({
           ...n,
           connected:
             n.status === "APPROVED" &&

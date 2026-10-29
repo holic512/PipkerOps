@@ -33,6 +33,8 @@
 
 `MetricSample` 按 UTC 月分区，联合主键为 `(id,recordedAt)`；每个分区继承 `(nodeId,recordedAt DESC)` B-tree 和时间 BRIN 索引。初始化创建当月与后两个月分区，DEFAULT 分区承接范围外采样。
 
+节点列表、拓扑和总览的最新采样使用已授权节点ID集合，在SQL中逐节点`LATERAL ... ORDER BY recordedAt DESC LIMIT 1`，只返回每节点至多一条完整payload；无采样保留空数组。不要改回Prisma嵌套关系`take:1`：当前版本实际SQL不含LIMIT，会先传回全部历史再在客户端截取，造成随着采集时间增长的查询延迟。该修复复用已有索引，不增加迁移或限制最新数据的时间范围。
+
 默认保留 30 天原始采样、365 天 CPU/内存小时聚合。`MetricHourly(nodeId,bucketAt)` 保存样本数、均值和峰值，时间列有 BRIN 索引；设备1–48小时详情来自原始数据，更长窗口使用设备小时摘要及未维护原始尾部。
 
 - CPU/内存 1–48 小时查询按请求起点动态分桶，最多 1440 点；长窗口合并小时聚合与原始小时尾部，同桶优先原始聚合，避免重复计数。

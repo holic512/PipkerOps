@@ -27,6 +27,7 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
 import { detailHistoryQuery } from "../src/lib/services/metric-details";
+import { latestMetricQuery } from "../src/lib/services/nodes";
 import { verifyDeviceHistoryCapacity } from "./device-history-capacity";
 
 const historyCapacity = process.env.DEVICE_HISTORY_CAPACITY === "true";
@@ -128,6 +129,46 @@ test(
             "utf8",
           ),
         );
+      await t.test(
+        "最新指标逐节点LIMIT，跨分区只返回授权范围的最新采样",
+        async () => {
+          await pool!.query(`
+          INSERT INTO "Node" (id,name,"updatedAt") VALUES ('latest-a','a',now()),('latest-b','b',now()),('latest-empty','empty',now()),('latest-hidden','hidden',now());
+          INSERT INTO "MetricSample" (id,"nodeId","recordedAt",payload,"cpuPercent","memoryPercent")
+          SELECT 'old-'||n,'latest-a',now()-interval '2 months'-n*interval '1 second',jsonb_build_object('large',repeat('x',2048)),10,20 FROM generate_series(1,5000)n;
+          INSERT INTO "MetricSample" (id,"nodeId","recordedAt",payload,"cpuPercent","memoryPercent") VALUES
+          ('new-a','latest-a',now(),'{"marker":"a"}',30,40),
+          ('new-b','latest-b',now()-interval '2 months','{"marker":"b"}',50,60),
+          ('new-hidden','latest-hidden',now(),'{"marker":"hidden"}',70,80);
+        `);
+          const query = latestMetricQuery([
+            "latest-a",
+            "latest-b",
+            "latest-empty",
+          ]);
+          const result = await pool!.query(query.text, query.values);
+          assert.deepEqual(result.rows.map((r) => r.id).sort(), [
+            "new-a",
+            "new-b",
+          ]);
+          const plan = (
+            await pool!.query(
+              "EXPLAIN (ANALYZE, FORMAT JSON) " + query.text,
+              query.values,
+            )
+          ).rows[0]["QUERY PLAN"][0].Plan;
+          assert.equal(plan["Actual Rows"], 2);
+          assert.ok(JSON.stringify(plan).includes("Limit"));
+          const empty = latestMetricQuery([]);
+          assert.deepEqual(
+            (await pool!.query(empty.text, empty.values)).rows,
+            [],
+          );
+          await pool!.query(
+            `DELETE FROM "Node" WHERE id IN ('latest-a','latest-b','latest-empty','latest-hidden')`,
+          );
+        },
+      );
       await t.test(
         "真实PostgreSQL设备聚合、原始尾部去重和一年查询",
         async () => {

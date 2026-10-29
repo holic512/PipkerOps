@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module nodes
  * @description 节点注册、审批、吊销、指标查询的统一服务。
- * @logic 原子消费注册令牌；证书绑定节点；历史指标按时间桶聚合并合并原始尾部；查询按 API Key 节点范围过滤。
+ * @logic 节点按授权过滤，最新指标在数据库逐节点LIMIT 1；注册绑定证书，历史按时间桶聚合并合并原始尾部。
  * @dependencies Prisma, PKI, authorization
  * @index_tags nodes, enrollment, metrics
  * @author holic512
@@ -16,7 +16,7 @@ import { issueCertificate, validateCsr, pkiFiles } from "../pki";
 import { readFileSync } from "node:fs";
 import { X509Certificate } from "node:crypto";
 import { methodSchemas } from "./contracts";
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, type MetricSample } from "@/generated/prisma/client";
 export async function listNodes(actor: Actor) {
   authorize(actor, "nodes:read");
   const now = Date.now();
@@ -29,15 +29,43 @@ export async function listNodes(actor: Actor) {
       previousCertificateFingerprint: true,
     },
     orderBy: { createdAt: "desc" },
-    include: { metrics: { take: 1, orderBy: { recordedAt: "desc" } } },
   });
-  return rows.map((n) => ({
+  const latest = await withLatestMetrics(rows);
+  return latest.map((n) => ({
     ...n,
     connected:
       n.status === "APPROVED" &&
       !!n.lastSeenAt &&
       now - n.lastSeenAt.getTime() < 60000,
   }));
+}
+
+/** Attach at most one stored sample per already-authorized node. */
+export async function withLatestMetrics<T extends { id: string }>(rows: T[]) {
+  const samples = rows.length
+    ? await db().$queryRaw<MetricSample[]>(
+        latestMetricQuery(rows.map((n) => n.id)),
+      )
+    : [];
+  const latest = new Map(samples.map((sample) => [sample.nodeId, sample]));
+  return rows.map((node) => ({
+    ...node,
+    metrics: latest.has(node.id) ? [latest.get(node.id)!] : [],
+  }));
+}
+
+/** Relation take:1 can fetch all histories before Prisma slices them in memory. */
+export function latestMetricQuery(nodeIds: string[]) {
+  return Prisma.sql`
+    SELECT latest.*
+    FROM unnest(ARRAY[${nodeIds.length ? Prisma.join(nodeIds) : Prisma.empty}]::text[]) AS requested("nodeId")
+    CROSS JOIN LATERAL (
+      SELECT sample.* FROM "MetricSample" sample
+      WHERE sample."nodeId" = requested."nodeId"
+      ORDER BY sample."recordedAt" DESC
+      LIMIT 1
+    ) latest
+  `;
 }
 export async function enrollmentToken(actor: Actor, input: unknown) {
   authorize(actor, "nodes:approve");
