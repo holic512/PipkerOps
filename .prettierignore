@@ -1,0 +1,7 @@
+node_modules
+.next
+src/generated
+agent
+package-lock.json
+.env*
+.data
