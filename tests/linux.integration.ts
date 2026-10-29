@@ -246,6 +246,23 @@ test(
       assert.ok(
         Array.isArray((telemetry!.payload as Record<string, unknown>).disk),
       );
+      const identities = (
+        telemetry!.payload as {
+          deviceIdentity: { network: Record<string, string> };
+        }
+      ).deviceIdentity;
+      assert.ok(
+        Object.keys(identities.network).length > 0,
+        "Linux network identity must be discovered from actual sysfs",
+      );
+      const longDisk = await rpc<{
+        device: string | null;
+        series: { points: unknown[] }[];
+      }>("nodes.history", { nodeId, kind: "disk", hours: 168 });
+      assert.ok(
+        longDisk.device && longDisk.series[0]?.points.length,
+        "long history must merge actual raw tail before maintenance",
+      );
       const disk = await rpc<{
         device: string | null;
         series: { points: unknown[] }[];

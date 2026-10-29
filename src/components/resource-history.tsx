@@ -62,9 +62,9 @@ export function ResourceHistory({ nodeId }: { nodeId: string }) {
           value={hours}
           onChange={(e) => setHours(Number(e.target.value))}
         >
-          {[1, 6, 24, 48].map((h) => (
+          {[1, 6, 24, 48, 168, 720, 8760].map((h) => (
             <option key={h} value={h}>
-              最近{h}小时
+              最近{h >= 168 ? `${Math.round(h / 24)}天` : `${h}小时`}
             </option>
           ))}
         </select>
@@ -130,7 +130,7 @@ function ResourceChart({ data }: { data: History }) {
           );
         })}
         <span className="muted">
-          {data.bucketSeconds}秒均值 · 缺口表示采样中断或计数重置
+          {data.bucketSeconds}秒均值 · 缺口表示采样中断、设备变化或计数重置
         </span>
       </div>
       <div

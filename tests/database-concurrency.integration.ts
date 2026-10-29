@@ -26,6 +26,7 @@ import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
+import { detailHistoryQuery } from "../src/lib/services/metric-details";
 
 const runFile = promisify(execFile);
 const labelKey = "io.pipkerops.database-test";
@@ -125,6 +126,36 @@ test(
             "utf8",
           ),
         );
+      await t.test(
+        "真实PostgreSQL设备聚合、原始尾部去重和一年查询",
+        async () => {
+          await pool!
+            .query(`INSERT INTO "Node" (id,name,"updatedAt") VALUES ('devices','devices',now());
+          INSERT INTO "MetricSample" (id,"nodeId","recordedAt",payload,"cpuPercent","memoryPercent")
+          SELECT 'device-'||n,'devices',date_trunc('hour',now())-interval '2 hours'+n*interval '10 seconds',
+            jsonb_build_object('network',jsonb_build_array(jsonb_build_object('name','eth0','bytesRecv',(n+1)*100)), 'deviceIdentity',jsonb_build_object('network',jsonb_build_object('eth0','boot:1:mac'))),0,0
+          FROM generate_series(-1,2) n;
+          SELECT pipkerops_maintain_metrics();`);
+          const q = detailHistoryQuery("devices", "network", 168, "eth0");
+          const start = performance.now();
+          const result = (await pool!.query(q.query.text, q.query.values))
+            .rows[0];
+          assert.equal(result.points.at(-1)?.value, 10);
+          assert.equal(result.points[0].value, null);
+          const year = detailHistoryQuery("devices", "network", 8760, "eth0");
+          assert.ok(
+            (await pool!.query(year.query.text, year.query.values)).rows[0]
+              .points.length <= 720,
+          );
+          assert.ok(
+            performance.now() - start < 2000,
+            "single-node history query exceeded fixture limit",
+          );
+          await pool!.query(
+            `DELETE FROM "Node" WHERE id='devices'; TRUNCATE "MetricMaintenanceState";`,
+          );
+        },
+      );
       await pool.query(`
         INSERT INTO "Node" (id,name,"updatedAt") VALUES ('fixture-node','fixture',now());
         INSERT INTO "MetricSample" (id,"nodeId","recordedAt","cpuPercent","memoryPercent")

@@ -63,19 +63,27 @@ func Collect(ctx context.Context) map[string]any {
 		}
 	}
 	result["disk"] = filesystems
+	var networkDevices, ioDevices []string
 	if network, err := gnet.IOCountersWithContext(ctx, true); err == nil {
 		if len(network) > 64 {
 			network = network[:64]
+		}
+		for _, device := range network {
+			networkDevices = append(networkDevices, device.Name)
 		}
 		result["network"] = network
 	} else {
 		errors = append(errors, "network: "+err.Error())
 	}
 	if counters, err := disk.IOCountersWithContext(ctx); err == nil {
+		for name := range counters {
+			ioDevices = append(ioDevices, name)
+		}
 		result["io"] = counters
 	} else {
 		errors = append(errors, "io: "+err.Error())
 	}
+	result["deviceIdentity"] = readDeviceIdentities("/", networkDevices, ioDevices)
 	procs := []any{}
 	if ids, err := process.PidsWithContext(ctx); err == nil {
 		result["processCount"] = len(ids)

@@ -11,7 +11,7 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | users.me | 无 | 当前身份基本信息 |
 | overview | 无 | nodes:read；节点/最新监控，任务计数另需tasks:read |
 | nodes.list / nodes.metrics | metrics需要nodeId,hours(1–8760) | nodes:read；<=48h按窗口聚合最多1440点（不返回payload），超过为小时历史+最新原始小时桶去重合并 |
-| nodes.history | nodeId,kind(disk/network/io),hours(1–48),device? | nodes:read+目标节点；返回设备列表及选中设备，每个方向最多720个时间桶，磁盘为%，网络/IO为B/s；省略设备选字典序首个 |
+| nodes.history | nodeId,kind(disk/network/io),hours(1–8760),device? | nodes:read+目标节点；返回设备列表及选中设备；<=48小时原始详情，>48小时UTC小时摘要加原始尾部，每个方向约最多720个时间桶，磁盘为%，网络/IO为B/s；省略设备选字典序首个 |
 | nodes.update | id,name,labels? | nodes:write+目标节点；更新名称和标签 |
 | nodes.token | name,maxUses(1–50),hours(1–168) | nodes:approve；单次返回token/gateway/enrollUrl |
 | nodes.approve / reject / revoke | id,confirmed:true | nodes:approve；审批签发mTLS，吊销断开 |
@@ -87,3 +87,5 @@ QUEUED→DISPATCHED→RUNNING→SUCCEEDED/FAILED；失去执行证据为UNKNOWN�
 Nginx 上游仅在同代理节点发起的已启用 HTTP 探针中，找到唯一应用的相同 URL origin 才关联到应用；不使用名称、DNS 猜测或跨来源回环端点匹配。此关系证明配置指向相同端点，不等于确认实际 Nginx 生效配置。无匹配或多个应用共享端点时详情显示“上游未关联”。
 
 systemd 周期采样新增 `payload.services`，仅包含已加载的服务单元 `{name,active,sub}`，最多200项，约3秒命令超时；不读取服务环境或命令。拓扑按同节点完整单元名匹配 systemd 部署并共用顶点，只显示关联服务；不将 `nginx` 猜测为 `nginx.service`。非 systemd 主机返回空集，采集失败保留 collectionErrors。
+
+设备长期接口不对缺采样补零；任一计数重置、身份变化或断采样会令对应长期桶返回null。旧Agent无设备身份时，网络/IO长期速率保守为空；请升级Agent后积累有效身份采样。磁盘长期使用率不依赖累计计数身份。

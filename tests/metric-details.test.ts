@@ -31,6 +31,7 @@ test("资源历史：真实SQL设备隔离、累计速率、重置断点和窗�
       sent: number,
       used: number,
       nodeId = "node",
+      identity?: string,
     ) => {
       await pg.query(
         `INSERT INTO "MetricSample" (id,"nodeId","recordedAt",payload,"cpuPercent","memoryPercent") VALUES ($1,$2,$3,$4::jsonb,0,0)`,
@@ -39,6 +40,9 @@ test("资源历史：真实SQL设备隔离、累计速率、重置断点和窗�
           nodeId,
           new Date(start + seconds * 1000),
           JSON.stringify({
+            deviceIdentity: identity
+              ? { network: { eth0: identity }, io: { sda: identity } }
+              : undefined,
             disk: [
               { mountpoint: "/", usedPercent: used },
               { mountpoint: "/data", usedPercent: 80 },
@@ -118,6 +122,59 @@ test("资源历史：真实SQL设备隔离、累计速率、重置断点和窗�
       );
       assert.ok(!JSON.stringify(result).includes("private-must-not-return"));
     }
+    await insert(
+      "identity-first",
+      500,
+      10000,
+      20000,
+      10,
+      "node",
+      "generation-a",
+    );
+    await insert(
+      "identity-next",
+      510,
+      10100,
+      20200,
+      10,
+      "node",
+      "generation-a",
+    );
+    await insert(
+      "identity-replaced",
+      520,
+      50000,
+      100000,
+      10,
+      "node",
+      "generation-b",
+    );
+    await insert(
+      "identity-after",
+      530,
+      50100,
+      100200,
+      10,
+      "node",
+      "generation-b",
+    );
+    for (const [kind, device] of [
+      ["network", "eth0"],
+      ["io", "sda"],
+    ] as const) {
+      const changed = await query(kind, device);
+      assert.deepEqual(
+        changed.points
+          .filter(
+            (p) =>
+              ["接收", "读取"].includes(p.direction) &&
+              new Date(p.recordedAt).getTime() >= start + 500000,
+          )
+          .slice(0, 4)
+          .map((p) => p.value),
+        [null, 10, null, 10],
+      );
+    }
     const missing = await query("network", "missing");
     assert.equal(missing.device, null);
     assert.deepEqual(missing.points, []);
@@ -133,7 +190,7 @@ test("资源历史：真实SQL设备隔离、累计速率、重置断点和窗�
       methodSchemas["nodes.history"].safeParse({
         nodeId: "node",
         kind: "disk",
-        hours: 49,
+        hours: 8761,
       }).success,
       false,
     );

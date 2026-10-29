@@ -142,6 +142,7 @@ model Node {
   approvedBy             User?            @relation("NodeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   metrics                MetricSample[]
   hourlyMetrics          MetricHourly[]
+  deviceHourlyMetrics    MetricDeviceHourly[]
   deployments            Deployment[]
   probes                 Probe[]          @relation("ProbeSource")
   probeResults           ProbeResult[]    @relation("ProbeResultSource")
@@ -183,10 +184,27 @@ model MetricHourly {
   @@index([bucketAt], type: Brin)
 }
 
+model MetricDeviceHourly {
+  nodeId String
+  kind String
+  device String
+  direction String
+  bucketAt DateTime @db.Timestamptz(3)
+  sampleCount Int
+  gapCount Int
+  numerator Float
+  denominator Float
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@id([nodeId, kind, device, direction, bucketAt])
+  @@index([bucketAt], type: Brin)
+}
+
 // The SQL singleton constraint and function serialize durable maintenance progress.
 model MetricMaintenanceState {
   id                String    @id @default("metrics")
   aggregatedThrough DateTime? @db.Timestamptz(3)
+  deviceAggregatedThrough DateTime? @db.Timestamptz(3)
   lastSucceededAt   DateTime? @db.Timestamptz(3)
   summary           Json      @default("{}")
 }

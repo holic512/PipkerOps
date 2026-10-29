@@ -1,6 +1,6 @@
 # PipkerOps
 
-面向个人开发者和 10–50 台 Linux 节点的轻量集群运维平台，集中管理节点监控、应用、探针、拓扑和远程任务，并通过 MCP 向 AI Agent 开放平台能力。
+面向个人开发者和 10–50 台 Linux 节点的轻量集群运维平台，集中管理节点监控、设备长期历史、应用、探针、拓扑和远程任务，并通过 MCP 向 AI Agent 开放平台能力。
 
 Go Agent 主动连接主控；Next.js 提供管理界面与 API，Gateway 维护 Agent 连接，Worker 执行调度。PostgreSQL 保存业务与任务数据，Redis 用于临时协调和限流。
 

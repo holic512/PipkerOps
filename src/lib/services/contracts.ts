@@ -105,7 +105,7 @@ export const methodSchemas = {
   "nodes.history": z.object({
     nodeId: id,
     kind: z.enum(["disk", "network", "io"]),
-    hours: z.number().min(1).max(48).default(1),
+    hours: z.number().min(1).max(8760).default(1),
     device: z.string().min(1).max(200).optional(),
   }),
   "nodes.update": z.object({
