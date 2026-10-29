@@ -3,13 +3,13 @@
  * @project PipkerOps
  * @module topology-ui
  * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 准确身份合并部署容器，配置端点关联站点上游；资源刷新保留布局并更新详情与健康状态。
+ * @logic 准确身份合并部署容器，配置端点关联站点上游；刷新保留布局与详情，画布尺寸变化时重新适配资源。
  * @dependencies React Flow, RPC, shared UI
  * @index_tags topology, connectivity, ui
  * @author holic512
  */
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ReactFlow,
@@ -66,6 +66,7 @@ export function Topology() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [show, setShow] = useState(false);
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
+  const canvasRef = useRef<HTMLElement>(null);
   const [layout, setLayout] = useState<
     Record<string, Pick<Node, "position" | "measured" | "selected">>
   >({});
@@ -263,8 +264,14 @@ export function Topology() {
     .join("|");
   const selected = graph.nodes.find((n) => n.id === selectedId);
   useEffect(() => {
-    void flow?.fitView();
-  }, [flow, resourceIds]);
+    const canvas = canvasRef.current;
+    if (!flow || !canvas) return;
+    const resize = new ResizeObserver(() => {
+      void flow.fitView();
+    });
+    resize.observe(canvas);
+    return () => resize.disconnect();
+  }, [flow, resourceIds, tab]);
   const targets = [...new Set(q.data?.probes.map((p) => p.target) ?? [])];
   return (
     <>
@@ -343,7 +350,7 @@ export function Topology() {
       >
         {tab === "graph" ? (
           <div className="topology-layout">
-            <section className="topology-canvas">
+            <section className="topology-canvas" ref={canvasRef}>
               <ReactFlow
                 onInit={setFlow}
                 nodes={graph.nodes.map((n) => ({

@@ -1473,6 +1473,9 @@ td.inline-actions {
   .topology-layout {
     flex-direction: column;
   }
+  .topology-canvas {
+    flex: none;
+  }
   .graph-details {
     width: 100%;
   }
