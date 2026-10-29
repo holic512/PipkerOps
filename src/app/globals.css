@@ -1213,6 +1213,12 @@ td.inline-actions {
   font-size: 11px;
   background: #1b2b42;
 }
+.terminal-connection-state {
+  margin: 0;
+  padding: 8px 14px;
+  color: #c6d3e5;
+  font-size: 12px;
+}
 .xterm-container {
   height: 450px;
   padding: 10px 5px 10px 10px;

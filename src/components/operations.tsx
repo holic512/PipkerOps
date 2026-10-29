@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module operations-ui
  * @description 任务、Docker、文件、系统、站点、自动化和PTY页面，操作统一进入任务队列。
- * @logic 用户确认危险操作，服务端执行权限校验；轮询任务日志；终端一次性票据连接；URL 预填节点与目标但不自动执行，提交失败保留幂等键。
+ * @logic 用户确认危险操作并轮询任务；终端一次性票据连接、显示断线状态且不重放输入；URL预填目标但不执行，提交失败保留幂等键。
  * @dependencies React, shared UI, RPC, xterm
  * @index_tags operations, tasks, terminal, automation, ui
  * @author holic512
@@ -1677,7 +1677,7 @@ export function TerminalPage() {
                     setActive(id);
                     return ticket;
                   },
-                  "正在建立终端连接",
+                  "终端会话已创建，请查看连接状态",
                 )
               }
             >
@@ -1759,6 +1759,9 @@ export function TerminalPage() {
 function TerminalSession({ url }: { url: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
+  const [state, setState] = useState<"connecting" | "connected" | "closed">(
+    "connecting",
+  );
   useEffect(() => {
     let dispose: () => void = () => {};
     let cancelled = false;
@@ -1781,6 +1784,7 @@ function TerminalSession({ url }: { url: string }) {
       fit.fit();
       const ws = new WebSocket(url);
       ws.onopen = () => {
+        setState("connected");
         term.focus();
         ws.send(
           JSON.stringify({
@@ -1795,8 +1799,12 @@ function TerminalSession({ url }: { url: string }) {
           const p = JSON.parse(e.data);
           if (p.type === "terminal.output") term.write(p.data);
           if (p.type === "terminal.error") setError(p.error ?? "终端启动失败");
-          if (p.type === "terminal.exit")
+          if (p.type === "terminal.exit") {
+            term.options.disableStdin = true;
+            if (term.textarea) term.textarea.disabled = true;
+            setState("closed");
             term.writeln(`\r\n[会话已退出：${p.exitCode ?? 0}]`);
+          }
         } catch {
           setError("收到无效的终端数据");
         }
@@ -1806,6 +1814,9 @@ function TerminalSession({ url }: { url: string }) {
           "终端连接失败。请检查节点在线状态，以及浏览器是否信任 Gateway TLS 证书。",
         );
       ws.onclose = () => {
+        term.options.disableStdin = true;
+        if (term.textarea) term.textarea.disabled = true;
+        setState("closed");
         term.writeln("\r\n[连接已关闭]");
       };
       const onData = term.onData((data) => {
@@ -1840,6 +1851,13 @@ function TerminalSession({ url }: { url: string }) {
   }, [url]);
   return (
     <>
+      <p role="status" className="terminal-connection-state">
+        {state === "connecting"
+          ? "正在连接终端…"
+          : state === "connected"
+            ? "终端已连接"
+            : "连接已关闭。如需继续，请关闭此标签并新建会话；旧输入不会自动重放。"}
+      </p>
       {error && (
         <p role="alert" className="inline-error">
           {error}
