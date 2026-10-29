@@ -77,3 +77,57 @@ test("上游配置端点唯一且探针来源与代理节点一致才关联，�
   data.probes[1].enabled = false;
   assert.equal(topologyLinks(data).siteLinks.length, 1);
 });
+
+test("systemd只按同节点准确单元名合并，状态随采样和连接刷新", () => {
+  const data = {
+    nodes: [
+      {
+        id: "a",
+        connected: true,
+        metrics: [
+          {
+            payload: {
+              services: [{ name: "nginx.service", active: "active" }],
+            },
+          },
+        ],
+      },
+    ],
+    applications: [
+      {
+        id: "app",
+        deployments: [
+          {
+            id: "service",
+            nodeId: "a",
+            type: "systemd",
+            target: "nginx.service",
+          },
+          {
+            id: "wrong-node",
+            nodeId: "b",
+            type: "systemd",
+            target: "nginx.service",
+          },
+          { id: "guess", nodeId: "a", type: "systemd", target: "nginx" },
+        ],
+      },
+    ],
+    probes: [],
+    sites: [],
+  };
+  assert.deepEqual(topologyLinks(data).deploymentLinks, [
+    {
+      deploymentId: "service",
+      resourceId: "service:a:nginx.service",
+      state: "HEALTHY",
+    },
+  ]);
+  data.nodes[0].metrics[0].payload.services[0].active = "inactive";
+  assert.equal(topologyLinks(data).deploymentLinks[0].state, "UNHEALTHY");
+  data.nodes[0].metrics[0].payload.services[0].active = "active";
+  data.nodes[0].connected = false;
+  assert.equal(topologyLinks(data).deploymentLinks[0].state, "UNHEALTHY");
+  data.nodes[0].metrics[0].payload.services = [];
+  assert.deepEqual(topologyLinks(data).deploymentLinks, []);
+});

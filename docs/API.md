@@ -85,3 +85,5 @@ QUEUED→DISPATCHED→RUNNING→SUCCEEDED/FAILED；失去执行证据为UNKNOWN�
 `topology` 继续返回授权范围内原始资源；界面用共用 `topologyLinks` 计算关系，不新增持久化猜测边。Docker 仅匹配同节点完整 ID 或准确名称（可去除名称前导 `/`）；Compose 使用 `com.docker.compose.project` 的准确标签。Docker 匹配后共用发现容器顶点，Compose 保留项目顶点和成员边。容器数据使用最新采样，最多沿用 Agent 的200容器采集上限，不再只显示前12个。
 
 Nginx 上游仅在同代理节点发起的已启用 HTTP 探针中，找到唯一应用的相同 URL origin 才关联到应用；不使用名称、DNS 猜测或跨来源回环端点匹配。此关系证明配置指向相同端点，不等于确认实际 Nginx 生效配置。无匹配或多个应用共享端点时详情显示“上游未关联”。
+
+systemd 周期采样新增 `payload.services`，仅包含已加载的服务单元 `{name,active,sub}`，最多200项，约3秒命令超时；不读取服务环境或命令。拓扑按同节点完整单元名匹配 systemd 部署并共用顶点，只显示关联服务；不将 `nginx` 猜测为 `nginx.service`。非 systemd 主机返回空集，采集失败保留 collectionErrors。

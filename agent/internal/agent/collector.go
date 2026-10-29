@@ -1,7 +1,7 @@
 // @file collector.go
 // @project PipkerOps
 // @module agent/metrics
-// @description 本机 CPU、内存、文件系统、网络、IO、进程、端口与 Docker 采集。
+// @description 本机 CPU、内存、文件系统、网络、IO、进程、端口与 Docker 与已加载 systemd 服务采集。
 // @logic 限制进程/端口/容器数量；逐项报告权限或采集失败，不生成模拟数据。
 // @dependencies gopsutil/v4, Docker CLI (optional)
 // @index_tags agent, metrics, linux
@@ -25,7 +25,7 @@ import (
 
 func Collect(ctx context.Context) map[string]any {
 	hostname, _ := os.Hostname()
-	result := map[string]any{"hostname": hostname, "os": runtime.GOOS, "arch": runtime.GOARCH, "agentVersion": Version, "recordedAt": time.Now().UTC().Format(time.RFC3339Nano), "disk": []any{}, "network": []any{}, "io": map[string]any{}, "processes": []any{}, "ports": []any{}, "containers": []any{}}
+	result := map[string]any{"hostname": hostname, "os": runtime.GOOS, "arch": runtime.GOARCH, "agentVersion": Version, "recordedAt": time.Now().UTC().Format(time.RFC3339Nano), "disk": []any{}, "network": []any{}, "io": map[string]any{}, "processes": []any{}, "ports": []any{}, "containers": []any{}, "services": []any{}}
 	errors := []string{}
 	if values, err := cpu.PercentWithContext(ctx, 200*time.Millisecond, false); err == nil && len(values) > 0 {
 		result["cpuPercent"] = values[0]
@@ -109,6 +109,14 @@ func Collect(ctx context.Context) map[string]any {
 	} else {
 		errors = append(errors, "ports: "+err.Error())
 	}
+	if _, err := os.Stat("/run/systemd/system"); runtime.GOOS == "linux" && err == nil {
+		services, err := collectServices(ctx)
+		if err != nil {
+			errors = append(errors, "systemd: "+err.Error())
+		} else {
+			result["services"] = services
+		}
+	}
 	dockerCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if output, err := runCommand(dockerCtx, nil, "docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"); err == nil {
@@ -128,4 +136,33 @@ func Collect(ctx context.Context) map[string]any {
 	}
 	result["collectionErrors"] = errors
 	return result
+}
+
+func collectServices(ctx context.Context) ([]map[string]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	output, err := runCommand(ctx, nil, "systemctl", "list-units", "--type=service", "--all", "--no-pager", "--output=json")
+	if err != nil {
+		return nil, err
+	}
+	var units []struct {
+		Unit   string `json:"unit"`
+		Load   string `json:"load"`
+		Active string `json:"active"`
+		Sub    string `json:"sub"`
+	}
+	if err = json.Unmarshal([]byte(output), &units); err != nil {
+		return nil, err
+	}
+	services := []map[string]string{}
+	for _, unit := range units {
+		if unit.Load != "loaded" {
+			continue
+		}
+		services = append(services, map[string]string{"name": unit.Unit, "active": unit.Active, "sub": unit.Sub})
+		if len(services) >= 200 {
+			break
+		}
+	}
+	return services, nil
 }

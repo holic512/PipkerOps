@@ -98,7 +98,9 @@ export function Topology() {
         const matched = links.deploymentLinks.filter(
           (l) => l.deploymentId === deployment.id,
         );
-        const merged = deployment.type === "docker" && matched.length === 1;
+        const merged =
+          ["docker", "systemd"].includes(deployment.type) &&
+          matched.length === 1;
         const deploymentGraphId = merged
           ? matched[0].resourceId
           : `deployment:${deployment.id}`;
@@ -111,7 +113,7 @@ export function Topology() {
               kind: "部署实例",
               target: deployment.target,
               association: matched.length
-                ? `已关联 ${matched.length} 个容器`
+                ? `已关联 ${matched.length} 个资源`
                 : "运行目标未关联到已发现资源",
               state: matched.length
                 ? matched.every((l) => l.state === "HEALTHY")
@@ -158,16 +160,21 @@ export function Topology() {
         className: `graph-entity graph-${state.toLowerCase()}`,
       });
       links.resources
-        .filter((r) => r.nodeId === n.id)
+        .filter(
+          (r) =>
+            r.nodeId === n.id &&
+            (r.kind === "docker" ||
+              links.deploymentLinks.some((l) => l.resourceId === r.id)),
+        )
         .forEach((obj) => {
           const id = obj.id;
           nodes.push({
             id,
             position: { x: 1050, y: nodeRow++ * 90 },
             data: {
-              label: `容器 · ${obj.name}`,
-              target: obj.containerId,
-              kind: "Docker 容器",
+              label: `${obj.kind === "docker" ? "容器" : "服务"} · ${obj.name}`,
+              target: obj.target,
+              kind: obj.kind === "docker" ? "Docker 容器" : "systemd 服务",
               state: obj.state,
             },
             className: `graph-entity graph-${obj.state.toLowerCase()}`,
@@ -186,7 +193,7 @@ export function Topology() {
       const deployment = d.applications
         .flatMap((a) => a.deployments)
         .find((item) => item.id === link.deploymentId)!;
-      if (deployment.type === "docker") return;
+      if (["docker", "systemd"].includes(deployment.type)) return;
       edges.push({
         id: `deployment-resource:${link.deploymentId}:${link.resourceId}`,
         source: `deployment:${link.deploymentId}`,

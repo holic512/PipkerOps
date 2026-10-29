@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { createServer } from "node:https";
 import { randomUUID, createHash } from "node:crypto";
 import { db } from "../src/lib/db";
+import { topologyLinks } from "../src/lib/topology-links";
 const docker = (...args: string[]) =>
   execFileSync("docker", args, {
     encoding: "utf8",
@@ -30,11 +31,12 @@ async function wait<T>(
 test(
   "systemd真实服务、UFW、软件安装及HTTPS升级ACK后重启",
   { timeout: 600000 },
-  async () => {
+  async (t) => {
     const run = "systemd-" + randomUUID().slice(0, 8);
     let container = "",
       nodeId = "",
       tokenId = "";
+    let applicationId = "";
     const binary = readFileSync(
       process.env.LINUX_AGENT_BINARY ??
         `/tmp/pipker-agent-linux-${process.arch === "x64" ? "amd64" : "arm64"}`,
@@ -213,7 +215,25 @@ test(
       assert.equal(units[0].unit, "nginx.service");
       const services = await task("systemd.list");
       assert.ok(JSON.stringify(services).includes("nginx"));
+      const app = await rpc<{ id: string }>("applications.save", { name: run });
+      applicationId = app.id;
+      const deployment = await rpc<{ id: string }>("deployments.save", {
+        applicationId,
+        nodeId,
+        type: "systemd",
+        name: run,
+        target: "nginx.service",
+      });
+      const serviceState = async () =>
+        topologyLinks(
+          await rpc<Parameters<typeof topologyLinks>[0]>("topology"),
+        ).deploymentLinks.find((l) => l.deploymentId === deployment.id)?.state;
       await task("systemd.action", { name: "nginx.service", action: "start" });
+      await wait(
+        serviceState,
+        (s) => s === "HEALTHY",
+        "discovered service active",
+      );
       assert.equal(
         docker("exec", container, "systemctl", "is-active", "nginx").trim(),
         "active",
@@ -232,6 +252,22 @@ test(
         ).trim(),
         "inactive",
       );
+      await wait(
+        serviceState,
+        (s) => s === "UNHEALTHY",
+        "discovered service stopped",
+      );
+      await task("systemd.action", { name: "nginx.service", action: "start" });
+      await wait(
+        serviceState,
+        (s) => s === "HEALTHY",
+        "discovered service recovered",
+      );
+      await rpc("deployments.delete", { id: deployment.id, confirmed: true });
+      assert.equal(await serviceState(), undefined);
+      console.log(
+        "Verified real systemd discovery, exact deployment identity, stop/recovery refresh and unlink",
+      );
       await task("firewall.list");
       await task("firewall.rule", {
         action: "allow",
@@ -246,13 +282,14 @@ test(
         port: 18080,
         protocol: "tcp",
       });
-      await task("software.install", { name: "htop" });
-      assert.ok(
-        docker("exec", container, "htop", "--version").includes("htop"),
-      );
-      console.log(
-        "Verified systemd list/start/reload/stop, UFW add/delete and real software package install",
-      );
+      await t.test("真实软件安装", async () => {
+        await task("software.install", { name: "htop" });
+        assert.ok(
+          docker("exec", container, "htop", "--version").includes("htop"),
+        );
+        console.log("Verified real software package install");
+      });
+      console.log("Verified systemd list/start/reload/stop and UFW add/delete");
       const pidBefore = docker(
         "exec",
         container,
@@ -336,6 +373,8 @@ test(
     } finally {
       upgradeServer.close();
       if (container) docker("rm", "-fv", container);
+      if (applicationId)
+        await db().application.deleteMany({ where: { id: applicationId } });
       const owned = await db().node.findMany({
         where: { name: run },
         select: { id: true },
