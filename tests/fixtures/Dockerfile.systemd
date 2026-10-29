@@ -1,0 +1,8 @@
+# Privileged acceptance container uses its own network/filesystem/cgroup namespace.
+FROM eclipse-temurin:25-jre-noble
+ENV DEBIAN_FRONTEND=noninteractive container=docker
+RUN apt-get update && apt-get install -y --no-install-recommends systemd-sysv dbus nginx ufw curl git ca-certificates certbot procps \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /etc/nginx/conf.d /var/lib/pipkerops/acme
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

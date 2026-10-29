@@ -337,6 +337,20 @@ test(
       console.log(
         "Verified real Nginx syntax validation, apply, invalid-config rollback and missing-certificate reporting",
       );
+      const removing = await rpc<{ id: string }>("sites.delete", {
+        id: siteId,
+        confirmed: true,
+      });
+      await wait(
+        () => rpc<{ status: string }>("tasks.get", { id: removing.id }),
+        (t) => t.status === "SUCCEEDED",
+        "remove managed Nginx site",
+      );
+      assert.equal(await db().site.count({ where: { id: siteId } }), 0);
+      siteId = "";
+      console.log(
+        "Verified managed site deletion removes configuration and platform record only after reload",
+      );
       const uncertain = await rpc<{ id: string }>("tasks.create", {
         type: "shell.exec",
         nodeId,

@@ -83,3 +83,6 @@ Prisma `migrate diff --from-empty --to-schema` 在当前环境报告 `Error in S
 ## 主线程增量验证
 
 2026-10-29 已在用户指定空PostgreSQL执行初始迁移；随后实际执行客户端证书轮换与计划Key授权增量迁移。独立Compose空库再运行迁移成功，pg_dump/pg_restore到第二空库后应用ID和JSON业务数据一致。旧指纹仅有24小时宽限；Schedule保留创建Key ID并在调度时检查其当前状态，该字段刻意不因删除Key而清空，避免降级为用户全权限。上述真实验证补充了建模阶段的本地测试，并不表示生产灾备、长期容量和公网TLS已验收。
+
+
+探针授权迁移 `202610290003_probe_authorization` 增加 `Probe.createdById/createdByApiKeyId`。这些字段刻意保留身份ID，删除Key不能通过SET NULL退化为完整用户权限；调度时重新查验用户/Key，缺失或失效则停用并通知，重新保存绑定新授权。实例健康探针与普通探针使用相同机制。

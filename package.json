@@ -21,7 +21,8 @@
     "test": "tsx --test tests/*.test.ts",
     "test:integration": "tsx --env-file=.env --test tests/platform.integration.ts",
     "lint": "eslint .",
-    "test:linux": "tsx --env-file=.env --test tests/linux.integration.ts"
+    "test:linux": "tsx --env-file=.env --test tests/linux.integration.ts",
+    "test:systemd": "tsx --env-file=.env --test tests/systemd.integration.ts"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",

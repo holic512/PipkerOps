@@ -40,7 +40,7 @@ npm run build
 cd agent && go test ./...
 ```
 
-真实联调使用 `AGENT_BINARY=/absolute/path/to/pipkerops-agent npm run test:integration`（需运行Web/Gateway/Worker，Worker用 NODE_EXTRA_CA_CERTS 指向私有CA以验证本地HTTPS夹具）。`npm run test:linux`另需Docker-in-Docker镜像与9543/9544验收Gateway，见部署文档。真实联调会创建唯一前缀资源并清理，保留审计。权限、任务恢复及部署验证记录维护在开发计划中，不将单独构建成功视为整体功能通过。
+真实联调使用 `AGENT_BINARY=/absolute/path/to/pipkerops-agent npm run test:integration`（需运行Web/Gateway/Worker，Worker用 NODE_EXTRA_CA_CERTS 指向私有CA以验证本地HTTPS夹具）。`npm run test:linux`另需Docker-in-Docker镜像与9543/9544验收Gateway，`npm run test:systemd`使用独立Ubuntu/systemd夹具验证服务、规则、软件安装和升级重启，见部署文档。真实联调会创建唯一前缀资源并清理，保留审计。权限、任务恢复及部署验证记录维护在开发计划中，不将单独构建成功视为整体功能通过。
 
 ## API 与 MCP
 

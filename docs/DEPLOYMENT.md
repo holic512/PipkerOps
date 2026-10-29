@@ -57,4 +57,18 @@ GATEWAY_HOST=0.0.0.0 GATEWAY_PORT=9543 ENROLL_PORT=9544 GATEWAY_TLS_CERT=.data/p
 LINUX_AGENT_BINARY=/absolute/path/pipkerops-agent-linux-arm64 npm run test:linux
 ```
 
-此测试使用privileged Docker-in-Docker来获得真实容器能力，不挂载宿主Docker socket或文件系统。它只删除自己创建的容器/匿名卷和数据库记录，保留审计。systemd/UFW不在Alpine夹具内，因此不宣称其真实验收完成。开发Gateway附加端口只应在可信开发机开放；常规部署继续使用9443/9444。
+此测试使用privileged Docker-in-Docker来获得真实容器能力，不挂载宿主Docker socket或文件系统。它只删除自己创建的容器/匿名卷和数据库记录，保留审计。systemd/UFW在下面的独立Ubuntu夹具内验收。开发Gateway附加端口只应在可信开发机开放；常规部署继续使用9443/9444。
+
+
+## 隔离 systemd 联调
+
+沿用上面的Web/Gateway/Worker和9543/9544验收Gateway，运行：
+
+```sh
+docker build -f tests/fixtures/Dockerfile.systemd -t pipkerops-systemd-fixture:local .
+LINUX_AGENT_BINARY=/absolute/path/pipkerops-agent-linux-arm64 npm run test:systemd
+```
+
+夹具以privileged和私有cgroup命名空间运行自己的systemd，不挂载宿主文件系统、cgroup或Docker socket。真实验证服务查询/启停/reload、UFW规则增删（不启用全局防火墙）、APT索引更新后安装htop、错误升级摘要拒绝、HTTPS二进制替换/.previous备份及结果ACK后实际systemd进程重启。只清理本次资源，审计保留。首次镜像构建和APT安装依赖可达软件源，测试上限10分钟；不接受用模拟输出替代失败结果。
+
+2026-10-29该测试通过，用时216.9秒；Agent重启后重新接入并成功执行system.info。Linux容器/Compose/PTY/Nginx与此测试分别运行，实际ACME公网签发仍需要授权域名及DNS条件。
