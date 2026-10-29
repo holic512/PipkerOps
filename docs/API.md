@@ -81,6 +81,8 @@ HTTP探针公网目标必须HTTPS；私网/回环允许HTTP用于内网健康检
 
 QUEUED→DISPATCHED→RUNNING→SUCCEEDED/FAILED；失去执行证据为UNKNOWN。非幂等任务最多一次尝试，UNKNOWN等待Agent journal对账；不要换idempotencyKey盲目重提。幂等只读任务最多3次。任务日志有递增sequence去重，结果和审计持久化；Agent收到结果ACK后才完成本地清理/可选升级重启。
 
+Compose部署先暂存并校验YAML，通过后保存配置再运行`up`。语法失败不替换原配置；运行阶段失败可能已经创建或修改资源。新Agent的结果包含`configurationSaved`、`applySucceeded`，运行失败另有`runtimeMayBePartial:true`；Web运维页和任务详情提供准确项目状态入口。保留此次尝试的配置，不自动回滚或重放，先查状态/日志，再显式修正配置。旧Agent没有这些附加标志，需升级才能得到完整恢复提示；原任务状态和结果对象保持兼容。
+
 ## 终端消息
 
 获取ticket后连接返回的wss URL，浏览器Origin必须匹配APP_ORIGIN。发送 `{type:"terminal.input",data}` 或 `{type:"terminal.resize",cols,rows}`；接收terminal.output(data)、terminal.exit、terminal.error。ticket一次消费；关闭、注销、会话过期、Key吊销或节点吊销会结束会话。终端内容可能含敏感信息，平台审计记录建立/结束，不把交互内容作为任务脚本自动重放。

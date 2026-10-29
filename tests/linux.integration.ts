@@ -314,6 +314,52 @@ test(
       const compose = await task("compose.read", { project: run });
       assert.ok(String(compose.result.yaml).includes("sleeper"));
       await task("compose.status", { project: run });
+      const failedProject = run + "-failed";
+      const failedYaml =
+        'services:\n  broken:\n    image: alpine:3.22\n    user: pipkerops-user-does-not-exist\n    command: [sh, -c, "sleep 600"]\n';
+      const failedDeploy = await task(
+        "compose.deploy",
+        { project: failedProject, yaml: failedYaml },
+        false,
+      );
+      assert.equal(failedDeploy.result.configurationSaved, true);
+      assert.equal(failedDeploy.result.applySucceeded, false);
+      assert.equal(failedDeploy.result.runtimeMayBePartial, true);
+      assert.match(
+        failedDeploy.error ?? "",
+        /runtime resources may be partially changed/,
+      );
+      assert.equal(
+        (await task("compose.read", { project: failedProject })).result.yaml,
+        failedYaml,
+      );
+      const failedStatus = await task("compose.status", {
+        project: failedProject,
+      });
+      assert.ok(JSON.stringify(failedStatus).includes("broken"));
+      const failedContainer = docker(
+        "exec",
+        container,
+        "docker",
+        "inspect",
+        "--format",
+        "{{.State.Status}}",
+        failedProject + "-broken-1",
+      ).trim();
+      assert.equal(failedContainer, "created");
+      const recovered = await task("compose.deploy", {
+        project: failedProject,
+        yaml: failedYaml.replace(
+          "    user: pipkerops-user-does-not-exist\n",
+          "",
+        ),
+      });
+      assert.equal(recovered.result.configurationSaved, true);
+      assert.equal(recovered.result.applySucceeded, true);
+      assert.equal(recovered.result.runtimeMayBePartial, undefined);
+      console.log(
+        "Verified Compose runtime failure retains configuration, reports partial changes and recovers only after explicit configuration correction",
+      );
       const inspected = await task("docker.inspect", {
         id: run + "-sleeper-1",
       });

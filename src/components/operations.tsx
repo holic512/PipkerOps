@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module operations-ui
  * @description 任务、Docker、文件、系统、站点、自动化和PTY页面，操作统一进入任务队列。
- * @logic 任务按计划关联筛选并解释无日志状态；危险操作确认后执行；终端一次性票据连接且不重放输入，提交失败保留幂等键。
+ * @logic 任务按计划筛选，解释无日志与Compose部分失败并指向状态查询；危险操作确认后执行，提交失败保留幂等键，终端不重放输入。
  * @dependencies React, shared UI, RPC, xterm
  * @index_tags operations, tasks, terminal, automation, ui
  * @author holic512
@@ -44,6 +44,26 @@ const taskLogMessages: Record<string, string> = {
   CANCELLED: "任务已取消，未执行。",
   UNKNOWN: "执行结果未知，请先查看任务状态与对账结果，勿直接重试。",
 };
+function TaskRecoveryNotice({ task }: { task?: TaskData }) {
+  if (
+    task?.type !== "compose.deploy" ||
+    task.status !== "FAILED" ||
+    task.result.configurationSaved !== true
+  )
+    return null;
+  const query = new URLSearchParams({
+    node: task.nodeId!,
+    target: task.payload.project as string,
+    action: "compose.status",
+  });
+  return (
+    <p role="alert" className="inline-error">
+      配置已保存，但部署未完成，运行资源可能已部分改变。请先
+      <Link href={`/docker?${query}`}>查看项目状态</Link>
+      和任务日志，再决定后续操作。
+    </p>
+  );
+}
 export function Tasks() {
   const search = useSearchParams();
   const scheduleId = search.get("schedule") ?? "";
@@ -181,6 +201,7 @@ export function TaskDetail({ id }: { id: string }) {
                 {task.error}
               </div>
             )}
+            <TaskRecoveryNotice task={task} />
             <section className="panel">
               <div className="panel-header">
                 <h2>执行日志</h2>
@@ -682,6 +703,7 @@ function OperationsForm({
                 {taskQuery.data?.error && (
                   <p className="error-text">{taskQuery.data.error}</p>
                 )}
+                <TaskRecoveryNotice task={taskQuery.data} />
                 <pre className="terminal-output">
                   {taskQuery.data?.output ||
                     taskQuery.data?.logs?.map((l) => l.message).join("") ||

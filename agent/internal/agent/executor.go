@@ -2,7 +2,7 @@
 // @project PipkerOps
 // @module agent/execution
 // @description Linux 运维任务路由、命令边界、有限输出及升级验证。
-// @logic 仅 shell.exec 使用 shell；其他命令按参数执行；高危任务由主控授权且 Agent 不自动重试。
+// @logic 命令按参数执行；Compose报告配置保存与运行失败边界；高危任务由主控授权且Agent不自动重试。
 // @dependencies Go standard library, Docker/systemctl/nginx/ufw/package manager CLIs
 // @index_tags agent, operations, docker, nginx, files, upgrade
 // @author holic512
@@ -491,7 +491,12 @@ func (e *Executor) compose(ctx context.Context, p executionParams, log logFunc) 
 	}
 	args[len(args)-1] = final
 	out, err := runCommand(ctx, log, "docker", append(args, "up", "-d", "--remove-orphans")...)
-	return out, map[string]any{"project": p.Project, "path": final}, err
+	result := map[string]any{"project": p.Project, "path": final, "configurationSaved": true, "applySucceeded": err == nil}
+	if err != nil {
+		result["runtimeMayBePartial"] = true
+		return out, result, fmt.Errorf("Compose apply failed after saving configuration; runtime resources may be partially changed, inspect project status before further operations: %w", err)
+	}
+	return out, result, nil
 }
 
 func (e *Executor) nginx(ctx context.Context, p executionParams, log logFunc) (string, any, error) {
