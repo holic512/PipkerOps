@@ -559,6 +559,7 @@ export function Operations({ mode }: { mode: string }) {
                       `${current.label}？`,
                       `此操作将在 ${q.data?.find((n) => n.id === node)?.name} 上执行。请检查参数，操作将被审计。`,
                       () => launch(data),
+                      "任务已加入队列",
                     );
                   } else await op.run(() => launch(data), "任务已加入队列");
                 }}
@@ -671,6 +672,8 @@ export function Resources({ mode }: { mode: string }) {
     null,
   );
   const [siteTask, setSiteTask] = useState("");
+  const [actionTask, setActionTask] = useState("");
+  const [actionUrl, setActionUrl] = useState("");
   const [runAction, setRunAction] = useState<GenericRow | null>(null);
   const op = useOperation(() => {
     void q.mutate();
@@ -1101,6 +1104,7 @@ export function Resources({ mode }: { mode: string }) {
                             setSiteTask(t.id);
                             return t;
                           },
+                          "站点删除任务已加入队列",
                         )
                       }
                     >
@@ -1121,6 +1125,7 @@ export function Resources({ mode }: { mode: string }) {
                               setSiteTask(task.id);
                               return task;
                             }),
+                          "配置应用任务已加入队列",
                         )
                       }
                     >
@@ -1140,10 +1145,11 @@ export function Resources({ mode }: { mode: string }) {
                   <td>{r.name}</td>
                   <td>
                     <code>{r.cron}</code>
+                    <small>{r.timezone}</small>
                   </td>
                   <td>{date(r.nextRunAt)}</td>
                   <td>
-                    <Status value={r.enabled ? "ACTIVE" : "CANCELLED"} />
+                    <Status value={r.enabled ? "ACTIVE" : "PAUSED"} />
                   </td>
                   <td>
                     <Button
@@ -1187,7 +1193,7 @@ export function Resources({ mode }: { mode: string }) {
                       "探针"}
                   </td>
                   <td>
-                    <Status value={r.enabled ? "ACTIVE" : "CANCELLED"} />
+                    <Status value={r.enabled ? "ACTIVE" : "PAUSED"} />
                     <Button
                       size="sm"
                       variant="ghost"
@@ -1218,7 +1224,7 @@ export function Resources({ mode }: { mode: string }) {
                 <>
                   <td>{r.name}</td>
                   <td>{r.type}</td>
-                  <td>{String(r.config?.description ?? "自定义快捷操作")}</td>
+                  <td>{r.description || "自定义快捷操作"}</td>
                   <td>
                     <Button
                       size="sm"
@@ -1298,8 +1304,11 @@ export function Resources({ mode }: { mode: string }) {
                   );
                   if (r.url)
                     window.open(r.url, "_blank", "noopener,noreferrer");
+                  setActionTask(r.id ?? "");
+                  setActionUrl(r.url ?? "");
                   return r;
                 },
+                runAction.type === "URL" ? "链接已生成" : "操作任务已加入队列",
               );
             }}
           />
@@ -1309,6 +1318,20 @@ export function Resources({ mode }: { mode: string }) {
         <p className="inline-feedback">
           任务已加入队列：
           <Link href={`/tasks/${siteTask}`}>查看执行日志与结果</Link>
+        </p>
+      )}
+      {mode === "actions" && actionTask && (
+        <p className="inline-feedback">
+          任务已加入队列：
+          <Link href={`/tasks/${actionTask}`}>查看执行日志与结果</Link>
+        </p>
+      )}
+      {mode === "actions" && actionUrl && (
+        <p className="inline-feedback">
+          操作链接：
+          <a href={actionUrl} target="_blank" rel="noopener noreferrer">
+            打开链接
+          </a>
         </p>
       )}
       {certificateSite && (
@@ -1353,6 +1376,7 @@ export function Resources({ mode }: { mode: string }) {
                       setSiteTask(t.id);
                       return t;
                     },
+                    "HTTPS 配置任务已加入队列",
                   )
                 }
               >
@@ -1372,6 +1396,7 @@ export function Resources({ mode }: { mode: string }) {
                       setSiteTask(t.id);
                       return t;
                     },
+                    "续期任务已加入队列",
                   )
                 }
               >
@@ -1413,6 +1438,7 @@ export function Resources({ mode }: { mode: string }) {
                     setSiteTask(t.id);
                     return t;
                   },
+                  "签发任务已加入队列",
                 );
               }}
             />
@@ -1543,6 +1569,7 @@ export function TerminalPage() {
                     setActive(id);
                     return ticket;
                   },
+                  "正在建立终端连接",
                 )
               }
             >

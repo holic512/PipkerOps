@@ -623,6 +623,7 @@ export function Probes() {
                           "此HTTP方法可能修改目标数据。",
                           () =>
                             rpc("probes.run", { id: p.id, confirmed: true }),
+                          "探测任务已加入队列",
                         )
                       : void op.run(
                           () => rpc("probes.run", { id: p.id }),

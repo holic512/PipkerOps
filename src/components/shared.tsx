@@ -1,4 +1,14 @@
 "use client";
+/**
+ * @file shared.tsx
+ * @project PipkerOps
+ * @module shared-ui
+ * @description 业务查询、表单、状态与操作确认的共用组件。
+ * @logic 查询呈现加载与失败状态；确认操作保留错误，并显示调用方指定的成功反馈。
+ * @dependencies React, SWR, RPC, UI components
+ * @index_tags forms, queries, confirmation, feedback
+ * @author holic512
+ */
 import { useState } from "react";
 import useSWR from "swr";
 import { Inbox, RotateCw, AlertCircle, Check, X } from "lucide-react";
@@ -175,6 +185,7 @@ export function useOperation(onSuccess?: () => void) {
     title: string;
     description: string;
     action: () => Promise<unknown>;
+    success?: string;
   } | null>(null);
   const run = async <T,>(action: () => Promise<T>, success = "操作已完成") => {
     setBusy(true);
@@ -201,9 +212,10 @@ export function useOperation(onSuccess?: () => void) {
       title: string,
       description: string,
       action: () => Promise<unknown>,
+      success?: string,
     ) => {
       setFeedback(null);
-      setConfirmation({ title, description, action });
+      setConfirmation({ title, description, action, success });
     },
     feedback,
     clear: () => setFeedback(null),
@@ -218,7 +230,8 @@ export function useOperation(onSuccess?: () => void) {
           error={feedback?.error ? feedback.message : undefined}
           onClose={() => setConfirmation(null)}
           onConfirm={() => {
-            if (confirmation) void run(confirmation.action);
+            if (confirmation)
+              void run(confirmation.action, confirmation.success);
           }}
         />
       </>

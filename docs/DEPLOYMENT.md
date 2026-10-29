@@ -46,6 +46,22 @@ docker compose up -d
 
 2026-10-29：独立Compose项目全新PostgreSQL/Redis、迁移、PKI、非root Web/Gateway/Worker、HTTPS代理健康和安全Cookie登录通过。创建真实应用后备份，向第二个空项目恢复，重新HTTPS登录并核对原应用ID/业务字段一致。镜像检查没有本地 `.env`、CA私钥或Git目录。开发机容器验收不等同于公网域名、真实ACME或生产防火墙已完成验收。
 
+## 平台联调
+
+按 README 完成本地初始化，启动 Web 和默认 9443/9444 Gateway，并按 [Agent 说明](../agent/README.md) 编译本机二进制。HTTPS 测试需要 `.data/pki/server-linux.crt` 和对应私钥，缺失时运行：
+
+```sh
+npx tsx --env-file=.env scripts/dev-linux-pki.ts
+```
+
+将 Worker 的启动命令改为 `NODE_EXTRA_CA_CERTS="$PWD/.data/pki/ca.crt" npm run worker`，使其信任本地 HTTPS 夹具，再执行：
+
+```sh
+AGENT_BINARY=/absolute/path/pipkerops-agent npm run test:integration
+```
+
+测试覆盖注册审批、mTLS 采集、任务回传、应用与探针、Key 权限和 MCP，按本次创建的 ID 清理资源，保留审计。
+
 ## 隔离 Linux 联调
 
 ```sh
@@ -58,7 +74,6 @@ LINUX_AGENT_BINARY=/absolute/path/pipkerops-agent-linux-arm64 npm run test:linux
 ```
 
 此测试使用privileged Docker-in-Docker来获得真实容器能力，不挂载宿主Docker socket或文件系统。它只删除自己创建的容器/匿名卷和数据库记录，保留审计。systemd/UFW在下面的独立Ubuntu夹具内验收。开发Gateway附加端口只应在可信开发机开放；常规部署继续使用9443/9444。
-
 
 ## 隔离 systemd 联调
 
@@ -73,7 +88,6 @@ LINUX_AGENT_BINARY=/absolute/path/pipkerops-agent-linux-arm64 npm run test:syste
 
 2026-10-29该测试通过，用时216.9秒；Agent重启后重新接入并成功执行system.info。Linux容器/Compose/PTY/Nginx与此测试分别运行，实际ACME公网签发仍需要授权域名及DNS条件。
 
-
 ## 双节点连通性联调
 
 沿用9543/9544验收Gateway与已构建的Linux夹具：
@@ -84,11 +98,9 @@ LINUX_AGENT_BINARY=/absolute/path/pipkerops-agent-linux-arm64 npm run test:conne
 
 测试为两个独立Linux容器建立临时网络，Agent通过mTLS审批接入，分别执行A到B的HTTP/TCP和B到A的HTTP，验证JSON字段来自目标节点。停止B的Nginx后验证连续失败阈值、拓扑依赖中的真实故障结果，再启动服务确认恢复。无需privileged，不启动嵌套Docker，不挂载宿主文件；本次资源按ID清理。2026-10-29实际通过，用时37.6秒。
 
-
 ## 告警联调
 
 开发Worker需使用 `NODE_EXTRA_CA_CERTS=/absolute/path/ca.crt` 信任本地HTTPS夹具，Web/Gateway/Worker运行后执行 `npm run test:alerts`。测试真实HTTP健康目标与本地HTTPS Webhook，验证连续失败、只发送一次、恢复通知、下一次故障重新发送，以及失败HTTP状态的审计记录；不会向第三方服务发消息。2026-10-29实际通过，用时26秒。
-
 
 ## 进程崩溃与执行对账
 
@@ -99,7 +111,6 @@ RECOVERY_WORKER_EXCLUSIVE=true AGENT_BINARY=/absolute/path/pipkerops-agent npm r
 ```
 
 测试启动并仅杀死自己的9643/9644 Gateway、Worker和本机Agent进程：Agent执行有副作用POST期间SIGKILL Gateway，结果通过Agent持久journal在重连后对账成功，实际请求计数始终1；主控POST开始后SIGKILL Worker，将本次测试任务租约设为过期后重启，任务进入UNKNOWN、attempts=1且不重放。新任务仍可执行。2026-10-29实际通过，用时21.2秒。完成后重新启动开发Worker；不对任何未知或生产进程执行kill。
-
 
 ## 多节点短时容量验收
 
