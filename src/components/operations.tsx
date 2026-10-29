@@ -1167,7 +1167,7 @@ export function Resources({ mode }: { mode: string }) {
                       onClick={() =>
                         op.ask(
                           "删除站点？",
-                          "将删除此节点由平台管理的 Nginx 配置，检查并重新加载成功后才删除平台记录与续期计划；证书文件保留。",
+                          `节点：${nodes.data?.find((n) => n.id === r.nodeId)?.name ?? r.nodeId}；域名：${r.domain}。将删除平台管理的 Nginx 配置，检查并重新加载成功后才删除平台记录与续期计划；证书文件保留。`,
                           async () => {
                             const t = await rpc<{ id: string }>(
                               "sites.delete",
@@ -1188,7 +1188,7 @@ export function Resources({ mode }: { mode: string }) {
                       onClick={() =>
                         op.ask(
                           "应用站点配置？",
-                          "Agent 将写入配置、运行 nginx -t，通过后重新加载。",
+                          `节点：${nodes.data?.find((n) => n.id === r.nodeId)?.name ?? r.nodeId}；域名：${r.domain}；上游：${r.upstream}。Agent 将写入配置、运行 nginx -t，通过后重新加载。`,
                           () =>
                             rpc<{ id: string }>("sites.apply", {
                               id: r.id,
