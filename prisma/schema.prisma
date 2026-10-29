@@ -1,0 +1,434 @@
+// @file schema.prisma
+// @project PipkerOps
+// @module persistence
+// @description 平台身份、节点、监控、应用、探针、持久化任务及运维资源的数据契约。
+// @logic 管理端/Worker/Gateway 共用模型；原始指标按记录时间分区；任务默认仅执行一次。
+// @dependencies PostgreSQL, Prisma ORM 7
+// @index_tags database, auth, agent, metrics, tasks
+// @author holic512
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum NodeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVOKED
+}
+
+enum ProbeType {
+  HTTP
+  TCP
+}
+
+enum TaskStatus {
+  QUEUED
+  DISPATCHED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  UNKNOWN
+}
+
+enum TaskSource {
+  WEB
+  MCP
+  CRON
+  SYSTEM
+}
+
+model User {
+  id               String            @id @default(cuid())
+  email            String            @unique
+  passwordHash     String
+  displayName      String
+  role             Role              @default(VIEWER)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
+  sessions         Session[]
+  apiKeys          ApiKey[]
+  enrollmentTokens EnrollmentToken[]
+  approvedNodes    Node[]            @relation("NodeApprover")
+  tasks            Task[]
+  auditEvents      AuditEvent[]
+  schedules        Schedule[]
+  notifications    Notification[]
+  customActions    CustomAction[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model ApiKey {
+  id             String       @id @default(cuid())
+  name           String
+  keyHash        String       @unique
+  keyPrefix      String
+  userId         String
+  scopes         String[]     @default([])
+  nodeIds        String[]     @default([])
+  allowDangerous Boolean      @default(false)
+  expiresAt      DateTime?    @db.Timestamptz(3)
+  lastUsedAt     DateTime?    @db.Timestamptz(3)
+  revokedAt      DateTime?    @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks          Task[]
+  auditEvents    AuditEvent[]
+
+  @@index([userId, revokedAt])
+}
+
+model EnrollmentToken {
+  id          String   @id @default(cuid())
+  name        String
+  tokenHash   String   @unique
+  expiresAt   DateTime @db.Timestamptz(3)
+  maxUses     Int      @default(1)
+  usedCount   Int      @default(0)
+  createdById String
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  nodes       Node[]
+
+  @@index([expiresAt])
+}
+
+model Node {
+  id                     String           @id @default(cuid())
+  name                   String
+  hostname               String?
+  status                 NodeStatus       @default(PENDING)
+  labels                 String[]         @default([])
+  os                     String?
+  arch                   String?
+  agentVersion           String?
+  ipAddress              String?
+  certificateSerial      String?          @unique
+  certificateFingerprint String?          @unique
+  csrPem                 String?
+  certificatePem         String?
+  enrollmentTokenId      String?
+  approvedById           String?
+  approvedAt             DateTime?        @db.Timestamptz(3)
+  lastSeenAt             DateTime?        @db.Timestamptz(3)
+  createdAt              DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime         @updatedAt @db.Timestamptz(3)
+  enrollmentToken        EnrollmentToken? @relation(fields: [enrollmentTokenId], references: [id], onDelete: SetNull)
+  approvedBy             User?            @relation("NodeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  metrics                MetricSample[]
+  hourlyMetrics          MetricHourly[]
+  deployments            Deployment[]
+  probes                 Probe[]          @relation("ProbeSource")
+  probeResults           ProbeResult[]    @relation("ProbeResultSource")
+  tasks                  Task[]
+  auditEvents            AuditEvent[]
+  schedules              Schedule[]
+  alertRules             AlertRule[]
+  sites                  Site[]
+
+  @@index([status, lastSeenAt])
+  @@index([enrollmentTokenId])
+}
+
+model MetricSample {
+  id            String   @default(cuid())
+  nodeId        String
+  recordedAt    DateTime @default(now()) @db.Timestamptz(3)
+  payload       Json     @default("{}")
+  cpuPercent    Float
+  memoryPercent Float
+  node          Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@id([id, recordedAt])
+  @@index([nodeId, recordedAt(sort: Desc)])
+  @@index([recordedAt], type: Brin)
+}
+
+model MetricHourly {
+  nodeId      String
+  bucketAt    DateTime @db.Timestamptz(3)
+  sampleCount Int
+  cpuAvg      Float
+  cpuMax      Float
+  memoryAvg   Float
+  memoryMax   Float
+  node        Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@id([nodeId, bucketAt])
+  @@index([bucketAt], type: Brin)
+}
+
+model Application {
+  id                   String       @id @default(cuid())
+  name                 String       @unique
+  description          String?
+  labels               String[]     @default([])
+  businessData         Json         @default("{}")
+  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
+  deployments          Deployment[]
+  probes               Probe[]
+  outgoingDependencies Dependency[] @relation("DependencyFrom")
+  incomingDependencies Dependency[] @relation("DependencyTo")
+}
+
+model Deployment {
+  id            String      @id @default(cuid())
+  applicationId String
+  nodeId        String
+  name          String
+  type          String
+  target        String
+  status        String      @default("UNKNOWN")
+  healthUrl     String?
+  metadata      Json        @default("{}")
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  node          Node        @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+
+  @@index([applicationId])
+  @@index([nodeId, type])
+  @@unique([applicationId, nodeId, type, target])
+}
+
+model Dependency {
+  id                String      @id @default(cuid())
+  fromApplicationId String
+  toApplicationId   String
+  type              String      @default("depends_on")
+  description       String?
+  createdAt         DateTime    @default(now()) @db.Timestamptz(3)
+  fromApplication   Application @relation("DependencyFrom", fields: [fromApplicationId], references: [id], onDelete: Cascade)
+  toApplication     Application @relation("DependencyTo", fields: [toApplicationId], references: [id], onDelete: Cascade)
+
+  @@unique([fromApplicationId, toApplicationId, type])
+  @@index([toApplicationId])
+}
+
+model Probe {
+  id               String       @id @default(cuid())
+  name             String
+  type             ProbeType
+  applicationId    String?
+  sourceNodeId     String?
+  target           String
+  config           Json         @default("{}")
+  mapping          Json         @default("{}")
+  intervalSeconds  Int          @default(60)
+  timeoutMs        Int          @default(5000)
+  failureThreshold Int          @default(3)
+  failureCount     Int          @default(0)
+  enabled          Boolean      @default(true)
+  status           String       @default("UNKNOWN")
+  nextRunAt        DateTime?    @db.Timestamptz(3)
+  lastCheckedAt    DateTime?    @db.Timestamptz(3)
+  createdAt        DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
+  application      Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  sourceNode       Node?        @relation("ProbeSource", fields: [sourceNodeId], references: [id], onDelete: Restrict)
+  results          ProbeResult[]
+  alertRules       AlertRule[]
+
+  @@index([enabled, nextRunAt])
+  @@index([applicationId])
+  @@index([sourceNodeId])
+}
+
+model ProbeResult {
+  id           String   @id @default(cuid())
+  probeId      String
+  sourceNodeId String?
+  recordedAt   DateTime @default(now()) @db.Timestamptz(3)
+  success      Boolean
+  latencyMs    Float
+  statusCode   Int?
+  error        String?
+  data         Json     @default("{}")
+  probe        Probe    @relation(fields: [probeId], references: [id], onDelete: Cascade)
+  sourceNode   Node?    @relation("ProbeResultSource", fields: [sourceNodeId], references: [id], onDelete: SetNull)
+
+  @@index([probeId, recordedAt(sort: Desc)])
+  @@index([recordedAt], type: Brin)
+}
+
+model Task {
+  id             String      @id @default(cuid())
+  type           String
+  payload        Json        @default("{}")
+  status         TaskStatus  @default(QUEUED)
+  nodeId         String?
+  actorId        String?
+  apiKeyId       String?
+  source         TaskSource  @default(WEB)
+  idempotencyKey String?     @unique
+  idempotent     Boolean     @default(false)
+  attempts       Int         @default(0)
+  maxAttempts    Int         @default(1)
+  leaseExpiresAt DateTime?   @db.Timestamptz(3)
+  dispatchedAt   DateTime?   @db.Timestamptz(3)
+  startedAt      DateTime?   @db.Timestamptz(3)
+  finishedAt     DateTime?   @db.Timestamptz(3)
+  error          String?
+  output         String?
+  result         Json        @default("{}")
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime    @updatedAt @db.Timestamptz(3)
+  node           Node?       @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  actor          User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  apiKey         ApiKey?     @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  logs           TaskLog[]
+
+  @@index([status, createdAt])
+  @@index([nodeId, status, createdAt])
+  @@index([status, leaseExpiresAt])
+  @@index([actorId, createdAt(sort: Desc)])
+}
+
+model TaskLog {
+  id        String   @id @default(cuid())
+  taskId    String
+  sequence  Int
+  stream    String   @default("stdout")
+  message   String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, sequence])
+  @@index([createdAt], type: Brin)
+}
+
+model AuditEvent {
+  id           String   @id @default(cuid())
+  actorId      String?
+  apiKeyId     String?
+  action       String
+  resourceType String
+  resourceId   String?
+  nodeId       String?
+  ipAddress    String?
+  detail       Json     @default("{}")
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  actor        User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  apiKey       ApiKey?  @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  node         Node?    @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([resourceType, resourceId])
+}
+
+model Schedule {
+  id          String   @id @default(cuid())
+  name        String
+  cron        String
+  timezone    String   @default("Asia/Shanghai")
+  taskType    String
+  payload     Json     @default("{}")
+  nodeId      String?
+  createdById String?
+  enabled     Boolean  @default(true)
+  nextRunAt   DateTime? @db.Timestamptz(3)
+  lastRunAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  node        Node?    @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([enabled, nextRunAt])
+}
+
+model AlertRule {
+  id              String         @id @default(cuid())
+  name            String
+  nodeId          String?
+  probeId         String?
+  metric          String
+  operator        String         @default("gt")
+  threshold       Float
+  durationSeconds Int            @default(60)
+  enabled         Boolean        @default(true)
+  webhookUrl      String?
+  createdAt       DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(3)
+  node            Node?          @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  probe           Probe?         @relation(fields: [probeId], references: [id], onDelete: Cascade)
+  notifications   Notification[]
+
+  @@index([nodeId, enabled])
+  @@index([probeId, enabled])
+}
+
+model Notification {
+  id          String     @id @default(cuid())
+  userId      String?
+  alertRuleId String?
+  title       String
+  body        String
+  level       String     @default("info")
+  readAt      DateTime?  @db.Timestamptz(3)
+  createdAt   DateTime   @default(now()) @db.Timestamptz(3)
+  user        User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alertRule   AlertRule? @relation(fields: [alertRuleId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt, createdAt(sort: Desc)])
+  @@index([alertRuleId, createdAt(sort: Desc)])
+}
+
+model Site {
+  id                   String   @id @default(cuid())
+  name                 String
+  nodeId               String
+  domain               String   @unique
+  upstream             String
+  config               String
+  status               String   @default("DRAFT")
+  httpsEnabled         Boolean  @default(false)
+  certificateExpiresAt DateTime? @db.Timestamptz(3)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
+  node                 Node     @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+
+  @@index([nodeId, status])
+}
+
+model CustomAction {
+  id          String   @id @default(cuid())
+  name        String
+  type        String
+  description String?
+  config      Json     @default("{}")
+  parameters  Json     @default("{}")
+  nodeIds     String[] @default([])
+  dangerous   Boolean  @default(false)
+  createdById String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([type])
+}
