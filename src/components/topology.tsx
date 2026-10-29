@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module topology-ui
  * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 准确身份合并部署容器，配置端点关联站点上游；刷新保留布局与详情，矩阵固定目标列序，画布尺寸变化时重新适配资源。
+ * @logic 准确身份合并部署容器，配置端点关联站点上游；鼠标与键盘选择同步详情，刷新保留布局，矩阵固定列序并适配画布。
  * @dependencies React Flow, RPC, shared UI
  * @index_tags topology, connectivity, ui
  * @author holic512
@@ -359,7 +359,17 @@ export function Topology() {
                   ...n,
                   ...layout[n.id],
                 }))}
-                onNodesChange={(changes) =>
+                onNodesChange={(changes) => {
+                  for (const change of changes) {
+                    if (change.type === "select")
+                      setSelectedId((previous) =>
+                        change.selected
+                          ? change.id
+                          : previous === change.id
+                            ? null
+                            : previous,
+                      );
+                  }
                   setLayout((previous) =>
                     Object.fromEntries(
                       applyNodeChanges(
@@ -370,8 +380,8 @@ export function Topology() {
                         { position, measured, selected },
                       ]),
                     ),
-                  )
-                }
+                  );
+                }}
                 deleteKeyCode={null}
                 edges={graph.edges}
                 fitView
@@ -465,7 +475,9 @@ export function Topology() {
                     节点详情
                   </Link>
                 )}
-                <p className="muted">拖动和缩放画布，点击资源查看详情。</p>
+                <p className="muted">
+                  拖动或缩放画布；点击或按 Enter/空格查看详情，Esc 取消选择。
+                </p>
               </aside>
             )}
           </div>
