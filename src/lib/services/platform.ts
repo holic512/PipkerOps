@@ -16,6 +16,7 @@ import { randomToken, hashToken } from "../crypto";
 import * as nodes from "./nodes";
 import { createTask, listTasks, getTask, taskSpecs } from "./tasks";
 import { redis } from "../redis";
+import { privateHost } from "../config";
 const label = z.string().trim().min(1).max(120);
 const id = z.string().min(1).max(100);
 const object = z.record(z.string(), z.unknown());
@@ -45,6 +46,10 @@ export const METHODS = [
   "sites.list",
   "sites.save",
   "sites.apply",
+  "sites.certificate",
+  "sites.acme",
+  "sites.https",
+  "sites.renew",
   "actions.list",
   "actions.save",
   "actions.run",
@@ -74,6 +79,42 @@ function nodeWhere(actor: Actor) {
   return actor.apiKeyId && !actor.nodeIds?.includes("*")
     ? { nodeId: { in: actor.nodeIds ?? [] } }
     : {};
+}
+function can(actor: Actor, scope: string) {
+  try {
+    authorize(actor, scope);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function probeWhere(actor: Actor) {
+  return actor.apiKeyId && !actor.nodeIds?.includes("*")
+    ? {
+        OR: [
+          { sourceNodeId: null },
+          { sourceNodeId: { in: actor.nodeIds ?? [] } },
+        ],
+      }
+    : {};
+}
+function alertWhere(actor: Actor) {
+  return actor.apiKeyId && !actor.nodeIds?.includes("*")
+    ? {
+        OR: [
+          { nodeId: { in: actor.nodeIds ?? [] } },
+          { probe: { is: probeWhere(actor) } },
+        ],
+      }
+    : {};
+}
+function notificationWhere(actor: Actor) {
+  return {
+    AND: [
+      { OR: [{ userId: null }, { userId: actor.userId }] },
+      ...(actor.apiKeyId ? [{ alertRule: { is: alertWhere(actor) } }] : []),
+    ],
+  };
 }
 async function audit(
   actor: Actor,
@@ -112,7 +153,8 @@ export function validateProbeTarget(type: string, target: string) {
       !["http:", "https:"].includes(url.protocol) ||
       url.username ||
       url.password ||
-      ["169.254.169.254", "metadata.google.internal"].includes(url.hostname)
+      ["169.254.169.254", "metadata.google.internal"].includes(url.hostname) ||
+      (url.protocol === "http:" && !privateHost(url.hostname))
     )
       throw new ApiError(400, "无效的 HTTP 探测地址");
   } else if (
@@ -185,16 +227,19 @@ export async function execute(
             csrPem: true,
             certificatePem: true,
             certificateFingerprint: true,
+            previousCertificateFingerprint: true,
           },
           include: { metrics: { take: 1, orderBy: { recordedAt: "desc" } } },
           take: 50,
           orderBy: { createdAt: "desc" },
         }),
-        db().task.groupBy({
-          by: ["status"],
-          where: nodeWhere(actor),
-          _count: true,
-        }),
+        can(actor, "tasks:read")
+          ? db().task.groupBy({
+              by: ["status"],
+              where: nodeWhere(actor),
+              _count: true,
+            })
+          : Promise.resolve([]),
       ]);
       return {
         total,
@@ -222,7 +267,12 @@ export async function execute(
               node: { select: { id: true, name: true, lastSeenAt: true } },
             },
           },
-          probes: { select: { id: true, name: true, status: true } },
+          probes: {
+            where: can(actor, "probes:read")
+              ? probeWhere(actor)
+              : { id: { in: [] } },
+            select: { id: true, name: true, status: true },
+          },
         },
         orderBy: { createdAt: "desc" },
       });
@@ -320,15 +370,7 @@ export async function execute(
     case "probes.list": {
       authorize(actor, "probes:read");
       return db().probe.findMany({
-        where:
-          actor.apiKeyId && !actor.nodeIds?.includes("*")
-            ? {
-                OR: [
-                  { sourceNodeId: null },
-                  { sourceNodeId: { in: actor.nodeIds ?? [] } },
-                ],
-              }
-            : {},
+        where: probeWhere(actor),
         include: {
           sourceNode: { select: { id: true, name: true } },
           results: { take: 1, orderBy: { recordedAt: "desc" } },
@@ -340,6 +382,25 @@ export async function execute(
       const d = probeSchema.parse(p);
       authorize(actor, "probes:write", d.sourceNodeId ?? undefined);
       validateProbeTarget(d.type, d.target);
+      if (d.type === "HTTP")
+        d.config = z
+          .object({
+            method: z
+              .enum([
+                "GET",
+                "HEAD",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "OPTIONS",
+              ])
+              .default("GET"),
+            headers: z.record(z.string(), z.string().max(8192)).default({}),
+            body: z.string().max(131072).optional(),
+            expectedStatus: z.number().int().min(100).max(599).optional(),
+          })
+          .parse(d.config);
       if (d.id) {
         const old = await db().probe.findUnique({ where: { id: d.id } });
         if (!old) throw new ApiError(404, "探针不存在");
@@ -422,18 +483,12 @@ export async function execute(
           }),
           nodes.listNodes(actor),
           db().dependency.findMany(),
-          db().probe.findMany({
-            where:
-              actor.apiKeyId && !actor.nodeIds?.includes("*")
-                ? {
-                    OR: [
-                      { sourceNodeId: null },
-                      { sourceNodeId: { in: actor.nodeIds ?? [] } },
-                    ],
-                  }
-                : {},
-          }),
-          db().site.findMany({ where: nodeWhere(actor) }),
+          can(actor, "probes:read")
+            ? db().probe.findMany({ where: probeWhere(actor) })
+            : Promise.resolve([]),
+          can(actor, "sites:read")
+            ? db().site.findMany({ where: nodeWhere(actor) })
+            : Promise.resolve([]),
         ]);
       return { applications, nodes: nodeList, dependencies, probes, sites };
     }
@@ -475,7 +530,7 @@ export async function execute(
         ...fields,
         config:
           fields.config ||
-          `server {\n    listen 80;\n    server_name ${d.domain};\n    location / {\n        proxy_pass ${url.href};\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n    }\n}\n`,
+          `server {\n    listen 80;\n    server_name ${d.domain};\n    location ^~ /.well-known/acme-challenge/ { root /var/lib/pipkerops/acme; default_type text/plain; try_files $uri =404; }\n    location / {\n        proxy_pass ${url.href};\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n    }\n}\n`,
         status: "DRAFT",
       };
       const site = siteId
@@ -497,9 +552,92 @@ export async function execute(
       });
       return task;
     }
+    case "sites.certificate":
+    case "sites.acme":
+    case "sites.renew":
+    case "sites.https": {
+      const site = await db().site.findUnique({
+        where: { id: id.parse(p.id) },
+      });
+      if (!site) throw new ApiError(404, "站点不存在");
+      if (method === "sites.https") {
+        authorize(actor, "sites:write", site.nodeId, true);
+        confirm(p.confirmed);
+        if (p.autoRenew !== false)
+          authorize(actor, "schedules:write", site.nodeId, true);
+        if (
+          !site.certificateExpiresAt ||
+          site.certificateExpiresAt <= new Date()
+        )
+          throw new ApiError(409, "请先签发或检查有效的生产证书");
+        const domain = z
+          .string()
+          .regex(/^[a-zA-Z0-9][a-zA-Z0-9.-]+$/)
+          .parse(site.domain);
+        const config = `server {\n    listen 80;\n    server_name ${domain};\n    location ^~ /.well-known/acme-challenge/ { root /var/lib/pipkerops/acme; default_type text/plain; try_files $uri =404; }\n    location / { return 301 https://$host$request_uri; }\n}\nserver {\n    listen 443 ssl;\n    server_name ${domain};\n    ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;\n    ssl_protocols TLSv1.2 TLSv1.3;\n    location / { proxy_pass ${new URL(site.upstream).href}; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }\n}\n`;
+        const task = await createTask(actor, {
+          type: "nginx.apply",
+          nodeId: site.nodeId,
+          payload: { domain, config },
+          confirmed: true,
+        });
+        await db().site.update({
+          where: { id: site.id },
+          data: { config, status: "DRAFT" },
+        });
+        // Persistent automation keeps its creator and is reauthorized on every run.
+        if (p.autoRenew !== false) {
+          authorize(actor, "schedules:write", site.nodeId, true);
+          const scheduleId = `site-renew:${site.id}`;
+          const renewal = {
+            name: `证书续期 · ${site.domain}`,
+            cron: "17 3 * * *",
+            timezone: "Asia/Shanghai",
+            taskType: "nginx.renew",
+            nodeId: site.nodeId,
+            payload: { domain: site.domain, staging: false },
+            createdById: actor.userId,
+            createdByApiKeyId: actor.apiKeyId ?? null,
+            enabled: true,
+            nextRunAt: CronExpressionParser.parse("17 3 * * *", {
+              tz: "Asia/Shanghai",
+            })
+              .next()
+              .toDate(),
+          };
+          await db().schedule.upsert({
+            where: { id: scheduleId },
+            create: { id: scheduleId, ...renewal },
+            update: renewal,
+          });
+          await audit(actor, "sites.auto-renew", "Schedule", scheduleId);
+        }
+        return task;
+      }
+      const type =
+        method === "sites.certificate"
+          ? "nginx.certificate"
+          : method === "sites.acme"
+            ? "nginx.acme"
+            : "nginx.renew";
+      return createTask(actor, {
+        type,
+        nodeId: site.nodeId,
+        payload:
+          method === "sites.renew"
+            ? { domain: site.domain, staging: p.staging ?? false }
+            : {
+                domain: site.domain,
+                staging: p.staging ?? false,
+                ...(method === "sites.acme" ? { email: p.email } : {}),
+              },
+        confirmed: p.confirmed,
+      });
+    }
     case "keys.list":
       authorize(actor, "keys:write");
       return db().apiKey.findMany({
+        where: actor.apiKeyId ? { id: actor.apiKeyId } : {},
         select: {
           id: true,
           name: true,
@@ -545,8 +683,11 @@ export async function execute(
     case "keys.revoke": {
       authorize(actor, "keys:write");
       confirm(p.confirmed);
+      const keyId = id.parse(p.id);
+      if (actor.apiKeyId && actor.apiKeyId !== keyId)
+        throw new ApiError(403, "API Key 只能吊销自身");
       const key = await db().apiKey.update({
-        where: { id: id.parse(p.id) },
+        where: { id: keyId },
         data: { revokedAt: new Date() },
       });
       await audit(actor, method, "ApiKey", key.id);
@@ -555,6 +696,20 @@ export async function execute(
     case "audit.list":
       authorize(actor, "admin:write");
       return db().auditEvent.findMany({
+        where: actor.apiKeyId
+          ? {
+              OR: [
+                {
+                  nodeId: {
+                    in: actor.nodeIds?.includes("*")
+                      ? undefined
+                      : (actor.nodeIds ?? []),
+                  },
+                },
+                { nodeId: null, apiKeyId: actor.apiKeyId },
+              ],
+            }
+          : {},
         take: 200,
         orderBy: { createdAt: "desc" },
         include: { actor: { select: { displayName: true } } },
@@ -562,7 +717,7 @@ export async function execute(
     case "notifications.list":
       authorize(actor, "alerts:read");
       return db().notification.findMany({
-        where: { OR: [{ userId: null }, { userId: actor.userId }] },
+        where: notificationWhere(actor),
         take: 100,
         orderBy: { createdAt: "desc" },
       });
@@ -571,7 +726,7 @@ export async function execute(
       return db().notification.updateMany({
         where: {
           id: id.parse(p.id),
-          OR: [{ userId: null }, { userId: actor.userId }],
+          ...notificationWhere(actor),
         },
         data: { readAt: new Date() },
       });
@@ -579,7 +734,7 @@ export async function execute(
     case "alerts.list":
       authorize(actor, "alerts:read");
       return db().alertRule.findMany({
-        where: nodeWhere(actor),
+        where: alertWhere(actor),
         orderBy: { createdAt: "desc" },
       });
     case "alerts.save": {
@@ -622,8 +777,7 @@ export async function execute(
       });
     case "schedules.save": {
       authorize(actor, "schedules:write");
-      if (actor.apiKeyId)
-        throw new ApiError(403, "定时执行授权暂需在管理端设置");
+
       const d = z
         .object({
           name: label,
@@ -662,6 +816,7 @@ export async function execute(
           payload: data.payload as never,
           nextRunAt,
           createdById: actor.userId,
+          createdByApiKeyId: actor.apiKeyId,
         },
       });
       await audit(actor, method, "Schedule", s.id);
@@ -756,7 +911,11 @@ export async function execute(
         return { url };
       }
       if (a.type === "HTTP")
-        throw new ApiError(400, "HTTP 自定义动作尚未开放，请使用探针");
+        return createTask(actor, {
+          type: "http.request",
+          payload: config,
+          confirmed: p.confirmed,
+        });
       return createTask(actor, {
         type: a.type,
         nodeId,
@@ -766,7 +925,14 @@ export async function execute(
     }
     case "terminal.ticket": {
       const nodeId = id.parse(p.nodeId);
+      const containerId = p.containerId
+        ? z
+            .string()
+            .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/)
+            .parse(p.containerId)
+        : undefined;
       authorize(actor, "terminal:write", nodeId, true);
+      if (containerId) authorize(actor, "docker:write", nodeId, true);
       confirm(p.confirmed);
       const node = await db().node.findUnique({ where: { id: nodeId } });
       if (!node || node.status !== "APPROVED")
@@ -776,7 +942,7 @@ export async function execute(
         await redis()
       ).set(
         `pko:terminal:${hashToken(ticket)}`,
-        JSON.stringify({ actor, nodeId }),
+        JSON.stringify({ actor, nodeId, containerId }),
         { EX: 60 },
       );
       await audit(actor, method, "Node", nodeId);

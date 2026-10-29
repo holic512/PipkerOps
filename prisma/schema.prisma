@@ -129,6 +129,8 @@ model Node {
   ipAddress              String?
   certificateSerial      String?          @unique
   certificateFingerprint String?          @unique
+  previousCertificateFingerprint String?
+  certificateRotatedAt DateTime? @db.Timestamptz(3)
   csrPem                 String?
   certificatePem         String?
   enrollmentTokenId      String?
@@ -351,6 +353,7 @@ model Schedule {
   payload     Json     @default("{}")
   nodeId      String?
   createdById String?
+  createdByApiKeyId String?
   enabled     Boolean  @default(true)
   nextRunAt   DateTime? @db.Timestamptz(3)
   lastRunAt   DateTime? @db.Timestamptz(3)
@@ -360,6 +363,7 @@ model Schedule {
   createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([enabled, nextRunAt])
+  @@index([createdByApiKeyId])
 }
 
 model AlertRule {

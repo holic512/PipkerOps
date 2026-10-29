@@ -18,8 +18,8 @@ export function pkiFiles() {
   return {
     ca: join(dir, "ca.crt"),
     caKey: join(dir, "ca.key"),
-    cert: join(dir, "server.crt"),
-    key: join(dir, "server.key"),
+    cert: process.env.GATEWAY_TLS_CERT ?? join(dir, "server.crt"),
+    key: process.env.GATEWAY_TLS_KEY ?? join(dir, "server.key"),
   };
 }
 export function validateCsr(pem: string) {

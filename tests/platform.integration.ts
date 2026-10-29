@@ -5,10 +5,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
-import { request as tlsRequest } from "node:https";
-import { readFileSync, mkdirSync } from "node:fs";
+import {
+  request as tlsRequest,
+  createServer as createHttpsServer,
+} from "node:https";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import forge from "node-forge";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { db } from "../src/lib/db";
@@ -49,7 +53,9 @@ async function call<T>(
     headers: {
       Origin: origin,
       "Content-Type": "application/json",
-      Cookie: cookie,
+      ...(cookie.startsWith("Bearer ")
+        ? { Authorization: cookie }
+        : { Cookie: cookie }),
     },
     body: JSON.stringify({ method, params }),
   });
@@ -83,6 +89,26 @@ test(
     const address = target.address();
     assert.ok(address && typeof address !== "string");
     const targetUrl = `http://127.0.0.1:${address.port}/health`;
+    const httpsTarget = createHttpsServer(
+      {
+        key: readFileSync(".data/pki/server-linux.key"),
+        cert: readFileSync(".data/pki/server-linux.crt"),
+      },
+      (req, res) => {
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({ method: req.method, value: "http-action-verified" }),
+        );
+      },
+    );
+    await new Promise<void>((resolve) =>
+      httpsTarget.listen(0, "127.0.0.1", resolve),
+    );
+    const httpsAddress = httpsTarget.address();
+    assert.ok(httpsAddress && typeof httpsAddress !== "string");
+    let actionId: string | undefined;
+    let actionTaskId: string | undefined;
+    let scheduleId: string | undefined;
     let child: ChildProcess | undefined;
     let nodeId: string | undefined;
     let enrollmentId: string | undefined;
@@ -90,12 +116,6 @@ test(
     const probeIds: string[] = [];
     const keyIds: string[] = [];
     let appId: string | undefined;
-    let sessionId: string | undefined;
-    const admin = (
-      await db().user.findUniqueOrThrow({
-        where: { email: process.env.BOOTSTRAP_EMAIL! },
-      })
-    ).id;
     try {
       const denied = await fetch(origin + "/api/rpc", {
         method: "POST",
@@ -206,6 +226,69 @@ test(
       console.log(
         "Verified queued task execution, persisted result and idempotency",
       );
+      // Shorten only this acceptance node's client certificate to exercise real renewal.
+      const args = child.spawnargs.slice(1);
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) =>
+        child!.once("exit", () => resolve()),
+      );
+      const current = await db().node.findUniqueOrThrow({
+        where: { id: nodeId },
+      });
+      const short = forge.pki.certificateFromPem(current.certificatePem!);
+      short.validity.notAfter = new Date(Date.now() + 7 * 86400000);
+      short.sign(
+        forge.pki.privateKeyFromPem(readFileSync(".data/pki/ca.key", "utf8")),
+        forge.md.sha256.create(),
+      );
+      const pem = forge.pki.certificateToPem(short);
+      const fingerprint = createHash("sha256")
+        .update(
+          Buffer.from(
+            forge.asn1.toDer(forge.pki.certificateToAsn1(short)).getBytes(),
+            "binary",
+          ),
+        )
+        .digest("hex");
+      const identityPath = resolve(state, "identity.json");
+      const identity = JSON.parse(readFileSync(identityPath, "utf8"));
+      identity.certificatePem = pem;
+      writeFileSync(identityPath, JSON.stringify(identity), { mode: 0o600 });
+      await db().node.update({
+        where: { id: nodeId },
+        data: { certificatePem: pem, certificateFingerprint: fingerprint },
+      });
+      child = spawn(binary, args, {
+        env: { ...process.env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      child.stderr?.on("data", () => {});
+      await waitFor(
+        () => db().node.findUniqueOrThrow({ where: { id: nodeId } }),
+        (n) =>
+          n.previousCertificateFingerprint === fingerprint &&
+          n.certificateFingerprint !== fingerprint,
+        "automatic client certificate rotation",
+      );
+      await waitFor(
+        async () => JSON.parse(readFileSync(identityPath, "utf8")),
+        (i) => i.certificatePem !== pem,
+        "renewed identity persisted",
+      );
+      const afterRotation = await call<TaskData>(cookie, "tasks.create", {
+        type: "system.info",
+        nodeId,
+        payload: {},
+      });
+      await waitFor(
+        () => call<TaskData>(cookie, "tasks.get", { id: afterRotation.id }),
+        (t) => t.status === "SUCCEEDED",
+        "renewed mTLS reconnect and task",
+      );
+      console.log(
+        "Verified 7-day client certificate automatically renews, persists identity and reconnects with mTLS",
+      );
+
       const app = await call<{ id: string }>(cookie, "applications.save", {
         name: run,
         description: "Acceptance test resource",
@@ -249,6 +332,118 @@ test(
       }
       console.log(
         "Verified application association and real control/Agent HTTP probes with JSON mapping",
+      );
+      const action = await call<{ id: string }>(cookie, "actions.save", {
+        name: run + "-https",
+        type: "HTTP",
+        config: {
+          url: `https://localhost:${httpsAddress.port}/action`,
+          method: "POST",
+          body: "authorized",
+          mapping: { value: "value", method: "method" },
+        },
+        parameters: [],
+        confirmed: true,
+      });
+      actionId = action.id;
+      const actionTask = await call<TaskData>(cookie, "actions.run", {
+        id: action.id,
+        values: {},
+        confirmed: true,
+      });
+      actionTaskId = actionTask.id;
+      const httpResult = await waitFor(
+        () => call<TaskData>(cookie, "tasks.get", { id: actionTask.id }),
+        (t) => ["SUCCEEDED", "FAILED"].includes(t.status),
+        "HTTPS custom action",
+      );
+      assert.equal(httpResult.status, "SUCCEEDED", httpResult.error ?? "");
+      assert.equal(
+        (httpResult.result as { data: { method: string } }).data.method,
+        "POST",
+      );
+      assert.equal(httpResult.idempotent, false);
+      assert.equal(httpResult.attempts, 1);
+      const cronKey = await call<{ id: string; key: string }>(
+        cookie,
+        "keys.create",
+        {
+          name: run + "-cron",
+          scopes: ["schedules:write", "system:read", "tasks:read"],
+          nodeIds: [nodeId],
+          days: 1,
+          confirmed: true,
+        },
+      );
+      keyIds.push(cronKey.id);
+      const schedule = await call<{ id: string }>(
+        "Bearer " + cronKey.key,
+        "schedules.save",
+        {
+          name: run + "-cron",
+          cron: "*/5 * * * * *",
+          timezone: "UTC",
+          taskType: "system.info",
+          nodeId,
+          payload: {},
+          confirmed: true,
+        },
+      );
+      scheduleId = schedule.id;
+      const scheduled = await waitFor(
+        () =>
+          db().task.findFirst({
+            where: {
+              nodeId,
+              source: "CRON",
+              apiKeyId: cronKey.id,
+              status: "SUCCEEDED",
+            },
+          }),
+        Boolean,
+        "scoped API Key Cron execution",
+      );
+      assert.ok(scheduled);
+      await call(cookie, "keys.revoke", { id: cronKey.id, confirmed: true });
+      await waitFor(
+        () => db().schedule.findUniqueOrThrow({ where: { id: schedule.id } }),
+        (s) => !s.enabled,
+        "revoked API Key disables Cron",
+      );
+      // Pause this Agent so the next task remains queued until after its key is revoked.
+      const restartArgs = child!.spawnargs.slice(1);
+      child!.kill("SIGTERM");
+      await new Promise<void>((r) => child!.once("exit", () => r()));
+      const queuedKey = await call<{ id: string; key: string }>(
+        cookie,
+        "keys.create",
+        {
+          name: run + "-queued",
+          scopes: ["system:read"],
+          nodeIds: [nodeId],
+          days: 1,
+          confirmed: true,
+        },
+      );
+      keyIds.push(queuedKey.id);
+      const queued = await call<TaskData>(
+        "Bearer " + queuedKey.key,
+        "tasks.create",
+        { type: "system.info", nodeId, payload: {} },
+      );
+      await call(cookie, "keys.revoke", { id: queuedKey.id, confirmed: true });
+      child = spawn(binary, restartArgs, {
+        env: { ...process.env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      child.stderr?.on("data", () => {});
+      await waitFor(
+        () => call<TaskData>(cookie, "tasks.get", { id: queued.id }),
+        (t) => t.status === "CANCELLED",
+        "revoked queued task authorization",
+      );
+      console.log(
+        "Verified HTTPS POST custom action, scoped Cron and revocation before scheduling/dispatch",
       );
       const viewer = await db().user.create({
         data: {
@@ -334,6 +529,13 @@ test(
         if (child.exitCode === null) child.kill("SIGKILL");
       }
       target.close();
+      httpsTarget.close();
+      if (scheduleId)
+        await db().schedule.deleteMany({ where: { id: scheduleId } });
+      if (actionTaskId)
+        await db().task.deleteMany({ where: { id: actionTaskId } });
+      if (actionId)
+        await db().customAction.deleteMany({ where: { id: actionId } });
       if (probeIds.length)
         await db().probe.deleteMany({ where: { id: { in: probeIds } } });
       if (appId) await db().application.deleteMany({ where: { id: appId } });
@@ -347,8 +549,6 @@ test(
         await db().apiKey.deleteMany({ where: { id: { in: keyIds } } });
       if (viewerId) await db().user.deleteMany({ where: { id: viewerId } });
       // Retain audit events as a truthful acceptance execution record.
-      void admin;
-      void sessionId;
       await db().$disconnect();
     }
   },

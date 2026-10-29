@@ -227,7 +227,8 @@ export type Field = {
     | "select"
     | "json"
     | "checkbox"
-    | "password";
+    | "password"
+    | "email";
   required?: boolean;
   placeholder?: string;
   defaultValue?: string | number | boolean;
@@ -310,8 +311,8 @@ export function ResourceForm({
                 type={
                   f.type === "number"
                     ? "number"
-                    : f.type === "password"
-                      ? "password"
+                    : ["password", "email"].includes(f.type ?? "")
+                      ? f.type
                       : f.type === "checkbox"
                         ? "checkbox"
                         : "text"

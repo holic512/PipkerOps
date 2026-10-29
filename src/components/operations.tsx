@@ -191,6 +191,30 @@ const ops: Record<
     actions: [
       { type: "docker.list", label: "发现容器", dangerous: false, fields: [] },
       {
+        type: "docker.stats",
+        label: "容器监控",
+        dangerous: false,
+        fields: [{ name: "id", label: "容器名称或 ID（留空全部）" }],
+      },
+      {
+        type: "compose.list",
+        label: "Compose 项目",
+        dangerous: false,
+        fields: [],
+      },
+      {
+        type: "compose.status",
+        label: "Compose 状态",
+        dangerous: false,
+        fields: [{ name: "project", label: "项目名", required: true }],
+      },
+      {
+        type: "compose.read",
+        label: "读取 Compose",
+        dangerous: false,
+        fields: [{ name: "project", label: "受管项目名", required: true }],
+      },
+      {
         type: "docker.logs",
         label: "容器日志",
         dangerous: false,
@@ -393,6 +417,21 @@ const ops: Record<
         ],
       },
       {
+        type: "agent.upgrade",
+        label: "升级 Agent",
+        dangerous: true,
+        fields: [
+          { name: "url", label: "受信 HTTPS 二进制下载地址", required: true },
+          { name: "sha256", label: "SHA-256 摘要", required: true },
+          {
+            name: "restart",
+            label: "结果确认后自动重启 systemd Agent（先排空其他任务）",
+            type: "checkbox",
+            defaultValue: false,
+          },
+        ],
+      },
+      {
         type: "shell.exec",
         label: "执行脚本",
         dangerous: true,
@@ -560,6 +599,8 @@ type GenericRow = {
   status?: string;
   type?: string;
   domain?: string;
+  certificateExpiresAt?: string;
+  httpsEnabled?: boolean;
   upstream?: string;
   nodeId?: string;
   node?: { name: string };
@@ -596,6 +637,10 @@ export function Resources({ mode }: { mode: string }) {
   );
   const [show, setShow] = useState(false);
   const [secret, setSecret] = useState("");
+  const [certificateSite, setCertificateSite] = useState<GenericRow | null>(
+    null,
+  );
+  const [siteTask, setSiteTask] = useState("");
   const [runAction, setRunAction] = useState<GenericRow | null>(null);
   const op = useOperation(() => {
     void q.mutate();
@@ -644,6 +689,7 @@ export function Resources({ mode }: { mode: string }) {
           { value: "shell.exec", label: "Shell 脚本" },
           { value: "docker.action", label: "Docker 操作" },
           { value: "URL", label: "HTTPS URL 跳转" },
+          { value: "HTTP", label: "HTTPS 接口请求" },
         ],
       },
       { name: "description", label: "说明" },
@@ -949,6 +995,12 @@ export function Resources({ mode }: { mode: string }) {
                   <td>{r.upstream}</td>
                   <td>
                     <Status value={r.status ?? "DRAFT"} />
+                    <small>
+                      {r.httpsEnabled ? "HTTPS · " : ""}
+                      {r.certificateExpiresAt
+                        ? `证书到期 ${date(r.certificateExpiresAt)}`
+                        : "尚未读取证书"}
+                    </small>
                   </td>
                   <td>
                     <Button
@@ -959,11 +1011,24 @@ export function Resources({ mode }: { mode: string }) {
                           "应用站点配置？",
                           "Agent 将写入配置、运行 nginx -t，通过后重新加载。",
                           () =>
-                            rpc("sites.apply", { id: r.id, confirmed: true }),
+                            rpc<{ id: string }>("sites.apply", {
+                              id: r.id,
+                              confirmed: true,
+                            }).then((task) => {
+                              setSiteTask(task.id);
+                              return task;
+                            }),
                         )
                       }
                     >
                       检查并应用
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setCertificateSite(r)}
+                    >
+                      证书与 HTTPS
                     </Button>
                   </td>
                 </>
@@ -1039,7 +1104,7 @@ export function Resources({ mode }: { mode: string }) {
           <ResourceForm
             busy={op.busy}
             fields={[
-              ...(runAction.type === "URL"
+              ...(["URL", "HTTP"].includes(runAction.type ?? "")
                 ? []
                 : [
                     {
@@ -1074,6 +1139,120 @@ export function Resources({ mode }: { mode: string }) {
               );
             }}
           />
+        </section>
+      )}
+      {mode === "sites" && siteTask && (
+        <p className="inline-feedback">
+          任务已加入队列：
+          <Link href={`/tasks/${siteTask}`}>查看执行日志与结果</Link>
+        </p>
+      )}
+      {certificateSite && (
+        <section className="panel detail-panel">
+          <div className="panel-header">
+            <h2>{certificateSite.domain} · 证书</h2>
+            <Button variant="ghost" onClick={() => setCertificateSite(null)}>
+              关闭
+            </Button>
+          </div>
+          <div className="form-panel">
+            <p>
+              签发前请将域名解析到此节点，开放 80/443，并先应用站点配置。Agent
+              需安装 certbot；测试证书独立保存。启用 HTTPS 会添加每日续期计划。
+            </p>
+            <div className="inline-actions">
+              <Button
+                variant="outline"
+                onClick={() =>
+                  void op.run(async () => {
+                    const t = await rpc<{ id: string }>("sites.certificate", {
+                      id: certificateSite.id,
+                    });
+                    setSiteTask(t.id);
+                    return t;
+                  }, "证书检查已排队")
+                }
+              >
+                读取生产证书
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  op.ask(
+                    "启用 HTTPS？",
+                    "将使用已检查的有效生产证书生成 443 配置，通过语法检查后重新加载，并添加每日续期计划。",
+                    async () => {
+                      const t = await rpc<{ id: string }>("sites.https", {
+                        id: certificateSite.id,
+                        confirmed: true,
+                      });
+                      setSiteTask(t.id);
+                      return t;
+                    },
+                  )
+                }
+              >
+                启用 HTTPS 与自动续期
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  op.ask(
+                    "检查并续期？",
+                    "将在此节点运行 Certbot 续期并检查、重新加载 Nginx。",
+                    async () => {
+                      const t = await rpc<{ id: string }>("sites.renew", {
+                        id: certificateSite.id,
+                        confirmed: true,
+                      });
+                      setSiteTask(t.id);
+                      return t;
+                    },
+                  )
+                }
+              >
+                立即检查续期
+              </Button>
+            </div>
+            <ResourceForm
+              busy={op.busy}
+              fields={[
+                {
+                  name: "email",
+                  label: "ACME 联系邮箱",
+                  type: "email",
+                  required: true,
+                },
+                {
+                  name: "staging",
+                  label: "证书环境",
+                  type: "select",
+                  options: [
+                    { value: "false", label: "生产" },
+                    { value: "true", label: "测试（不能用于启用生产 HTTPS）" },
+                  ],
+                  defaultValue: "true",
+                },
+              ]}
+              submit="签发证书"
+              onSubmit={async (d) => {
+                op.ask(
+                  "签发 ACME 证书？",
+                  "将向 ACME 服务注册邮箱、验证域名并申请证书。",
+                  async () => {
+                    const t = await rpc<{ id: string }>("sites.acme", {
+                      id: certificateSite.id,
+                      email: d.email,
+                      staging: d.staging === "true",
+                      confirmed: true,
+                    });
+                    setSiteTask(t.id);
+                    return t;
+                  },
+                );
+              }}
+            />
+          </div>
         </section>
       )}
       {mode === "alerts" && (
@@ -1122,6 +1301,7 @@ export function Resources({ mode }: { mode: string }) {
 export function TerminalPage() {
   const q = useQuery<NodeData[]>("nodes.list");
   const [node, setNode] = useState("");
+  const [containerId, setContainerId] = useState("");
   const [sessions, setSessions] = useState<
     { id: string; nodeId: string; name: string; url: string }[]
   >([]);
@@ -1132,7 +1312,7 @@ export function TerminalPage() {
     <>
       <PageTitle
         title="远程终端"
-        description="建立经审计的 Web PTY 会话，支持多标签与分屏。关闭页面将结束会话。"
+        description="建立经审计的 Web PTY 会话，支持节点或容器、多标签与分屏。关闭终端标签或退出登录将结束会话。"
       >
         <Button variant="outline" onClick={() => setSplit(!split)}>
           <Columns2 size={15} />
@@ -1157,6 +1337,12 @@ export function TerminalPage() {
                   </option>
                 ))}
             </select>
+            <input
+              aria-label="容器名称或 ID（可选）"
+              placeholder="容器名称或 ID（留空连接节点）"
+              value={containerId}
+              onChange={(e) => setContainerId(e.target.value)}
+            />
             <Button
               disabled={!node || op.busy || sessions.length >= 6}
               onClick={() =>
@@ -1166,7 +1352,11 @@ export function TerminalPage() {
                   async () => {
                     const ticket = await rpc<{ url: string }>(
                       "terminal.ticket",
-                      { nodeId: node, confirmed: true },
+                      {
+                        nodeId: node,
+                        containerId: containerId || undefined,
+                        confirmed: true,
+                      },
                     );
                     const id = crypto.randomUUID();
                     setSessions((s) => [
@@ -1174,7 +1364,9 @@ export function TerminalPage() {
                       {
                         id,
                         nodeId: node,
-                        name: q.data?.find((n) => n.id === node)?.name ?? node,
+                        name:
+                          (q.data?.find((n) => n.id === node)?.name ?? node) +
+                          (containerId ? ` / ${containerId}` : ""),
                         url: ticket.url,
                       },
                     ]);

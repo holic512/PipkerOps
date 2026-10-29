@@ -14,12 +14,18 @@ import { ApiError, authorize, nodeFilter, type Actor } from "../auth";
 import { randomToken, hashToken } from "../crypto";
 import { issueCertificate, validateCsr, pkiFiles } from "../pki";
 import { readFileSync } from "node:fs";
+import { X509Certificate } from "node:crypto";
 export async function listNodes(actor: Actor) {
   authorize(actor, "nodes:read");
   const now = Date.now();
   const rows = await db().node.findMany({
     where: nodeFilter(actor),
-    omit: { csrPem: true, certificatePem: true, certificateFingerprint: true },
+    omit: {
+      csrPem: true,
+      certificatePem: true,
+      certificateFingerprint: true,
+      previousCertificateFingerprint: true,
+    },
     orderBy: { createdAt: "desc" },
     include: { metrics: { take: 1, orderBy: { recordedAt: "desc" } } },
   });
@@ -219,4 +225,58 @@ export async function metrics(actor: Actor, nodeId: string, hours = 24) {
       take: 3000,
     }),
   };
+}
+
+/** Only authenticated mTLS connections call this; same-key renewal has a 24-hour delivery grace. */
+export async function renewCertificate(nodeId: string, csrPem: string) {
+  validateCsr(csrPem);
+  return db().$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Node" WHERE id=${nodeId} FOR UPDATE`;
+    const node = await tx.node.findUniqueOrThrow({ where: { id: nodeId } });
+    if (
+      node.status !== "APPROVED" ||
+      node.csrPem !== csrPem ||
+      !node.certificatePem
+    )
+      throw new ApiError(403, "证书轮换身份不匹配");
+    const expires = new Date(
+      new X509Certificate(node.certificatePem).validTo,
+    ).getTime();
+    // A lost reply is retried with the old certificate; return the already committed replacement.
+    if (expires - Date.now() > 14 * 86400000)
+      return { certificatePem: node.certificatePem };
+    const issued = issueCertificate(nodeId, csrPem);
+    await tx.node.update({
+      where: { id: nodeId },
+      data: {
+        ...issued,
+        previousCertificateFingerprint: node.certificateFingerprint,
+        certificateRotatedAt: new Date(),
+      },
+    });
+    await tx.auditEvent.create({
+      data: {
+        action: "nodes.certificate-renewed",
+        resourceType: "Node",
+        resourceId: nodeId,
+        nodeId,
+      },
+    });
+    return { certificatePem: issued.certificatePem };
+  });
+}
+export function acceptsFingerprint(
+  node: {
+    certificateFingerprint: string | null;
+    previousCertificateFingerprint: string | null;
+    certificateRotatedAt: Date | null;
+  },
+  fingerprint: string,
+) {
+  return (
+    node.certificateFingerprint === fingerprint ||
+    (node.previousCertificateFingerprint === fingerprint &&
+      !!node.certificateRotatedAt &&
+      Date.now() - node.certificateRotatedAt.getTime() < 86400000)
+  );
 }

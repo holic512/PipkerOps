@@ -1,3 +1,13 @@
+/**
+ * @file route.ts
+ * @project PipkerOps
+ * @module identity
+ * @description 同源退出及服务器会话失效。
+ * @logic 删除摘要会话后清理浏览器cookie。
+ * @dependencies Prisma, auth
+ * @index_tags api, identity, entry
+ * @author holic512
+ */
 import { db } from "@/lib/db";
 import { hashToken } from "@/lib/crypto";
 import { sameOrigin, sessionCookie } from "@/lib/auth";

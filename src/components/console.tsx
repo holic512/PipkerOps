@@ -123,9 +123,9 @@ export function Console() {
     if (path.startsWith("/tasks/"))
       return <TaskDetail id={path.split("/")[2]} />;
     if (path === "/tasks") return <Tasks />;
-    if (path === "/terminal") return <TerminalPage />;
+    if (path === "/terminal") return null;
     if (["/docker", "/files", "/system"].includes(path))
-      return <Operations mode={path.slice(1)} />;
+      return <Operations key={path} mode={path.slice(1)} />;
     if (
       [
         "/sites",
@@ -136,7 +136,7 @@ export function Console() {
         "/audit",
       ].includes(path)
     )
-      return <Resources mode={path.slice(1)} />;
+      return <Resources key={path} mode={path.slice(1)} />;
     return (
       <div className="empty-state">
         <h1>页面不存在</h1>
@@ -264,6 +264,11 @@ export function Console() {
         </nav>
         <main id="main-content" className="main-content">
           {render()}
+          {tabs.includes("/terminal") && (
+            <div hidden={path !== "/terminal"}>
+              <TerminalPage />
+            </div>
+          )}
         </main>
         <footer className="console-footer">
           PipkerOps<span>Agent 主动连接 · 操作全程留痕</span>

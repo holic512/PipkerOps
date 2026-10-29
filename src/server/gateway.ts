@@ -18,7 +18,12 @@ import { db } from "../lib/db";
 import { redis } from "../lib/redis";
 import { hashToken } from "../lib/crypto";
 import { pkiFiles } from "../lib/pki";
-import { enroll, enrollmentStatus } from "../lib/services/nodes";
+import {
+  enroll,
+  enrollmentStatus,
+  renewCertificate,
+  acceptsFingerprint,
+} from "../lib/services/nodes";
 import { finishTask } from "../lib/services/results";
 import { ApiError, authorize, refreshActor, type Actor } from "../lib/auth";
 import { taskSpecs } from "../lib/services/tasks";
@@ -31,9 +36,10 @@ const tls = {
   minVersion: "TLSv1.2" as const,
 };
 const connections = new Map<string, WebSocket>();
+const connectionFingerprints = new WeakMap<WebSocket, string>();
 const terminals = new Map<
   string,
-  { socket: WebSocket; nodeId: string; actor: Actor }
+  { socket: WebSocket; nodeId: string; actor: Actor; containerId?: string }
 >();
 const agentWss = new WebSocketServer({
   noServer: true,
@@ -100,13 +106,14 @@ agents.on("upgrade", async (req, socket, head) => {
     if (
       !node ||
       node.status !== "APPROVED" ||
-      node.certificateFingerprint !== fingerprint ||
+      !acceptsFingerprint(node, fingerprint) ||
       peer.subject.CN !== id
     )
       throw new Error("node");
     agentWss.handleUpgrade(req, socket, head, (ws) => {
       connections.get(id)?.close(4001, "replaced");
       connections.set(id, ws);
+      connectionFingerprints.set(ws, fingerprint);
       void db()
         .node.update({
           where: { id },
@@ -157,18 +164,25 @@ enrollment.on("upgrade", async (req, socket, head) => {
     ).getDel(`pko:terminal:${hashToken(ticket)}`);
     if (!raw) throw new Error("expired ticket");
     const ticketData = JSON.parse(raw) as {
+      containerId?: string;
       actor: Actor;
       nodeId: string;
     };
     const nodeId = ticketData.nodeId;
     const actor = await refreshActor(ticketData.actor);
     authorize(actor, "terminal:write", nodeId, true);
+    if (ticketData.containerId) authorize(actor, "docker:write", nodeId, true);
     const node = await db().node.findUnique({ where: { id: nodeId } });
     if (node?.status !== "APPROVED" || !connections.has(nodeId))
       throw new Error("offline");
     const sessionId = randomUUID();
     terminalWss.handleUpgrade(req, socket, head, (ws) => {
-      terminals.set(sessionId, { socket: ws, nodeId, actor });
+      terminals.set(sessionId, {
+        socket: ws,
+        nodeId,
+        actor,
+        containerId: ticketData.containerId,
+      });
       ws.on("error", () => {});
       let size = 0;
       const limiter = setInterval(() => {
@@ -221,6 +235,7 @@ enrollment.on("upgrade", async (req, socket, head) => {
       connections.get(nodeId)?.send(
         JSON.stringify({
           type: "terminal.open",
+          containerId: ticketData.containerId,
           sessionId,
           cols: 120,
           rows: 32,
@@ -246,11 +261,40 @@ async function receive(id: string, ws: WebSocket, raw: string) {
     .parse(JSON.parse(raw));
   const node = await db().node.findUnique({
     where: { id },
-    select: { status: true },
   });
-  if (node?.status !== "APPROVED" || connections.get(id) !== ws) {
+  if (
+    node?.status !== "APPROVED" ||
+    connections.get(id) !== ws ||
+    !acceptsFingerprint(node, connectionFingerprints.get(ws) ?? "")
+  ) {
     ws.close(4003, "revoked");
     return;
+  }
+  if (p.type === "cert.renew") {
+    const request = z
+      .object({
+        requestId: z.string().min(1).max(100),
+        csrPem: z.string().max(10000),
+      })
+      .parse(p);
+    try {
+      const issued = await renewCertificate(id, request.csrPem);
+      ws.send(
+        JSON.stringify({
+          type: "cert.renewed",
+          requestId: request.requestId,
+          ...issued,
+        }),
+      );
+    } catch {
+      ws.send(
+        JSON.stringify({
+          type: "cert.renew.error",
+          requestId: request.requestId,
+          error: "证书续期被拒绝，请检查节点身份",
+        }),
+      );
+    }
   }
   if (p.type === "heartbeat" || p.type === "metrics")
     await db().node.update({ where: { id }, data: { lastSeenAt: new Date() } });
@@ -301,15 +345,26 @@ async function receive(id: string, ws: WebSocket, raw: string) {
       }
     }
   }
-  if (p.type === "task.started" && p.taskId)
-    await db().task.updateMany({
+  if (p.type === "task.started" && p.taskId) {
+    const task = await db().task.findFirst({
       where: { id: p.taskId, nodeId: id, status: "DISPATCHED" },
-      data: {
-        status: "RUNNING",
-        startedAt: new Date(),
-        leaseExpiresAt: new Date(Date.now() + 600000),
-      },
     });
+    if (task) {
+      const payload = task.payload as Record<string, unknown>;
+      const seconds = Math.min(
+        3600,
+        Math.max(600, Number(payload.timeoutSeconds ?? 0) + 60),
+      );
+      await db().task.updateMany({
+        where: { id: task.id, status: "DISPATCHED" },
+        data: {
+          status: "RUNNING",
+          startedAt: new Date(),
+          leaseExpiresAt: new Date(Date.now() + seconds * 1000),
+        },
+      });
+    }
+  }
   if (p.type === "task.log" && p.taskId) {
     const data = z
       .object({
@@ -370,9 +425,11 @@ async function dispatch() {
     for (const [nodeId, ws] of connections) {
       const node = await db().node.findUnique({
         where: { id: nodeId },
-        select: { status: true },
       });
-      if (node?.status !== "APPROVED") {
+      if (
+        node?.status !== "APPROVED" ||
+        !acceptsFingerprint(node, connectionFingerprints.get(ws) ?? "")
+      ) {
         ws.close(4003, "revoked");
         continue;
       }
@@ -381,13 +438,53 @@ async function dispatch() {
         where: { nodeId, status: { in: ["DISPATCHED", "RUNNING"] } },
       });
       if (count >= 4) continue;
+      const upgrading = await db().task.count({
+        where: {
+          nodeId,
+          type: "agent.upgrade",
+          status: { in: ["DISPATCHED", "RUNNING"] },
+        },
+      });
+      if (upgrading) continue;
+      const recentUpgrade = await db().task.findFirst({
+        where: {
+          nodeId,
+          type: "agent.upgrade",
+          status: "SUCCEEDED",
+          finishedAt: { gt: new Date(Date.now() - 15000) },
+        },
+        orderBy: { finishedAt: "desc" },
+      });
+      if (
+        recentUpgrade &&
+        (recentUpgrade.payload as Record<string, unknown>).restart
+      )
+        continue;
       const tasks = await db().$queryRaw<
         Array<{ id: string; type: string; payload: unknown }>
       >`UPDATE "Task" SET status='DISPATCHED', attempts=attempts+1, "dispatchedAt"=now(), "leaseExpiresAt"=now()+interval '10 minutes', "updatedAt"=now() WHERE id IN (SELECT id FROM "Task" WHERE "nodeId"=${nodeId} AND status='QUEUED' AND attempts < "maxAttempts" ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT ${4 - count}) RETURNING id,type,payload`;
+      let upgradeDispatched = false;
       for (const task of tasks) {
         const stored = await db().task.findUniqueOrThrow({
           where: { id: task.id },
         });
+        if (
+          upgradeDispatched ||
+          (task.type === "agent.upgrade" &&
+            (count > 0 || tasks.some((t) => t.type !== "agent.upgrade")))
+        ) {
+          await db().task.updateMany({
+            where: { id: task.id, status: "DISPATCHED" },
+            data: {
+              status: "QUEUED",
+              attempts: { decrement: 1 },
+              leaseExpiresAt: null,
+              dispatchedAt: null,
+            },
+          });
+          continue;
+        }
+
         try {
           if (stored.source !== "SYSTEM" || stored.actorId || stored.apiKeyId) {
             if (!stored.actorId) throw new Error("missing actor");
@@ -423,8 +520,10 @@ async function dispatch() {
           });
           continue;
         }
-        if (ws.readyState === WebSocket.OPEN)
+        if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "task", task }));
+          if (task.type === "agent.upgrade") upgradeDispatched = true;
+        }
       }
     }
     for (const [sessionId, t] of terminals) {
@@ -436,6 +535,7 @@ async function dispatch() {
       try {
         const actor = await refreshActor(t.actor);
         authorize(actor, "terminal:write", t.nodeId, true);
+        if (t.containerId) authorize(actor, "docker:write", t.nodeId, true);
       } catch {
         valid = false;
       }

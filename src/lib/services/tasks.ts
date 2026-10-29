@@ -72,7 +72,10 @@ export const taskSpecs: Record<
     scope: "docker:write",
     dangerous: true,
     idempotent: false,
-    schema: z.object({ project: name, yaml: z.string().min(1).max(262144) }),
+    schema: z.object({
+      project: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/),
+      yaml: z.string().min(1).max(262144),
+    }),
   },
   "systemd.list": {
     scope: "system:read",
@@ -168,6 +171,7 @@ export const taskSpecs: Record<
     schema: z.object({
       url: z.url().refine((u) => u.startsWith("https://")),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      restart: z.boolean().default(false),
     }),
   },
   "probe.run": {
@@ -184,6 +188,81 @@ export const taskSpecs: Record<
     }),
   },
 };
+const safeProject = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/);
+const domain = z
+  .string()
+  .max(253)
+  .regex(
+    /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/,
+  );
+Object.assign(taskSpecs, {
+  "docker.stats": {
+    scope: "docker:read",
+    dangerous: false,
+    idempotent: true,
+    schema: z.object({ id: name.optional() }),
+  },
+  "compose.read": {
+    scope: "docker:read",
+    dangerous: false,
+    idempotent: true,
+    schema: z.object({ project: safeProject }),
+  },
+  "compose.status": {
+    scope: "docker:read",
+    dangerous: false,
+    idempotent: true,
+    schema: z.object({ project: safeProject }),
+  },
+  "compose.list": {
+    scope: "docker:read",
+    dangerous: false,
+    idempotent: true,
+    schema: z.object({}),
+  },
+  "nginx.certificate": {
+    scope: "sites:read",
+    dangerous: false,
+    idempotent: true,
+    schema: z.object({ domain, staging: z.boolean().default(false) }),
+  },
+  "nginx.acme": {
+    scope: "sites:write",
+    dangerous: true,
+    idempotent: false,
+    schema: z.object({
+      domain,
+      email: z.email().max(200),
+      staging: z.boolean().default(false),
+      timeoutSeconds: z.number().int().min(30).max(1800).default(600),
+    }),
+  },
+  "nginx.renew": {
+    scope: "sites:write",
+    dangerous: true,
+    idempotent: false,
+    schema: z.object({
+      domain: domain.optional(),
+      staging: z.boolean().default(false),
+      timeoutSeconds: z.number().int().min(30).max(1800).default(900),
+    }),
+  },
+  "http.request": {
+    scope: "actions:write",
+    dangerous: true,
+    idempotent: false,
+    schema: z.object({
+      url: z.url().refine((v) => v.startsWith("https://")),
+      method: z
+        .enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
+        .default("GET"),
+      headers: z.record(z.string(), z.string()).default({}),
+      body: z.string().max(131072).optional(),
+      timeoutMs: z.number().int().min(100).max(30000).default(5000),
+      mapping: z.record(z.string(), z.string()).default({}),
+    }),
+  },
+});
 export const taskInput = z.object({
   type: z.string(),
   nodeId: z.string().optional(),
@@ -221,13 +300,35 @@ export async function createTask(
       mapping: probe.mapping,
     };
   }
-  if (data.type !== "probe.run" && !data.nodeId)
+  if (!["probe.run", "http.request"].includes(data.type) && !data.nodeId)
     throw new ApiError(400, "请选择执行节点");
+  if (data.type === "http.request" && data.nodeId)
+    throw new ApiError(400, "HTTP动作由主控执行，节点来源请使用探针");
   if (data.nodeId) {
     const node = await client.node.findUnique({ where: { id: data.nodeId } });
     if (!node || node.status !== "APPROVED")
       throw new ApiError(409, "节点尚未批准或已吊销");
+    if (
+      data.type === "agent.upgrade" &&
+      payload.restart &&
+      (await client.task.count({
+        where: {
+          nodeId: data.nodeId,
+          status: { in: ["DISPATCHED", "RUNNING"] },
+        },
+      }))
+    )
+      throw new ApiError(409, "升级并重启前请等待此节点正在执行的任务结束");
   }
+  const idempotent =
+    spec.idempotent &&
+    (data.type !== "probe.run" ||
+      ["GET", "HEAD", "OPTIONS"].includes(
+        String(
+          (payload.config as Record<string, unknown>)?.method ?? "GET",
+        ).toUpperCase(),
+      ) ||
+      payload.type === "TCP");
   const key = data.idempotencyKey
     ? hashToken(
         `${actor.userId}:${actor.apiKeyId ?? "web"}:${data.idempotencyKey}`,
@@ -257,8 +358,8 @@ export async function createTask(
         apiKeyId: actor.apiKeyId,
         source,
         idempotencyKey: key,
-        idempotent: spec.idempotent,
-        maxAttempts: spec.idempotent ? 3 : 1,
+        idempotent,
+        maxAttempts: idempotent ? 3 : 1,
       },
     });
     await tx.auditEvent.create({

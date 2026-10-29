@@ -79,3 +79,7 @@ SELECT pipkerops_maintain_metrics(30, 365);
 - 临时库实际拒绝非幂等任务多次重试、负数注册令牌使用量和应用自依赖。
 
 Prisma `migrate diff --from-empty --to-schema` 在当前环境报告 `Error in Schema engine`，未获得自动 SQL 等价比较结果。真实 PostgreSQL 迁移、并发恢复和备份恢复仍需由主线程验证；上述临时测试数据不写入生产或迁移文件。
+
+## 主线程增量验证
+
+2026-10-29 已在用户指定空PostgreSQL执行初始迁移；随后实际执行客户端证书轮换与计划Key授权增量迁移。独立Compose空库再运行迁移成功，pg_dump/pg_restore到第二空库后应用ID和JSON业务数据一致。旧指纹仅有24小时宽限；Schedule保留创建Key ID并在调度时检查其当前状态，该字段刻意不因删除Key而清空，避免降级为用户全权限。上述真实验证补充了建模阶段的本地测试，并不表示生产灾备、长期容量和公网TLS已验收。

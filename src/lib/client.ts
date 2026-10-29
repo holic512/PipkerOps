@@ -1,3 +1,13 @@
+/**
+ * @file client.ts
+ * @project PipkerOps
+ * @module client-api
+ * @description 浏览器API边界与业务数据契约。
+ * @logic RPC错误统一封装，数值空态保留未知语义。
+ * @dependencies fetch, Intl
+ * @index_tags api, identity, entry
+ * @author holic512
+ */
 export class RequestError extends Error {
   constructor(
     message: string,
@@ -90,6 +100,8 @@ export type ProbeData = {
   }[];
 };
 export type TaskData = {
+  idempotent: boolean;
+  attempts: number;
   id: string;
   type: string;
   nodeId: string | null;

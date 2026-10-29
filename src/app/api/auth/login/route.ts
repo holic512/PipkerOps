@@ -1,3 +1,13 @@
+/**
+ * @file route.ts
+ * @project PipkerOps
+ * @module identity
+ * @description 管理员登录与会话创建。
+ * @logic 按账号限流、恒时密码校验、只存令牌摘要、设置HTTP-only会话。
+ * @dependencies Prisma, Redis, scrypt
+ * @index_tags api, identity, entry
+ * @author holic512
+ */
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import { sameOrigin, sessionCookie, ApiError } from "@/lib/auth";

@@ -27,7 +27,8 @@ export function mapFields(value: unknown, mapping: Record<string, string>) {
       }
       current = (current as Record<string, unknown>)[field];
     }
-    if (current !== undefined) result[key] = current;
+    if (current === undefined) throw new Error(`JSON 字段不存在：${path}`);
+    result[key] = current;
   }
   return result;
 }
@@ -72,14 +73,22 @@ export async function runProbe(p: ProbeInput) {
             !["host", "cookie", "connection"].includes(k.toLowerCase())
           )
             headers[k] = v;
-      const method = ["GET", "HEAD", "POST"].includes(String(config.method))
+      const method = [
+        "GET",
+        "HEAD",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+      ].includes(String(config.method))
         ? String(config.method)
         : "GET";
       const response = await fetch(p.target, {
         method,
         headers,
         body:
-          method === "POST" && typeof config.body === "string"
+          !["GET", "HEAD"].includes(method) && typeof config.body === "string"
             ? config.body
             : undefined,
         signal: controller.signal,

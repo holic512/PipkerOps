@@ -33,7 +33,7 @@ export async function finishTask(
     const unknown = data.result.status === "UNKNOWN";
     if (
       unknown &&
-      (task.result as Record<string, unknown>).status === "UNKNOWN"
+      (task.result as Record<string, unknown> | null)?.status === "UNKNOWN"
     )
       return false;
     const updated = await tx.task.updateMany({
@@ -99,12 +99,46 @@ export async function finishTask(
       }
     }
     if (!unknown && task.type === "nginx.apply") {
-      const p = task.payload as { domain?: string };
+      const p = task.payload as { domain?: string; config?: string };
       if (p.domain)
         await tx.site.updateMany({
-          where: { domain: p.domain, nodeId: nodeId ?? undefined },
-          data: { status: data.success ? "ACTIVE" : "ERROR" },
+          where: {
+            domain: p.domain,
+            nodeId: nodeId ?? undefined,
+            config: p.config,
+          },
+          data: {
+            status: data.success ? "ACTIVE" : "ERROR",
+            ...(data.success
+              ? { httpsEnabled: /listen\s+443\s+ssl/.test(p.config ?? "") }
+              : {}),
+          },
         });
+    }
+    if (
+      !unknown &&
+      data.success &&
+      ["nginx.certificate", "nginx.acme", "nginx.renew"].includes(task.type)
+    ) {
+      const p = task.payload as { domain?: string; staging?: boolean };
+      const certificate = (data.result.certificate ?? data.result) as Record<
+        string,
+        unknown
+      >;
+      if (!p.staging && p.domain) {
+        const expires = certificate.expiresAt;
+        const date = typeof expires === "string" ? new Date(expires) : null;
+        if (
+          certificate.exists === false ||
+          (date && Number.isFinite(date.getTime()))
+        )
+          await tx.site.updateMany({
+            where: { domain: p.domain, nodeId: nodeId ?? undefined },
+            data: {
+              certificateExpiresAt: certificate.exists === false ? null : date,
+            },
+          });
+      }
     }
     return true;
   });

@@ -1,0 +1,5 @@
+# Isolated Linux host + nested Docker: never mounts the developer's Docker socket.
+FROM docker:28-dind
+RUN apk add --no-cache nginx bash curl ca-certificates
+RUN mkdir -p /etc/nginx/conf.d /var/lib/pipkerops/acme /run/nginx \
+ && printf 'events {}\nhttp { include /etc/nginx/mime.types; include /etc/nginx/conf.d/*.conf; }\n' > /etc/nginx/nginx.conf

@@ -15,6 +15,7 @@ import { redis } from "../lib/redis";
 import { runProbe, type ProbeInput } from "../lib/probe";
 import { finishTask } from "../lib/services/results";
 import { createTask } from "../lib/services/tasks";
+import { authorize, refreshActor } from "../lib/auth";
 import { hashToken } from "../lib/crypto";
 let stopping = false;
 let maintenanceDay = "";
@@ -34,8 +35,14 @@ async function schedules() {
         const nextRunAt = CronExpressionParser.parse(s.cron, { tz: s.timezone })
           .next()
           .toDate();
+        const actor = await refreshActor({
+          userId: s.createdBy.id,
+          role: s.createdBy.role,
+          apiKeyId: s.createdByApiKeyId ?? undefined,
+        });
+        authorize(actor, "schedules:write", s.nodeId ?? undefined);
         await createTask(
-          { userId: s.createdBy.id, role: s.createdBy.role },
+          actor,
           {
             type: s.taskType,
             nodeId: s.nodeId ?? undefined,
@@ -82,6 +89,13 @@ async function probes() {
           payload: { path: ["probeId"], equals: p.id },
         },
       });
+      const idempotent =
+        p.type === "TCP" ||
+        ["GET", "HEAD", "OPTIONS"].includes(
+          String(
+            (p.config as Record<string, unknown>).method ?? "GET",
+          ).toUpperCase(),
+        );
       if (!active) {
         await tx.task.create({
           data: {
@@ -89,8 +103,8 @@ async function probes() {
             type: "probe.run",
             nodeId: p.sourceNodeId,
             source: "SYSTEM",
-            idempotent: true,
-            maxAttempts: 3,
+            idempotent,
+            maxAttempts: idempotent ? 3 : 1,
             payload: {
               probeId: p.id,
               type: p.type,
@@ -129,10 +143,51 @@ async function recover() {
 async function control() {
   const tasks = await db().$queryRaw<
     Array<{ id: string; payload: unknown }>
-  >`UPDATE "Task" SET status='RUNNING', attempts=attempts+1, "startedAt"=now(), "leaseExpiresAt"=now()+interval '60 seconds',"updatedAt"=now() WHERE id IN (SELECT id FROM "Task" WHERE "nodeId" IS NULL AND type='probe.run' AND status='QUEUED' ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT 8) RETURNING id,payload`;
+  >`UPDATE "Task" SET status='RUNNING', attempts=attempts+1, "startedAt"=now(), "leaseExpiresAt"=now()+interval '60 seconds',"updatedAt"=now() WHERE id IN (SELECT id FROM "Task" WHERE "nodeId" IS NULL AND type IN ('probe.run','http.request') AND status='QUEUED' ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT 8) RETURNING id,payload`;
   await Promise.allSettled(
     tasks.map(async (task) => {
-      const result = await runProbe(task.payload as ProbeInput);
+      const stored = await db().task.findUniqueOrThrow({
+        where: { id: task.id },
+      });
+      if (stored.actorId) {
+        try {
+          const actor = await refreshActor({
+            userId: stored.actorId,
+            role: "VIEWER",
+            apiKeyId: stored.apiKeyId ?? undefined,
+          });
+          authorize(
+            actor,
+            stored.type === "http.request" ? "actions:write" : "probes:write",
+            undefined,
+            stored.type === "http.request",
+          );
+        } catch {
+          await db().task.update({
+            where: { id: task.id },
+            data: {
+              status: "CANCELLED",
+              error: "执行前权限已失效",
+              finishedAt: new Date(),
+              leaseExpiresAt: null,
+            },
+          });
+          return;
+        }
+      }
+      const p = task.payload as Record<string, unknown>;
+      const result = await runProbe(
+        stored.type === "http.request"
+          ? {
+              probeId: task.id,
+              type: "HTTP",
+              target: String(p.url),
+              timeoutMs: Number(p.timeoutMs),
+              config: { method: p.method, headers: p.headers, body: p.body },
+              mapping: p.mapping as Record<string, string>,
+            }
+          : (task.payload as ProbeInput),
+      );
       await finishTask(task.id, null, {
         success: result.success,
         error: result.error,
