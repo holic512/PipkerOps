@@ -60,6 +60,8 @@ export async function finishTask(
     if (!unknown && task.type === "probe.run") {
       const payload = task.payload as { probeId?: string };
       if (payload.probeId) {
+        // Concurrent manual runs must advance the failure threshold serially.
+        await tx.$queryRaw`SELECT id FROM "Probe" WHERE id=${payload.probeId} FOR UPDATE`;
         const probe = await tx.probe.findUnique({
           where: { id: payload.probeId },
         });
@@ -83,6 +85,21 @@ export async function finishTask(
             },
           });
           const failureCount = success ? 0 : probe.failureCount + 1;
+          if (probe.id.startsWith("deployment-health:") && nodeId)
+            await tx.deployment.updateMany({
+              where: {
+                id: probe.id.slice("deployment-health:".length),
+                nodeId,
+                healthUrl: probe.target,
+              },
+              data: {
+                status: success
+                  ? "HEALTHY"
+                  : failureCount >= probe.failureThreshold
+                    ? "UNHEALTHY"
+                    : "DEGRADED",
+              },
+            });
           await tx.probe.update({
             where: { id: probe.id },
             data: {
@@ -114,6 +131,19 @@ export async function finishTask(
               : {}),
           },
         });
+    }
+    if (!unknown && data.success && task.type === "nginx.remove") {
+      const payload = task.payload as { domain: string };
+      const sites = await tx.site.findMany({
+        where: { domain: payload.domain, nodeId: nodeId ?? undefined },
+        select: { id: true },
+      });
+      await tx.schedule.deleteMany({
+        where: { id: { in: sites.map((s) => `site-renew:${s.id}`) } },
+      });
+      await tx.site.deleteMany({
+        where: { id: { in: sites.map((s) => s.id) } },
+      });
     }
     if (
       !unknown &&

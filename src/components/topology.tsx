@@ -56,13 +56,17 @@ export function Topology() {
   const [tab, setTab] = useState("graph");
   const [selected, setSelected] = useState<Node | null>(null);
   const [show, setShow] = useState(false);
+  const [positions, setPositions] = useState<
+    Record<string, { x: number; y: number }>
+  >({});
   const op = useOperation(() => void q.mutate());
   const graph = useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
     const d = q.data;
     if (!d) return { nodes, edges };
-    d.applications.forEach((a, i) => {
+    let deploymentRow = 0;
+    d.applications.forEach((a) => {
       const probes = d.probes.filter(
         (p) =>
           (p as ProbeData & { applicationId?: string }).applicationId === a.id,
@@ -74,7 +78,7 @@ export function Topology() {
           : "UNKNOWN";
       nodes.push({
         id: `app:${a.id}`,
-        position: { x: 20, y: i * 170 },
+        position: { x: 20, y: deploymentRow * 105 },
         data: {
           label: `应用 · ${a.name}`,
           kind: "应用",
@@ -83,10 +87,10 @@ export function Topology() {
         },
         className: `graph-entity graph-${state.toLowerCase()}`,
       });
-      a.deployments.forEach((deployment, j) => {
+      a.deployments.forEach((deployment) => {
         nodes.push({
           id: `deployment:${deployment.id}`,
-          position: { x: 350, y: i * 170 + j * 95 },
+          position: { x: 350, y: deploymentRow++ * 105 },
           data: {
             label: `${deployment.type} · ${deployment.name}`,
             kind: "部署实例",
@@ -110,12 +114,14 @@ export function Topology() {
           markerEnd: { type: MarkerType.ArrowClosed },
         });
       });
+      if (!a.deployments.length) deploymentRow++;
     });
-    d.nodes.forEach((n, i) => {
+    let nodeRow = 0;
+    d.nodes.forEach((n) => {
       const state = n.connected ? "HEALTHY" : "UNHEALTHY";
       nodes.push({
         id: `node:${n.id}`,
-        position: { x: 720, y: i * 145 },
+        position: { x: 720, y: nodeRow * 90 },
         data: {
           label: `节点 · ${n.name}`,
           kind: "节点",
@@ -133,7 +139,7 @@ export function Topology() {
           const id = `container:${n.id}:${String(obj.id ?? j)}`;
           nodes.push({
             id,
-            position: { x: 1050, y: i * 400 + j * 70 },
+            position: { x: 1050, y: nodeRow++ * 90 },
             data: {
               label: `容器 · ${String(obj.name ?? obj.id ?? "未命名")}`,
               kind: "Docker 容器",
@@ -149,6 +155,7 @@ export function Topology() {
             markerEnd: { type: MarkerType.ArrowClosed },
           });
         });
+      nodeRow++;
     });
     d.dependencies.forEach((dep) => {
       const unhealthy = d.probes.some(
@@ -171,7 +178,7 @@ export function Topology() {
         id: `site:${s.id}`,
         position: {
           x: 350,
-          y: Math.max(1, d.applications.length) * 180 + i * 90,
+          y: Math.max(1, deploymentRow) * 105 + i * 90,
         },
         data: { label: `Nginx · ${s.domain}`, kind: "站点", state: s.status },
         className: "graph-entity",
@@ -266,7 +273,13 @@ export function Topology() {
           <div className="topology-layout">
             <section className="topology-canvas">
               <ReactFlow
-                nodes={graph.nodes}
+                nodes={graph.nodes.map((n) => ({
+                  ...n,
+                  position: positions[n.id] ?? n.position,
+                }))}
+                onNodeDragStop={(_, node) =>
+                  setPositions((p) => ({ ...p, [node.id]: node.position }))
+                }
                 edges={graph.edges}
                 fitView
                 minZoom={0.2}
@@ -291,6 +304,50 @@ export function Topology() {
                 <span className="error-text">红色表示故障或离线</span>
               </div>
             </section>
+            {!!q.data?.dependencies.length && (
+              <section className="panel detail-panel">
+                <div className="panel-header">
+                  <h2>依赖关系</h2>
+                </div>
+                <div className="form-panel">
+                  {q.data.dependencies.map((dep) => (
+                    <div className="inline-actions" key={dep.id}>
+                      <span>
+                        {
+                          q.data?.applications.find(
+                            (a) => a.id === dep.fromApplicationId,
+                          )?.name
+                        }{" "}
+                        →{" "}
+                        {
+                          q.data?.applications.find(
+                            (a) => a.id === dep.toApplicationId,
+                          )?.name
+                        }{" "}
+                        · {dep.type}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          op.ask(
+                            "删除依赖关系？",
+                            "只删除平台记录，不改变应用实际网络连接。",
+                            () =>
+                              rpc("dependencies.delete", {
+                                id: dep.id,
+                                confirmed: true,
+                              }),
+                          )
+                        }
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
             {selected && (
               <aside className="panel graph-details">
                 <h2>{String(selected.data.kind)}</h2>

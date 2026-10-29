@@ -415,6 +415,7 @@ export function NodeDetail({ id }: { id: string }) {
   const q = useQuery<NodeData[]>("nodes.list");
   const node = q.data?.find((n) => n.id === id);
   const [hours, setHours] = useState(1);
+  const [edit, setEdit] = useState(false);
   const h = useQuery<{
     resolution: string;
     samples: Record<string, unknown>[];
@@ -434,6 +435,9 @@ export function NodeDetail({ id }: { id: string }) {
         <Button variant="outline" asChild>
           <Link href={`/terminal?node=${id}`}>打开终端</Link>
         </Button>
+        <Button variant="outline" onClick={() => setEdit(!edit)}>
+          编辑名称与标签
+        </Button>
         {node?.status === "APPROVED" && (
           <Button
             variant="destructive"
@@ -450,6 +454,35 @@ export function NodeDetail({ id }: { id: string }) {
         )}
       </PageTitle>
       {op.ui}
+      {edit && node && (
+        <section className="panel form-panel">
+          <h2>节点信息</h2>
+          <ResourceForm
+            key={node.id}
+            busy={op.busy}
+            fields={[
+              {
+                name: "name",
+                label: "节点名称",
+                required: true,
+                defaultValue: node.name,
+              },
+              {
+                name: "labels",
+                label: "标签（JSON 数组）",
+                type: "json",
+                defaultValue: JSON.stringify(node.labels),
+              },
+            ]}
+            onSubmit={async (data) => {
+              const result = await op.run(() =>
+                rpc("nodes.update", { ...data, id }),
+              );
+              if (result) setEdit(false);
+            }}
+          />
+        </section>
+      )}
       <QueryState
         error={q.error}
         loading={q.isLoading}

@@ -67,7 +67,17 @@ export type AppData = {
   labels: string[];
   businessData: Record<string, unknown>;
   deployments: DeploymentData[];
-  probes: { id: string; name: string; status: string }[];
+  probes: {
+    id: string;
+    name: string;
+    status: string;
+    results?: {
+      recordedAt: string;
+      data: Record<string, unknown>;
+      success: boolean;
+      latencyMs: number;
+    }[];
+  }[];
 };
 export type DeploymentData = {
   id: string;
@@ -80,6 +90,10 @@ export type DeploymentData = {
   node?: { id: string; name: string; lastSeenAt: string | null };
 };
 export type ProbeData = {
+  applicationId: string | null;
+  config: Record<string, unknown>;
+  mapping: Record<string, string>;
+  timeoutMs: number;
   id: string;
   name: string;
   type: string;

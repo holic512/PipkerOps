@@ -251,6 +251,9 @@ model Probe {
   lastCheckedAt    DateTime?    @db.Timestamptz(3)
   createdAt        DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
+  // Persist identity without SET NULL: removing a key must not grant user authority.
+  createdById       String?
+  createdByApiKeyId String?
   application      Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
   sourceNode       Node?        @relation("ProbeSource", fields: [sourceNodeId], references: [id], onDelete: Restrict)
   results          ProbeResult[]

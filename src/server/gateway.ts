@@ -322,7 +322,7 @@ async function receive(id: string, ws: WebSocket, raw: string) {
     const containers = payload.containers;
     if (Array.isArray(containers)) {
       for (const d of await db().deployment.findMany({
-        where: { nodeId: id, type: "docker" },
+        where: { nodeId: id, type: "docker", healthUrl: null },
       })) {
         const container = containers.find(
           (c) =>
@@ -486,7 +486,7 @@ async function dispatch() {
         }
 
         try {
-          if (stored.source !== "SYSTEM" || stored.actorId || stored.apiKeyId) {
+          {
             if (!stored.actorId) throw new Error("missing actor");
             const actor = await refreshActor({
               userId: stored.actorId,
@@ -495,9 +495,14 @@ async function dispatch() {
             });
             const spec = taskSpecs[task.type];
             if (!spec) throw new Error("unknown task");
-            authorize(actor, spec.scope, nodeId, spec.dangerous);
-          } else if (task.type !== "probe.run")
-            throw new Error("invalid system task");
+            authorize(
+              actor,
+              spec.scope,
+              nodeId,
+              spec.dangerous ||
+                (task.type === "probe.run" && !stored.idempotent),
+            );
+          }
         } catch {
           await db().$transaction(async (tx) => {
             await tx.task.updateMany({

@@ -10,6 +10,7 @@
  */
 "use client";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   Plus,
@@ -354,9 +355,14 @@ const ops: Record<
             label: "操作",
             type: "select",
             required: true,
-            options: ["start", "stop", "restart", "enable", "disable"].map(
-              (v) => ({ value: v, label: v }),
-            ),
+            options: [
+              "start",
+              "stop",
+              "restart",
+              "reload",
+              "enable",
+              "disable",
+            ].map((v) => ({ value: v, label: v })),
           },
         ],
       },
@@ -376,9 +382,19 @@ const ops: Record<
             label: "操作",
             type: "select",
             required: true,
-            options: ["allow", "deny", "delete"].map((v) => ({
+            options: ["allow", "deny", "reject", "delete"].map((v) => ({
               value: v,
               label: v,
+            })),
+          },
+          {
+            name: "ruleAction",
+            label: "删除时匹配的原规则动作",
+            type: "select",
+            defaultValue: "allow",
+            options: ["allow", "deny", "reject"].map((value) => ({
+              value,
+              label: value,
             })),
           },
           {
@@ -409,10 +425,12 @@ const ops: Record<
             label: "软件",
             type: "select",
             required: true,
-            options: ["nginx", "docker", "git", "curl", "htop"].map((v) => ({
-              value: v,
-              label: v,
-            })),
+            options: ["nginx", "docker", "git", "curl", "htop", "certbot"].map(
+              (v) => ({
+                value: v,
+                label: v,
+              }),
+            ),
           },
         ],
       },
@@ -605,6 +623,14 @@ type GenericRow = {
   nodeId?: string;
   node?: { name: string };
   cron?: string;
+  timezone?: string;
+  taskType?: string;
+  payload?: Record<string, unknown>;
+  description?: string;
+  durationSeconds?: number;
+  operator?: string;
+  probeId?: string;
+  webhookUrl?: string;
   nextRunAt?: string;
   enabled?: boolean;
   metric?: string;
@@ -632,10 +658,14 @@ export function Resources({ mode }: { mode: string }) {
     ] ?? `${mode}.list`;
   const q = useQuery<GenericRow[]>(method);
   const nodes = useQuery<NodeData[]>("nodes.list");
+  const probes = useQuery<{ id: string; name: string }[]>(
+    mode === "alerts" ? "probes.list" : null,
+  );
   const notifications = useQuery<GenericRow[]>(
     mode === "alerts" ? "notifications.list" : null,
   );
   const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState<GenericRow | null>(null);
   const [secret, setSecret] = useState("");
   const [certificateSite, setCertificateSite] = useState<GenericRow | null>(
     null,
@@ -713,6 +743,12 @@ export function Resources({ mode }: { mode: string }) {
       },
     ],
     schedules: [
+      {
+        name: "enabled",
+        label: "启用计划",
+        type: "checkbox",
+        defaultValue: true,
+      },
       { name: "name", label: "计划名称", required: true },
       {
         name: "cron",
@@ -752,13 +788,24 @@ export function Resources({ mode }: { mode: string }) {
       },
     ],
     alerts: [
+      {
+        name: "enabled",
+        label: "启用规则",
+        type: "checkbox",
+        defaultValue: true,
+      },
       { name: "name", label: "规则名称", required: true },
       {
         name: "nodeId",
-        label: "监控节点",
+        label: "监控节点（与探针二选一）",
         type: "select",
-        required: true,
         options: nodeOptions,
+      },
+      {
+        name: "probeId",
+        label: "监控探针（与节点二选一）",
+        type: "select",
+        options: probes.data?.map((p) => ({ value: p.id, label: p.name })),
       },
       {
         name: "metric",
@@ -769,6 +816,7 @@ export function Resources({ mode }: { mode: string }) {
           { value: "cpuPercent", label: "CPU使用率" },
           { value: "memoryPercent", label: "内存使用率" },
           { value: "offline", label: "节点离线（1为离线）" },
+          { value: "probeFailure", label: "探针连续失败次数" },
         ],
       },
       {
@@ -834,6 +882,7 @@ export function Resources({ mode }: { mode: string }) {
     );
     if (mode === "mcp") setSecret((result as { key: string }).key);
     setShow(false);
+    setEditing(null);
     return result;
   };
   return (
@@ -844,7 +893,12 @@ export function Resources({ mode }: { mode: string }) {
           刷新
         </Button>
         {mode !== "audit" && (
-          <Button onClick={() => setShow(!show)}>
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setShow(!show);
+            }}
+          >
             <Plus size={16} />
             {mode === "mcp"
               ? "创建密钥"
@@ -880,18 +934,37 @@ export function Resources({ mode }: { mode: string }) {
       )}
       {show && (
         <section className="panel form-panel detail-panel">
-          <h2>{title} · 新建</h2>
+          <h2>
+            {title} · {editing ? "编辑" : "新建"}
+          </h2>
           <ResourceForm
-            fields={fields[mode] ?? []}
+            key={editing?.id ?? "new"}
+            fields={(fields[mode] ?? []).map((field) => {
+              const value = editing?.[field.name as keyof GenericRow];
+              return {
+                ...field,
+                ...(value !== undefined && value !== null
+                  ? {
+                      defaultValue:
+                        field.type === "json"
+                          ? JSON.stringify(value, null, 2)
+                          : (value as string | number | boolean),
+                    }
+                  : {}),
+              };
+            })}
             busy={op.busy}
             onSubmit={async (d) => {
               if (["actions", "schedules", "mcp"].includes(mode))
                 op.ask(
-                  "确认创建？",
+                  editing ? "确认保存修改？" : "确认创建？",
                   "请检查工具范围、执行目标和操作内容。该设置可能允许后台或 AI Agent 执行远程操作。",
-                  () => save(d),
+                  () => save({ ...d, ...(editing ? { id: editing.id } : {}) }),
                 );
-              else await op.run(() => save(d));
+              else
+                await op.run(() =>
+                  save({ ...d, ...(editing ? { id: editing.id } : {}) }),
+                );
             }}
           />
         </section>
@@ -1005,6 +1078,36 @@ export function Resources({ mode }: { mode: string }) {
                   <td>
                     <Button
                       size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditing(r);
+                        setShow(true);
+                      }}
+                    >
+                      编辑
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        op.ask(
+                          "删除站点？",
+                          "将删除此节点由平台管理的 Nginx 配置，检查并重新加载成功后才删除平台记录与续期计划；证书文件保留。",
+                          async () => {
+                            const t = await rpc<{ id: string }>(
+                              "sites.delete",
+                              { id: r.id, confirmed: true },
+                            );
+                            setSiteTask(t.id);
+                            return t;
+                          },
+                        )
+                      }
+                    >
+                      删除
+                    </Button>
+                    <Button
+                      size="sm"
                       variant="outline"
                       onClick={() =>
                         op.ask(
@@ -1045,6 +1148,16 @@ export function Resources({ mode }: { mode: string }) {
                   <td>
                     <Button
                       size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditing(r);
+                        setShow(true);
+                      }}
+                    >
+                      编辑 / 启停
+                    </Button>
+                    <Button
+                      size="sm"
                       variant="outline"
                       onClick={() =>
                         op.ask(
@@ -1075,6 +1188,30 @@ export function Resources({ mode }: { mode: string }) {
                   </td>
                   <td>
                     <Status value={r.enabled ? "ACTIVE" : "CANCELLED"} />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditing(r);
+                        setShow(true);
+                      }}
+                    >
+                      编辑 / 启停
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        op.ask(
+                          "删除告警规则？",
+                          "后续不再检测此规则，已有通知保留。",
+                          () =>
+                            rpc("alerts.delete", { id: r.id, confirmed: true }),
+                        )
+                      }
+                    >
+                      删除
+                    </Button>
                   </td>
                 </>
               ) : (
@@ -1083,6 +1220,33 @@ export function Resources({ mode }: { mode: string }) {
                   <td>{r.type}</td>
                   <td>{String(r.config?.description ?? "自定义快捷操作")}</td>
                   <td>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditing(r);
+                        setShow(true);
+                      }}
+                    >
+                      编辑
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        op.ask(
+                          "删除自定义操作？",
+                          "已创建任务保留；后续无法再通过此动作执行。",
+                          () =>
+                            rpc("actions.delete", {
+                              id: r.id,
+                              confirmed: true,
+                            }),
+                        )
+                      }
+                    >
+                      删除
+                    </Button>
                     <Button
                       size="sm"
                       variant="outline"
@@ -1300,7 +1464,13 @@ export function Resources({ mode }: { mode: string }) {
 }
 export function TerminalPage() {
   const q = useQuery<NodeData[]>("nodes.list");
-  const [node, setNode] = useState("");
+  const requested = useSearchParams().get("node") ?? "";
+  const [lastRequested, setLastRequested] = useState(requested);
+  const [node, setNode] = useState(requested);
+  if (requested !== lastRequested) {
+    setLastRequested(requested);
+    if (requested) setNode(requested);
+  }
   const [containerId, setContainerId] = useState("");
   const [sessions, setSessions] = useState<
     { id: string; nodeId: string; name: string; url: string }[]

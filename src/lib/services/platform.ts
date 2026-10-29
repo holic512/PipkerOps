@@ -28,11 +28,14 @@ export const METHODS = [
   "nodes.reject",
   "nodes.revoke",
   "nodes.metrics",
+  "nodes.update",
   "applications.list",
   "applications.save",
   "applications.delete",
   "deployments.save",
+  "deployments.delete",
   "dependencies.save",
+  "dependencies.delete",
   "probes.list",
   "probes.save",
   "probes.run",
@@ -50,14 +53,17 @@ export const METHODS = [
   "sites.acme",
   "sites.https",
   "sites.renew",
+  "sites.delete",
   "actions.list",
   "actions.save",
   "actions.run",
+  "actions.delete",
   "schedules.list",
   "schedules.save",
   "schedules.delete",
   "alerts.list",
   "alerts.save",
+  "alerts.delete",
   "notifications.list",
   "notifications.read",
   "keys.list",
@@ -175,6 +181,18 @@ export async function execute(
         where: { id: actor.userId },
         select: { id: true, email: true, displayName: true, role: true },
       });
+    case "nodes.update": {
+      const data = z
+        .object({ id, name: label, labels: z.array(label).max(50).default([]) })
+        .parse(p);
+      authorize(actor, "nodes:write", data.id);
+      await db().node.update({
+        where: { id: data.id },
+        data: { name: data.name, labels: data.labels },
+      });
+      await audit(actor, method, "Node", data.id);
+      return { id: data.id };
+    }
     case "nodes.list":
       return nodes.listNodes(actor);
     case "nodes.token":
@@ -271,7 +289,21 @@ export async function execute(
             where: can(actor, "probes:read")
               ? probeWhere(actor)
               : { id: { in: [] } },
-            select: { id: true, name: true, status: true },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              results: {
+                take: 1,
+                orderBy: { recordedAt: "desc" },
+                select: {
+                  recordedAt: true,
+                  data: true,
+                  success: true,
+                  latencyMs: true,
+                },
+              },
+            },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -301,7 +333,20 @@ export async function execute(
       authorize(actor, "apps:write", undefined, true);
       confirm(p.confirmed);
       const appId = id.parse(p.id);
-      await db().application.delete({ where: { id: appId } });
+      await db().$transaction(async (tx) => {
+        const deployments = await tx.deployment.findMany({
+          where: { applicationId: appId },
+          select: { id: true, nodeId: true },
+        });
+        for (const deployment of deployments)
+          authorize(actor, "apps:write", deployment.nodeId, true);
+        await tx.probe.deleteMany({
+          where: {
+            id: { in: deployments.map((d) => `deployment-health:${d.id}`) },
+          },
+        });
+        await tx.application.delete({ where: { id: appId } });
+      });
       await audit(actor, method, "Application", appId);
       return { id: appId };
     }
@@ -321,7 +366,7 @@ export async function execute(
             "nginx",
           ]),
           target: z.string().min(1).max(500),
-          healthUrl: z.url().optional(),
+          healthUrl: z.url().nullable().optional(),
           metadata: object.default({}),
         })
         .parse(p);
@@ -331,15 +376,79 @@ export async function execute(
         if (!old) throw new ApiError(404, "部署不存在");
         authorize(actor, "apps:write", old.nodeId);
       }
+      if (d.healthUrl) {
+        authorize(actor, "probes:write", d.nodeId);
+        validateProbeTarget("HTTP", d.healthUrl);
+      }
       const { id: deploymentId, ...data } = d;
-      const deployment = deploymentId
-        ? await db().deployment.update({
-            where: { id: deploymentId },
-            data: data as never,
-          })
-        : await db().deployment.create({ data: data as never });
-      await audit(actor, method, "Deployment", deployment.id);
+      const deployment = await db().$transaction(async (tx) => {
+        const resource = deploymentId
+          ? await tx.deployment.update({
+              where: { id: deploymentId },
+              data: data as never,
+            })
+          : await tx.deployment.create({ data: data as never });
+        if (d.healthUrl) {
+          const config = {
+            createdById: actor.userId,
+            createdByApiKeyId: actor.apiKeyId ?? null,
+            name: `实例健康 · ${d.name}`,
+            type: "HTTP" as const,
+            target: d.healthUrl,
+            applicationId: d.applicationId,
+            sourceNodeId: d.nodeId,
+            intervalSeconds: 60,
+            timeoutMs: 5000,
+            failureThreshold: 3,
+            enabled: true,
+            nextRunAt: new Date(),
+          };
+          await tx.probe.upsert({
+            where: { id: `deployment-health:${resource.id}` },
+            create: { id: `deployment-health:${resource.id}`, ...config },
+            update: config,
+          });
+        } else if (d.healthUrl === null)
+          await tx.probe.deleteMany({
+            where: { id: `deployment-health:${resource.id}` },
+          });
+        await tx.auditEvent.create({
+          data: {
+            actorId: actor.userId,
+            apiKeyId: actor.apiKeyId,
+            action: method,
+            resourceType: "Deployment",
+            resourceId: resource.id,
+            nodeId: resource.nodeId,
+          },
+        });
+        return resource;
+      });
       return deployment;
+    }
+    case "deployments.delete": {
+      const resource = await db().deployment.findUnique({
+        where: { id: id.parse(p.id) },
+      });
+      if (!resource) throw new ApiError(404, "实例不存在");
+      authorize(actor, "apps:write", resource.nodeId, true);
+      confirm(p.confirmed);
+      await db().$transaction(async (tx) => {
+        await tx.probe.deleteMany({
+          where: { id: `deployment-health:${resource.id}` },
+        });
+        await tx.deployment.delete({ where: { id: resource.id } });
+      });
+      await audit(actor, method, "Deployment", resource.id);
+      return { id: resource.id };
+    }
+    case "dependencies.delete": {
+      authorize(actor, "apps:write", undefined, true);
+      confirm(p.confirmed);
+      const resourceId = id.parse(p.id);
+      await db().dependency.delete({ where: { id: resourceId } });
+      await audit(actor, method, "Dependency", resourceId);
+      return { id: resourceId };
     }
     case "dependencies.save": {
       authorize(actor, "apps:write");
@@ -406,7 +515,19 @@ export async function execute(
         if (!old) throw new ApiError(404, "探针不存在");
         authorize(actor, "probes:write", old.sourceNodeId ?? undefined);
       }
-      const { id: probeId, ...data } = d;
+      const mutating =
+        d.type === "HTTP" &&
+        !["GET", "HEAD", "OPTIONS"].includes(String(d.config.method ?? "GET"));
+      if (mutating) {
+        authorize(actor, "probes:write", d.sourceNodeId ?? undefined, true);
+        confirm(p.confirmed);
+      }
+      const { id: probeId, ...fields } = d;
+      const data = {
+        ...fields,
+        createdById: actor.userId,
+        createdByApiKeyId: actor.apiKeyId ?? null,
+      };
       const result = probeId
         ? await db().probe.update({
             where: { id: probeId },
@@ -426,6 +547,7 @@ export async function execute(
       return createTask(
         actor,
         {
+          confirmed: p.confirmed,
           type: "probe.run",
           nodeId: probe.sourceNodeId ?? undefined,
           payload: {
@@ -538,6 +660,18 @@ export async function execute(
         : await db().site.create({ data });
       await audit(actor, method, "Site", site.id);
       return site;
+    }
+    case "sites.delete": {
+      const site = await db().site.findUnique({
+        where: { id: id.parse(p.id) },
+      });
+      if (!site) throw new ApiError(404, "站点不存在");
+      return createTask(actor, {
+        type: "nginx.remove",
+        nodeId: site.nodeId,
+        payload: { domain: site.domain },
+        confirmed: p.confirmed,
+      });
     }
     case "sites.apply": {
       const site = await db().site.findUnique({
@@ -740,6 +874,8 @@ export async function execute(
     case "alerts.save": {
       const d = z
         .object({
+          id: id.optional(),
+          enabled: z.boolean().default(true),
           name: label,
           nodeId: id.optional(),
           probeId: id.optional(),
@@ -759,15 +895,59 @@ export async function execute(
         })
         .parse(p);
       authorize(actor, "alerts:write", d.nodeId);
-      if (!d.nodeId && !d.probeId) throw new ApiError(400, "请选择节点或探针");
+      if (
+        d.metric === "probeFailure"
+          ? !d.probeId || !!d.nodeId
+          : !d.nodeId || !!d.probeId
+      )
+        throw new ApiError(400, "节点指标只选择节点；探针失败指标只选择探针");
       if (d.probeId) {
         const probe = await db().probe.findUnique({ where: { id: d.probeId } });
         if (!probe) throw new ApiError(404, "探针不存在");
         authorize(actor, "alerts:write", probe.sourceNodeId ?? undefined);
       }
-      const rule = await db().alertRule.create({ data: d });
+      const { id: ruleId, ...fields } = d;
+      if (ruleId) {
+        const old = await db().alertRule.findUnique({ where: { id: ruleId } });
+        if (!old) throw new ApiError(404, "规则不存在");
+        authorize(actor, "alerts:write", old.nodeId ?? undefined);
+        if (old.probeId) {
+          const probe = await db().probe.findUniqueOrThrow({
+            where: { id: old.probeId },
+          });
+          authorize(actor, "alerts:write", probe.sourceNodeId ?? undefined);
+        }
+      }
+      const rule = ruleId
+        ? await db().alertRule.update({
+            where: { id: ruleId },
+            data: {
+              ...fields,
+              nodeId: fields.nodeId ?? null,
+              probeId: fields.probeId ?? null,
+              webhookUrl: fields.webhookUrl ?? null,
+            },
+          })
+        : await db().alertRule.create({ data: fields });
       await audit(actor, method, "AlertRule", rule.id);
       return rule;
+    }
+    case "alerts.delete": {
+      confirm(p.confirmed);
+      const resource = await db().alertRule.findUnique({
+        where: { id: id.parse(p.id) },
+      });
+      if (!resource) throw new ApiError(404, "规则不存在");
+      authorize(actor, "alerts:write", resource.nodeId ?? undefined);
+      if (resource.probeId) {
+        const probe = await db().probe.findUniqueOrThrow({
+          where: { id: resource.probeId },
+        });
+        authorize(actor, "alerts:write", probe.sourceNodeId ?? undefined);
+      }
+      await db().alertRule.delete({ where: { id: resource.id } });
+      await audit(actor, method, "AlertRule", resource.id);
+      return { id: resource.id };
     }
     case "schedules.list":
       authorize(actor, "schedules:read");
@@ -780,6 +960,8 @@ export async function execute(
 
       const d = z
         .object({
+          id: id.optional(),
+          enabled: z.boolean().default(true),
           name: label,
           cron: z.string().max(100),
           timezone: z.string().max(80).default("Asia/Shanghai"),
@@ -802,7 +984,13 @@ export async function execute(
       } catch {
         throw new ApiError(400, "Cron 表达式或时区无效");
       }
+      if (d.id) {
+        const old = await db().schedule.findUnique({ where: { id: d.id } });
+        if (!old) throw new ApiError(404, "计划不存在");
+        authorize(actor, "schedules:write", old.nodeId ?? undefined);
+      }
       const data = {
+        enabled: d.enabled,
         name: d.name,
         cron: d.cron,
         timezone: d.timezone,
@@ -810,15 +998,16 @@ export async function execute(
         nodeId: d.nodeId,
         payload: d.payload,
       };
-      const s = await db().schedule.create({
-        data: {
-          ...data,
-          payload: data.payload as never,
-          nextRunAt,
-          createdById: actor.userId,
-          createdByApiKeyId: actor.apiKeyId,
-        },
-      });
+      const fields = {
+        ...data,
+        payload: data.payload as never,
+        nextRunAt,
+        createdById: actor.userId,
+        createdByApiKeyId: actor.apiKeyId ?? null,
+      };
+      const s = d.id
+        ? await db().schedule.update({ where: { id: d.id }, data: fields })
+        : await db().schedule.create({ data: fields });
       await audit(actor, method, "Schedule", s.id);
       return s;
     }
@@ -842,6 +1031,7 @@ export async function execute(
       confirm(p.confirmed);
       const d = z
         .object({
+          id: id.optional(),
           name: label,
           type: z.enum(["shell.exec", "docker.action", "HTTP", "URL"]),
           description: z.string().max(1000).optional(),
@@ -860,17 +1050,43 @@ export async function execute(
         })
         .parse(p);
       for (const n of d.nodeIds) authorize(actor, "actions:write", n, true);
-      const a = await db().customAction.create({
-        data: {
-          ...d,
-          config: d.config as never,
-          parameters: d.parameters,
-          dangerous: d.type !== "URL",
-          createdById: actor.userId,
-        },
-      });
+      const { id: actionId, ...data } = d;
+      if (actionId) {
+        const old = await db().customAction.findUnique({
+          where: { id: actionId },
+        });
+        if (!old) throw new ApiError(404, "操作不存在");
+        for (const node of old.nodeIds)
+          authorize(actor, "actions:write", node, true);
+      }
+      const fields = {
+        ...data,
+        config: data.config as never,
+        parameters: data.parameters,
+        dangerous: data.type !== "URL",
+        createdById: actor.userId,
+      };
+      const a = actionId
+        ? await db().customAction.update({
+            where: { id: actionId },
+            data: fields,
+          })
+        : await db().customAction.create({ data: fields });
       await audit(actor, method, "CustomAction", a.id);
       return a;
+    }
+    case "actions.delete": {
+      confirm(p.confirmed);
+      const action = await db().customAction.findUnique({
+        where: { id: id.parse(p.id) },
+      });
+      if (!action) throw new ApiError(404, "操作不存在");
+      authorize(actor, "actions:write", undefined, true);
+      for (const node of action.nodeIds)
+        authorize(actor, "actions:write", node, true);
+      await db().customAction.delete({ where: { id: action.id } });
+      await audit(actor, method, "CustomAction", action.id);
+      return { id: action.id };
     }
     case "actions.run": {
       const a = await db().customAction.findUnique({

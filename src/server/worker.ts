@@ -96,6 +96,34 @@ async function probes() {
             (p.config as Record<string, unknown>).method ?? "GET",
           ).toUpperCase(),
         );
+      try {
+        if (!p.createdById) throw new Error("探针缺少授权创建者");
+        const actor = await refreshActor({
+          userId: p.createdById,
+          role: "VIEWER",
+          apiKeyId: p.createdByApiKeyId ?? undefined,
+        });
+        authorize(
+          actor,
+          "probes:write",
+          p.sourceNodeId ?? undefined,
+          !idempotent,
+        );
+      } catch {
+        await tx.probe.update({
+          where: { id: p.id },
+          data: { enabled: false, status: "UNKNOWN" },
+        });
+        await tx.notification.create({
+          data: {
+            userId: p.createdById,
+            title: "探针已停用",
+            body: `${p.name}：创建者授权已失效，请检查后重新保存。`,
+            level: "warning",
+          },
+        });
+        continue;
+      }
       if (!active) {
         await tx.task.create({
           data: {
@@ -103,6 +131,8 @@ async function probes() {
             type: "probe.run",
             nodeId: p.sourceNodeId,
             source: "SYSTEM",
+            actorId: p.createdById,
+            apiKeyId: p.createdByApiKeyId,
             idempotent,
             maxAttempts: idempotent ? 3 : 1,
             payload: {
@@ -149,31 +179,30 @@ async function control() {
       const stored = await db().task.findUniqueOrThrow({
         where: { id: task.id },
       });
-      if (stored.actorId) {
-        try {
-          const actor = await refreshActor({
-            userId: stored.actorId,
-            role: "VIEWER",
-            apiKeyId: stored.apiKeyId ?? undefined,
-          });
-          authorize(
-            actor,
-            stored.type === "http.request" ? "actions:write" : "probes:write",
-            undefined,
-            stored.type === "http.request",
-          );
-        } catch {
-          await db().task.update({
-            where: { id: task.id },
-            data: {
-              status: "CANCELLED",
-              error: "执行前权限已失效",
-              finishedAt: new Date(),
-              leaseExpiresAt: null,
-            },
-          });
-          return;
-        }
+      try {
+        if (!stored.actorId) throw new Error("任务缺少授权创建者");
+        const actor = await refreshActor({
+          userId: stored.actorId,
+          role: "VIEWER",
+          apiKeyId: stored.apiKeyId ?? undefined,
+        });
+        authorize(
+          actor,
+          stored.type === "http.request" ? "actions:write" : "probes:write",
+          undefined,
+          stored.type === "http.request" || !stored.idempotent,
+        );
+      } catch {
+        await db().task.update({
+          where: { id: task.id },
+          data: {
+            status: "CANCELLED",
+            error: "执行前权限已失效",
+            finishedAt: new Date(),
+            leaseExpiresAt: null,
+          },
+        });
+        return;
       }
       const p = task.payload as Record<string, unknown>;
       const result = await runProbe(

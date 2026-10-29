@@ -89,7 +89,14 @@ export const taskSpecs: Record<
     idempotent: false,
     schema: z.object({
       name: name,
-      action: z.enum(["start", "stop", "restart", "enable", "disable"]),
+      action: z.enum([
+        "start",
+        "stop",
+        "restart",
+        "reload",
+        "enable",
+        "disable",
+      ]),
     }),
   },
   "files.list": {
@@ -128,6 +135,12 @@ export const taskSpecs: Record<
     idempotent: true,
     schema: z.object({}),
   },
+  "nginx.remove": {
+    scope: "sites:write",
+    dangerous: true,
+    idempotent: false,
+    schema: z.object({ domain: name }),
+  },
   "nginx.reload": {
     scope: "sites:write",
     dangerous: true,
@@ -151,7 +164,8 @@ export const taskSpecs: Record<
     dangerous: true,
     idempotent: false,
     schema: z.object({
-      action: z.enum(["allow", "deny", "delete"]),
+      action: z.enum(["allow", "deny", "reject", "delete"]),
+      ruleAction: z.enum(["allow", "deny", "reject"]).default("allow"),
       port: z.number().int().min(1).max(65535),
       protocol: z.enum(["tcp", "udp"]),
     }),
@@ -161,7 +175,17 @@ export const taskSpecs: Record<
     dangerous: true,
     idempotent: false,
     schema: z.object({
-      name: z.enum(["nginx", "docker", "git", "curl", "htop"]),
+      name: z.enum([
+        "nginx",
+        "docker",
+        "git",
+        "curl",
+        "htop",
+        "certbot",
+        "ufw",
+        "wget",
+        "unzip",
+      ]),
     }),
   },
   "agent.upgrade": {
@@ -291,6 +315,15 @@ export async function createTask(
     authorize(actor, "probes:write", probe.sourceNodeId ?? undefined);
     if ((data.nodeId ?? null) !== probe.sourceNodeId)
       throw new ApiError(403, "探针执行来源与配置不匹配");
+    const mutating =
+      probe.type === "HTTP" &&
+      !["GET", "HEAD", "OPTIONS"].includes(
+        String((probe.config as Record<string, unknown>).method ?? "GET"),
+      );
+    if (mutating) {
+      authorize(actor, "probes:write", probe.sourceNodeId ?? undefined, true);
+      confirm(data.confirmed);
+    }
     payload = {
       probeId: probe.id,
       type: probe.type,

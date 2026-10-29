@@ -301,7 +301,16 @@ test(
         name: run,
         type: "process",
         target: "acceptance-agent",
+        healthUrl: targetUrl,
       });
+      await waitFor(
+        () =>
+          db().deployment.findFirst({
+            where: { applicationId: app.id, nodeId },
+          }),
+        (d) => d?.status === "HEALTHY",
+        "deployment health URL automatically probes from node",
+      );
       for (const sourceNodeId of [undefined, nodeId]) {
         const probe = await call<ProbeData>(cookie, "probes.save", {
           name: run + (sourceNodeId ? "-agent" : "-control"),
@@ -333,6 +342,73 @@ test(
       console.log(
         "Verified application association and real control/Agent HTTP probes with JSON mapping",
       );
+      const probeKey = await call<{ id: string; key: string }>(
+        cookie,
+        "keys.create",
+        {
+          name: run + "-probe",
+          scopes: ["probes:write"],
+          nodeIds: [nodeId],
+          days: 1,
+          confirmed: true,
+        },
+      );
+      keyIds.push(probeKey.id);
+      const postParams = {
+        name: run + "-post",
+        type: "HTTP",
+        target: targetUrl,
+        config: { method: "POST", body: "authorized" },
+        confirmed: true,
+      };
+      await call("Bearer " + probeKey.key, "probes.save", postParams, 403);
+      const postProbe = await call<ProbeData>(
+        cookie,
+        "probes.save",
+        postParams,
+      );
+      probeIds.push(postProbe.id);
+      await call(cookie, "probes.run", { id: postProbe.id }, 400);
+      const postExecution = await waitFor(
+        () =>
+          db().task.findFirst({
+            where: {
+              type: "probe.run",
+              payload: { path: ["probeId"], equals: postProbe.id },
+              status: "SUCCEEDED",
+            },
+          }),
+        Boolean,
+        "authorized POST probe",
+      );
+      assert.equal(postExecution?.idempotent, false);
+      assert.equal(postExecution?.attempts, 1);
+      assert.equal(postExecution?.maxAttempts, 1);
+      const ownedProbe = await call<ProbeData>(
+        "Bearer " + probeKey.key,
+        "probes.save",
+        {
+          name: run + "-owned-probe",
+          type: "HTTP",
+          target: targetUrl,
+          intervalSeconds: 10,
+        },
+      );
+      probeIds.push(ownedProbe.id);
+      await waitFor(
+        () => db().probeResult.findFirst({ where: { probeId: ownedProbe.id } }),
+        Boolean,
+        "scoped API Key scheduled probe",
+      );
+      await call(cookie, "keys.revoke", { id: probeKey.id, confirmed: true });
+      await waitFor(
+        () => db().probe.findUniqueOrThrow({ where: { id: ownedProbe.id } }),
+        (p) => !p.enabled,
+        "revoked API Key disables scheduled probe",
+      );
+      console.log(
+        "Verified POST probe confirmation, dangerous-key restriction, single attempt and revoked owner disabling",
+      );
       const action = await call<{ id: string }>(cookie, "actions.save", {
         name: run + "-https",
         type: "HTTP",
@@ -346,6 +422,19 @@ test(
         confirmed: true,
       });
       actionId = action.id;
+      await call(cookie, "actions.save", {
+        id: action.id,
+        name: run + "-https-edited",
+        type: "HTTP",
+        config: {
+          url: `https://localhost:${httpsAddress.port}/action`,
+          method: "POST",
+          body: "authorized",
+          mapping: { value: "value", method: "method" },
+        },
+        parameters: [],
+        confirmed: true,
+      });
       const actionTask = await call<TaskData>(cookie, "actions.run", {
         id: action.id,
         values: {},
@@ -518,7 +607,54 @@ test(
         { type: "system.info", nodeId, payload: {} },
         409,
       );
-      console.log("Verified revoked node rejects new tasks");
+      const notificationRule = await call<{ id: string }>(
+        cookie,
+        "alerts.save",
+        {
+          name: run,
+          nodeId,
+          metric: "offline",
+          operator: "gt",
+          threshold: 0,
+          durationSeconds: 0,
+        },
+      );
+      await call(cookie, "alerts.save", {
+        id: notificationRule.id,
+        name: run + "-disabled",
+        nodeId,
+        metric: "offline",
+        operator: "gt",
+        threshold: 0,
+        durationSeconds: 0,
+        enabled: false,
+      });
+      assert.equal(
+        (
+          await db().alertRule.findUniqueOrThrow({
+            where: { id: notificationRule.id },
+          })
+        ).enabled,
+        false,
+      );
+      await call(cookie, "alerts.delete", {
+        id: notificationRule.id,
+        confirmed: true,
+      });
+      await call(cookie, "actions.delete", { id: actionId, confirmed: true });
+      actionId = undefined;
+      await call(cookie, "nodes.update", {
+        id: nodeId,
+        name: run,
+        labels: ["acceptance", "verified"],
+      });
+      assert.deepEqual(
+        (await db().node.findUniqueOrThrow({ where: { id: nodeId } })).labels,
+        ["acceptance", "verified"],
+      );
+      console.log(
+        "Verified revoked node rejects new tasks and resource update/delete APIs retain real state",
+      );
     } finally {
       if (child && child.exitCode === null) {
         child.kill("SIGTERM");
@@ -538,7 +674,10 @@ test(
         await db().customAction.deleteMany({ where: { id: actionId } });
       if (probeIds.length)
         await db().probe.deleteMany({ where: { id: { in: probeIds } } });
-      if (appId) await db().application.deleteMany({ where: { id: appId } });
+      if (appId) {
+        await db().probe.deleteMany({ where: { applicationId: appId } });
+        await db().application.deleteMany({ where: { id: appId } });
+      }
       if (nodeId) {
         await db().task.deleteMany({ where: { nodeId } });
         await db().node.deleteMany({ where: { id: nodeId } });

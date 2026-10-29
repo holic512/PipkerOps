@@ -244,7 +244,9 @@ export function Applications() {
               emptyTitle="还未关联部署实例"
               emptyText="点击“关联实例”，选择节点上的实际运行目标。"
             >
-              <DataTable headers={["实例", "类型", "节点", "运行目标", "状态"]}>
+              <DataTable
+                headers={["实例", "类型", "节点", "运行目标", "状态", "操作"]}
+              >
                 {q.data
                   ?.find((a) => a.id === selected.id)
                   ?.deployments.map((d) => (
@@ -261,6 +263,25 @@ export function Applications() {
                       </td>
                       <td>
                         <Status value={d.status} />
+                      </td>
+                      <td>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            op.ask(
+                              "解除实例关联？",
+                              "只删除平台关联记录，运行中的服务继续保留。",
+                              () =>
+                                rpc("deployments.delete", {
+                                  id: d.id,
+                                  confirmed: true,
+                                }),
+                            )
+                          }
+                        >
+                          解除关联
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -300,7 +321,10 @@ export function Applications() {
                     label: "容器 ID / 服务名 / 运行目标",
                     required: true,
                   },
-                  { name: "healthUrl", label: "健康检查 URL（可选）" },
+                  {
+                    name: "healthUrl",
+                    label: "健康 URL（可选，由该节点每60秒探测）",
+                  },
                 ]}
                 onSubmit={(d) =>
                   op.run(() =>
@@ -350,7 +374,27 @@ export function Applications() {
             </div>
           ) : (
             <div className="form-panel">
-              <JsonView data={selected.businessData} />
+              <h2>自定义业务数据</h2>
+              <JsonView
+                data={
+                  q.data?.find((a) => a.id === selected.id)?.businessData ?? {}
+                }
+              />
+              <h2>探针业务字段</h2>
+              {q.data
+                ?.find((a) => a.id === selected.id)
+                ?.probes.map((probe) => (
+                  <section key={probe.id}>
+                    <h3>
+                      {probe.name} · <Status value={probe.status} />
+                    </h3>
+                    <small>
+                      {date(probe.results?.[0]?.recordedAt)} ·{" "}
+                      {probe.results?.[0]?.latencyMs.toFixed(1) ?? "—"} ms
+                    </small>
+                    <JsonView data={probe.results?.[0]?.data ?? {}} />
+                  </section>
+                ))}
             </div>
           )}
         </section>
@@ -364,6 +408,7 @@ export function Probes() {
   const apps = useQuery<AppData[]>("applications.list");
   const [show, setShow] = useState(false);
   const [selected, setSelected] = useState<string>("");
+  const [editing, setEditing] = useState<ProbeData | null>(null);
   const history = useQuery<{
     results: Record<string, unknown>[];
     successRate: number | null;
@@ -384,7 +429,12 @@ export function Probes() {
           <RotateCw size={15} />
           刷新
         </Button>
-        <Button onClick={() => setShow(!show)}>
+        <Button
+          onClick={() => {
+            setEditing(null);
+            setShow(!show);
+          }}
+        >
           <Plus size={16} />
           创建探针
         </Button>
@@ -392,17 +442,29 @@ export function Probes() {
       {op.ui}
       {show && (
         <section className="panel form-panel">
-          <h2>创建探针</h2>
+          <h2>{editing ? "编辑探针" : "创建探针"}</h2>
           <ResourceForm
+            key={editing?.id ?? "new"}
             busy={op.busy}
             fields={[
-              { name: "name", label: "探针名称", required: true },
+              {
+                name: "enabled",
+                label: "启用探针",
+                type: "checkbox",
+                defaultValue: editing?.enabled ?? true,
+              },
+              {
+                name: "name",
+                label: "探针名称",
+                required: true,
+                defaultValue: editing?.name,
+              },
               {
                 name: "type",
                 label: "类型",
                 type: "select",
                 required: true,
-                defaultValue: "HTTP",
+                defaultValue: editing?.type ?? "HTTP",
                 options: [
                   { value: "HTTP", label: "HTTP" },
                   { value: "TCP", label: "TCP" },
@@ -413,10 +475,12 @@ export function Probes() {
                 label: "目标 URL 或 host:port",
                 required: true,
                 placeholder: "https://app.example.com/health",
+                defaultValue: editing?.target,
               },
               {
                 name: "sourceNodeId",
                 label: "执行来源（留空为主控）",
+                defaultValue: editing?.sourceNodeId ?? "",
                 type: "select",
                 options: nodes.data
                   ?.filter((n) => n.status === "APPROVED")
@@ -425,6 +489,7 @@ export function Probes() {
               {
                 name: "applicationId",
                 label: "关联应用（可选）",
+                defaultValue: editing?.applicationId ?? "",
                 type: "select",
                 options: apps.data?.map((a) => ({
                   value: a.id,
@@ -435,7 +500,7 @@ export function Probes() {
                 name: "intervalSeconds",
                 label: "轮询间隔（秒）",
                 type: "number",
-                defaultValue: 60,
+                defaultValue: editing?.intervalSeconds ?? 60,
                 min: 10,
                 max: 86400,
               },
@@ -443,7 +508,7 @@ export function Probes() {
                 name: "timeoutMs",
                 label: "超时（毫秒）",
                 type: "number",
-                defaultValue: 5000,
+                defaultValue: editing?.timeoutMs ?? 5000,
                 min: 100,
                 max: 30000,
               },
@@ -451,24 +516,48 @@ export function Probes() {
                 name: "failureThreshold",
                 label: "连续失败阈值",
                 type: "number",
-                defaultValue: 3,
+                defaultValue: editing?.failureThreshold ?? 3,
                 min: 1,
                 max: 100,
               },
               {
                 name: "config",
                 label: "请求配置（method / headers / body / expectedStatus）",
+                defaultValue: JSON.stringify(editing?.config ?? {}, null, 2),
                 type: "json",
               },
               {
                 name: "mapping",
                 label: 'JSON 字段映射（如 {"version":"data.version"}）',
+                defaultValue: JSON.stringify(editing?.mapping ?? {}, null, 2),
                 type: "json",
               },
             ]}
             onSubmit={async (d) => {
-              const r = await op.run(() => rpc("probes.save", d));
-              if (r) setShow(false);
+              const save = async () => {
+                const r = await rpc("probes.save", {
+                  ...d,
+                  id: editing?.id,
+                  sourceNodeId: d.sourceNodeId ?? null,
+                  applicationId: d.applicationId ?? null,
+                  confirmed: true,
+                });
+                setShow(false);
+                return r;
+              };
+              const config = d.config as Record<string, unknown>;
+              if (
+                d.type === "HTTP" &&
+                !["GET", "HEAD", "OPTIONS"].includes(
+                  String(config?.method ?? "GET"),
+                )
+              )
+                op.ask(
+                  "启用有副作用的 HTTP 探针？",
+                  "此方法将按轮询周期执行，可能修改目标数据；每次执行最多一次尝试。",
+                  save,
+                );
+              else await op.run(save);
             }}
           />
         </section>
@@ -519,13 +608,33 @@ export function Probes() {
               <td className="inline-actions">
                 <Button
                   size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setEditing(p);
+                    setShow(true);
+                  }}
+                >
+                  编辑 / 启停
+                </Button>
+                <Button
+                  size="sm"
                   variant="outline"
                   disabled={op.busy}
                   onClick={() =>
-                    void op.run(
-                      () => rpc("probes.run", { id: p.id }),
-                      "探测任务已加入队列",
+                    p.type === "HTTP" &&
+                    !["GET", "HEAD", "OPTIONS"].includes(
+                      String(p.config?.method ?? "GET"),
                     )
+                      ? op.ask(
+                          "执行有副作用的探针？",
+                          "此HTTP方法可能修改目标数据。",
+                          () =>
+                            rpc("probes.run", { id: p.id, confirmed: true }),
+                        )
+                      : void op.run(
+                          () => rpc("probes.run", { id: p.id }),
+                          "探测任务已加入队列",
+                        )
                   }
                 >
                   <Play size={13} />
