@@ -29,8 +29,10 @@ test(
     const run = "alerts-" + randomUUID().slice(0, 8);
     let probeId = "",
       ruleId = "",
+      nodeId = "",
       healthy = true,
       webhookOk = true;
+    const metricRuleIds: string[] = [];
     const deliveries: { id: string; title: string }[] = [];
     const target = createServer((_req, res) => {
       res.writeHead(healthy ? 200 : 503, {
@@ -172,6 +174,80 @@ test(
       console.log(
         "Verified real HTTPS alert delivery, sustained-outage deduplication, recovery and failed-delivery audit",
       );
+      const node = await db().node.create({
+        data: { name: run + "-metrics", status: "APPROVED" },
+      });
+      nodeId = node.id;
+      for (const [metric, operator] of [
+        ["cpuPercent", "lt"],
+        ["memoryPercent", "gt"],
+      ]) {
+        const metricRule = await rpc<{ id: string }>("alerts.save", {
+          name: run + "-" + metric,
+          nodeId,
+          metric,
+          operator,
+          threshold: 50,
+          durationSeconds: 0,
+        });
+        metricRuleIds.push(metricRule.id);
+      }
+      await new Promise((r) => setTimeout(r, 6000));
+      assert.equal(
+        await db().notification.count({
+          where: { alertRuleId: { in: metricRuleIds } },
+        }),
+        0,
+        "missing sampling is not replaced with zero for a CPU lt rule",
+      );
+      const sampledAt = new Date();
+      await db().metricSample.createMany({
+        data: [
+          ...Array.from({ length: 2000 }, (_, index) => ({
+            nodeId,
+            recordedAt: new Date(sampledAt.getTime() - (index + 1) * 1000),
+            cpuPercent: 90,
+            memoryPercent: 10,
+            payload: { history: "x".repeat(2048) },
+          })),
+          { nodeId, recordedAt: sampledAt, cpuPercent: 20, memoryPercent: 90 },
+        ],
+      });
+      const metricNotifications = await wait(
+        () =>
+          db().notification.findMany({
+            where: { alertRuleId: { in: metricRuleIds }, level: "error" },
+          }),
+        (rows) => rows.length === 2,
+        "CPU and memory use latest sampling despite conflicting history",
+      );
+      assert.ok(
+        metricNotifications.some((n) => n.body.includes("cpuPercent = 20")),
+      );
+      assert.ok(
+        metricNotifications.some((n) => n.body.includes("memoryPercent = 90")),
+      );
+      await db().metricSample.create({
+        data: { nodeId, cpuPercent: 90, memoryPercent: 10 },
+      });
+      await wait(
+        () =>
+          db().notification.count({
+            where: { alertRuleId: { in: metricRuleIds }, level: "success" },
+          }),
+        (count) => count === 2,
+        "CPU and memory latest-sampling recovery",
+      );
+      assert.equal(
+        await db().notification.count({
+          where: { alertRuleId: { in: metricRuleIds }, level: "error" },
+        }),
+        2,
+        "CPU and memory alert notifications remain deduplicated",
+      );
+      console.log(
+        "Verified missing samples, 2000 conflicting historical samples, latest CPU/memory alerts and recovery",
+      );
     } finally {
       target.closeAllConnections();
       receiver.closeAllConnections();
@@ -185,6 +261,20 @@ test(
           `pko:alert:${ruleId}:fired`,
         ]);
       }
+      if (metricRuleIds.length) {
+        await db().alertRule.deleteMany({
+          where: { id: { in: metricRuleIds } },
+        });
+        await (
+          await redis()
+        ).del(
+          metricRuleIds.flatMap((id) => [
+            `pko:alert:${id}:since`,
+            `pko:alert:${id}:fired`,
+          ]),
+        );
+      }
+      if (nodeId) await db().node.deleteMany({ where: { id: nodeId } });
       if (probeId) {
         await db().task.deleteMany({
           where: {

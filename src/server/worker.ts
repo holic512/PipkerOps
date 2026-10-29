@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module background-worker
  * @description 持久化 Cron/多源探针调度、主控探针执行、租约恢复、告警及数据维护。
- * @logic PostgreSQL行锁领取；非幂等失联仅UNKNOWN；调度游标、任务及计划关联同事务；Redis只用于告警窗口。
+ * @logic PostgreSQL行锁领取；非幂等失联仅UNKNOWN；调度游标、任务及计划关联同事务；告警逐节点LIMIT 1读取最新采样，Redis保存告警窗口。
  * @dependencies Prisma, Redis, shared task/probe services, cron-parser
  * @index_tags worker, cron, probes, alerts, recovery
  * @author holic512
@@ -15,6 +15,7 @@ import { redis } from "../lib/redis";
 import { runProbe, type ProbeInput } from "../lib/probe";
 import { finishTask } from "../lib/services/results";
 import { createTask } from "../lib/services/tasks";
+import { withLatestMetrics } from "../lib/services/nodes";
 import { authorize, refreshActor } from "../lib/auth";
 import { hashToken } from "../lib/crypto";
 let stopping = false;
@@ -300,15 +301,27 @@ async function alerts() {
   const rules = await db().alertRule.findMany({
     where: { enabled: true },
     include: {
-      node: {
-        include: { metrics: { orderBy: { recordedAt: "desc" }, take: 1 } },
-      },
+      node: true,
       probe: true,
     },
   });
+  const metricNodes = new Map(
+    rules.flatMap((rule) =>
+      rule.node && ["cpuPercent", "memoryPercent"].includes(rule.metric)
+        ? [[rule.node.id, rule.node] as const]
+        : [],
+    ),
+  );
+  const samples = new Map(
+    (await withLatestMetrics([...metricNodes.values()])).map((node) => [
+      node.id,
+      node.metrics[0],
+    ]),
+  );
   for (const rule of rules) {
     let value: number | null = null;
     const node = rule.node;
+    const sample = node ? samples.get(node.id) : undefined;
     if (rule.metric === "offline" && node)
       value =
         node.status !== "APPROVED" ||
@@ -316,10 +329,9 @@ async function alerts() {
         Date.now() - node.lastSeenAt.getTime() > 60000
           ? 1
           : 0;
-    else if (rule.metric === "cpuPercent" && node?.metrics[0])
-      value = node.metrics[0].cpuPercent;
-    else if (rule.metric === "memoryPercent" && node?.metrics[0])
-      value = node.metrics[0].memoryPercent;
+    else if (rule.metric === "cpuPercent" && sample) value = sample.cpuPercent;
+    else if (rule.metric === "memoryPercent" && sample)
+      value = sample.memoryPercent;
     else if (rule.metric === "probeFailure" && rule.probe)
       value = rule.probe.failureCount;
     const breached =
