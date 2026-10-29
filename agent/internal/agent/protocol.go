@@ -30,33 +30,40 @@ type Task struct {
 }
 
 type Message struct {
-	Type      string `json:"type"`
-	Task      *Task  `json:"task,omitempty"`
-	TaskID    string `json:"taskId,omitempty"`
-	Payload   any    `json:"payload,omitempty"`
-	Sequence  int    `json:"sequence,omitempty"`
-	Stream    string `json:"stream,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Success   *bool  `json:"success,omitempty"`
-	Output    string `json:"output,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Result    any    `json:"result,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
-	Data      string `json:"data,omitempty"`
-	Cols      uint16 `json:"cols,omitempty"`
-	Rows      uint16 `json:"rows,omitempty"`
-	ExitCode  *int   `json:"exitCode,omitempty"`
+	Type             string `json:"type"`
+	Task             *Task  `json:"task,omitempty"`
+	TaskID           string `json:"taskId,omitempty"`
+	Payload          any    `json:"payload,omitempty"`
+	Sequence         int    `json:"sequence,omitempty"`
+	Stream           string `json:"stream,omitempty"`
+	Message          string `json:"message,omitempty"`
+	Success          *bool  `json:"success,omitempty"`
+	Output           string `json:"output,omitempty"`
+	Error            string `json:"error,omitempty"`
+	Result           any    `json:"result,omitempty"`
+	SessionID        string `json:"sessionId,omitempty"`
+	ContainerID      string `json:"containerId,omitempty"`
+	Data             string `json:"data,omitempty"`
+	Cols             uint16 `json:"cols,omitempty"`
+	Rows             uint16 `json:"rows,omitempty"`
+	ExitCode         *int   `json:"exitCode,omitempty"`
+	RequestID        string `json:"requestId,omitempty"`
+	CSRPEM           string `json:"csrPem,omitempty"`
+	CertificatePEM   string `json:"certificatePem,omitempty"`
+	CACertificatePEM string `json:"caCertificatePem,omitempty"`
 }
 
 type journalRecord struct {
-	TaskID       string    `json:"taskId"`
-	Type         string    `json:"type"`
-	State        string    `json:"state"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-	Acknowledged bool      `json:"acknowledged"`
-	Response     Message   `json:"response"`
-	RequestHash  string    `json:"requestHash"`
-	Logs         []Message `json:"logs,omitempty"`
+	TaskID            string    `json:"taskId"`
+	Type              string    `json:"type"`
+	State             string    `json:"state"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+	Acknowledged      bool      `json:"acknowledged"`
+	Response          Message   `json:"response"`
+	RequestHash       string    `json:"requestHash"`
+	Logs              []Message `json:"logs,omitempty"`
+	RestartRequested  bool      `json:"restartRequested,omitempty"`
+	RestartDispatched bool      `json:"restartDispatched,omitempty"`
 }
 
 type journal struct {
@@ -151,7 +158,43 @@ func (j *journal) finish(task Task, response Message) error {
 	}
 	r.State = "DONE"
 	r.Response = response
+	if task.Type == "agent.upgrade" && response.Success != nil && *response.Success {
+		var params struct {
+			Restart bool `json:"restart"`
+		}
+		if err = json.Unmarshal(task.Payload, &params); err != nil {
+			return err
+		}
+		r.RestartRequested = params.Restart
+	}
 	return j.save(r)
+}
+
+func (j *journal) upgradeRestartRequested(id string) (bool, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	r, err := j.load(id)
+	if err != nil {
+		return false, err
+	}
+	return r.Type == "agent.upgrade" && r.State == "DONE" && r.Acknowledged && r.RestartRequested && !r.RestartDispatched && r.Response.Success != nil && *r.Response.Success, nil
+}
+
+func (j *journal) claimUpgradeRestart(id string) (bool, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	r, err := j.load(id)
+	if err != nil {
+		return false, err
+	}
+	if r.Type != "agent.upgrade" || r.State != "DONE" || !r.Acknowledged || !r.RestartRequested || r.RestartDispatched || r.Response.Success == nil || !*r.Response.Success {
+		return false, nil
+	}
+	r.RestartDispatched = true
+	if err = j.save(r); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func taskFingerprint(task Task) (string, error) {

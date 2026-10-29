@@ -1,7 +1,7 @@
 // @file executor.go
 // @project PipkerOps
 // @module agent/execution
-// @description Linux 运维任务、命令边界、有限输出及升级验证。
+// @description Linux 运维任务路由、命令边界、有限输出及升级验证。
 // @logic 仅 shell.exec 使用 shell；其他命令按参数执行；高危任务由主控授权且 Agent 不自动重试。
 // @dependencies Go standard library, Docker/systemctl/nginx/ufw/package manager CLIs
 // @index_tags agent, operations, docker, nginx, files, upgrade
@@ -57,6 +57,9 @@ type executionParams struct {
 	Protocol       string `json:"protocol"`
 	URL            string `json:"url"`
 	SHA256         string `json:"sha256"`
+	Email          string `json:"email"`
+	Staging        bool   `json:"staging"`
+	Restart        bool   `json:"restart"`
 }
 
 var objectName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -83,6 +86,12 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		return "", nil, err
 	}
 	timeout := 5 * time.Minute
+	if task.Type == "nginx.acme" {
+		timeout = 10 * time.Minute
+	}
+	if task.Type == "nginx.renew" {
+		timeout = 15 * time.Minute
+	}
 	if p.TimeoutSeconds != 0 {
 		if p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 {
 			return "", nil, errors.New("timeoutSeconds must be between 1 and 3600")
@@ -103,6 +112,8 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		return command("/bin/sh", "-c", p.Script)
 	case "docker.list":
 		return command("docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}")
+	case "docker.stats":
+		return dockerStats(ctx, p, log)
 	case "docker.action":
 		if !objectName.MatchString(p.ID) {
 			return "", nil, errors.New("invalid container id or name")
@@ -135,6 +146,12 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		return command("docker", "pull", "--", p.Image)
 	case "compose.deploy":
 		return e.compose(ctx, p, log)
+	case "compose.read":
+		return e.readCompose(p)
+	case "compose.list":
+		return dockerJSON(ctx, log, "projects", []string{"compose", "ls", "--all", "--format", "json"})
+	case "compose.status":
+		return e.composeStatus(ctx, p, log)
 	case "systemd.list":
 		return command("systemctl", "list-units", "--type=service", "--all", "--no-pager", "--output=json")
 	case "systemd.action":
@@ -158,6 +175,13 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		return command("nginx", "-s", "reload")
 	case "nginx.apply":
 		return e.nginx(ctx, p, log)
+	case "nginx.acme":
+		return e.acme(ctx, p, log)
+	case "nginx.certificate":
+		info, err := certificateInfo(p, time.Now())
+		return "", info, err
+	case "nginx.renew":
+		return e.renew(ctx, p, log)
 	case "firewall.list":
 		return command("ufw", "status", "numbered")
 	case "firewall.rule":
@@ -193,6 +217,8 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		}
 		return "", nil, errors.New("software.install supports apt-get or dnf only")
 	case "agent.upgrade":
+		e.configMu.Lock()
+		defer e.configMu.Unlock()
 		return upgrade(ctx, p)
 	default:
 		return "", nil, fmt.Errorf("unsupported task type: %s", task.Type)
@@ -252,6 +278,21 @@ func commandEnv() []string {
 }
 
 func runCommand(ctx context.Context, log logFunc, name string, args ...string) (string, error) {
+	stdout, stderr, err := runCommandOutput(ctx, log, name, args...)
+	output := stdout
+	if stderr != "" {
+		if output != "" {
+			output += "\n"
+		}
+		output += stderr
+	}
+	if len(output) > maxOutput {
+		output = output[:maxOutput]
+	}
+	return output, err
+}
+
+func runCommandOutput(ctx context.Context, log logFunc, name string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = commandEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -271,20 +312,10 @@ func runCommand(ctx context.Context, log logFunc, name string, args ...string) (
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err := cmd.Run()
-	output := stdout.buffer.String()
-	if stderr.buffer.Len() > 0 {
-		if output != "" {
-			output += "\n"
-		}
-		output += stderr.buffer.String()
-	}
-	if len(output) > maxOutput {
-		output = output[:maxOutput]
-	}
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	return output, err
+	return stdout.buffer.String(), stderr.buffer.String(), err
 }
 
 func fileOperation(taskType string, p executionParams, stateDir string) (string, any, error) {
@@ -449,6 +480,11 @@ func (e *Executor) nginx(ctx context.Context, p executionParams, log logFunc) (s
 }
 
 func upgrade(ctx context.Context, p executionParams) (string, any, error) {
+	if p.Restart {
+		if err := validateRestartEnvironment(ctx); err != nil {
+			return "", nil, err
+		}
+	}
 	u, err := url.Parse(p.URL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
 		return "", nil, errors.New("upgrade URL must use HTTPS without userinfo")
@@ -517,8 +553,47 @@ func upgrade(ctx context.Context, p executionParams) (string, any, error) {
 	if !valid {
 		return "", nil, errors.New("upgrade artifact must be a Linux ELF executable for the current architecture")
 	}
-	if err = os.Rename(temp, executable); err != nil {
+	if err = replaceAgentBinary(temp, executable); err != nil {
 		return "", nil, err
 	}
-	return "upgrade downloaded and verified; restart the agent to activate", map[string]any{"sha256": strings.ToLower(p.SHA256), "requiresRestart": true}, nil
+	return "upgrade downloaded and verified; restart the agent to activate", map[string]any{"sha256": strings.ToLower(p.SHA256), "requiresRestart": true, "restartRequested": p.Restart, "restartAfterAck": p.Restart, "rollbackPath": executable + ".previous"}, nil
+}
+
+func replaceAgentBinary(staged, executable string) error {
+	old, err := os.Open(executable)
+	if err != nil {
+		return err
+	}
+	defer old.Close()
+	backup, err := os.CreateTemp(filepath.Dir(executable), ".pipker-agent-previous-*")
+	if err != nil {
+		return err
+	}
+	backupPath := backup.Name()
+	defer os.Remove(backupPath)
+	if _, err = io.Copy(backup, old); err == nil {
+		err = backup.Chmod(0755)
+	}
+	if err == nil {
+		err = backup.Sync()
+	}
+	closeErr := backup.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err = os.Rename(backupPath, executable+".previous"); err != nil {
+		return err
+	}
+	if err = os.Rename(staged, executable); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(executable))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

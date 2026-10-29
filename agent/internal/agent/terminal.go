@@ -1,7 +1,7 @@
 // @file terminal.go
 // @project PipkerOps
 // @module agent/terminal
-// @description Web PTY 的会话生命周期、尺寸调整及断线清理。
+// @description 主机和 Docker 容器 Web PTY 的会话生命周期、尺寸调整及断线清理。
 // @logic 每连接最多八个会话；输入/输出帧有界；连接关闭时终止进程组并关闭 PTY。
 // @dependencies creack/pty
 // @index_tags agent, terminal, pty
@@ -103,11 +103,10 @@ func (t *terminals) open(ctx context.Context, m Message) error {
 	if cols < 2 || cols > 500 || rows < 2 || rows > 500 {
 		return errors.New("invalid terminal dimensions")
 	}
-	shell := "/bin/bash"
-	if _, err := os.Stat(shell); err != nil {
-		shell = "/bin/sh"
+	cmd, err := terminalCommand(ctx, m.ContainerID)
+	if err != nil {
+		return err
 	}
-	cmd := exec.CommandContext(ctx, shell, "-l")
 	cmd.Env = append(commandEnv(), "TERM=xterm-256color")
 	cmd.Dir = "/"
 	file, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
@@ -148,6 +147,20 @@ func (t *terminals) open(ctx context.Context, m Message) error {
 		_ = t.send(Message{Type: "terminal.exit", SessionID: m.SessionID, ExitCode: &code})
 	}()
 	return nil
+}
+
+func terminalCommand(ctx context.Context, containerID string) (*exec.Cmd, error) {
+	if containerID != "" {
+		if !objectName.MatchString(containerID) {
+			return nil, errors.New("invalid container id or name")
+		}
+		return exec.CommandContext(ctx, "docker", "exec", "-it", containerID, "/bin/sh"), nil
+	}
+	shell := "/bin/bash"
+	if _, err := os.Stat(shell); err != nil {
+		shell = "/bin/sh"
+	}
+	return exec.CommandContext(ctx, shell, "-l"), nil
 }
 
 func (t *terminals) close(id string) {

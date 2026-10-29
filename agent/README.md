@@ -45,7 +45,17 @@ sudo journalctl -u pipkerops-agent -f
 4. 使用客户端证书连接 Gateway。每 15 秒发送心跳及真实指标，标准 WebSocket ping/pong 检测半开连接，读取超时 60 秒。重连采用 1–30 秒指数退避并加随机抖动。
 5. 相同状态目录通过文件锁防止两个 Agent 同时运行。
 
-证书过期或私钥损坏会明确失败，不自动删除身份或重新消耗注册令牌。当前未实现证书自动轮换，需通过审批/重新注册流程处理。
+已连接 Agent 在客户端证书剩余有效期不足 14 天时自动请求轮换；正常心跳中检查，每小时最多尝试一次。沿用当前私钥及 CSR，Gateway 校验当前 mTLS 身份后签发。证书过期、私钥损坏或节点长期离线错过轮换窗口时会明确失败，不自动删除身份或重新消耗注册令牌，需要重新审批/注册处理。
+
+轮换消息精确契约：
+
+```json
+{"type":"cert.renew","requestId":"random-uuid-v4","csrPem":"existing CSR PEM"}
+{"type":"cert.renewed","requestId":"same-request-id","certificatePem":"new client certificate PEM","caCertificatePem":"optional CA PEM"}
+{"type":"cert.renew.error","requestId":"same-request-id","error":"reason"}
+```
+
+仅接受匹配当前请求且 15 分钟内的回复。新证书必须匹配现有私钥、节点 ID、clientAuth 用途及受信链，并延长当前到期时间。验证成功后把证书与可选 CA 一起原子保存至 `identity.json`，然后重连使用新身份；失败保持旧身份。`ca.pem` 是初次引导兼容文件，自动轮换以 `identity.json` 的 CA 为准，避免跨两个文件更新产生半完成状态。服务端应保留旧证书指纹短暂宽限期，以便“数据库已提交但回复丢失”时仍可重试获取同一张新证书；本轮协议不要求更换 CA。
 
 ## 指标
 
@@ -67,19 +77,26 @@ sudo journalctl -u pipkerops-agent -f
 | `shell.exec` | `{script,timeoutSeconds?}`，显式使用 `/bin/sh -c` |
 | `probe.run` | `{probeId,type:'HTTP'\|'TCP',target,timeoutMs?,config?,mapping?}` |
 | `docker.list` | `{}`，Docker CLI JSON Lines 输出 |
+| `docker.stats` | `{id?}`，一次性 CPU/内存/IO 统计；result.containers 保留 Docker 原始字段 |
 | `docker.action` | `{id,action:'start'\|'stop'\|'restart'\|'remove'}` |
 | `docker.logs` | `{id,tail?}`，默认 200，最多 5000 行 |
 | `docker.pull` | `{image}` |
 | `compose.deploy` | `{project,yaml}`，先验证后写入并 `up -d --remove-orphans` |
+| `compose.read` | `{project}`，返回已受管项目的 result.yaml，读取上限 128 KiB |
+| `compose.status` | `{project}`，返回 result.services，允许查询已有非受管项目状态 |
+| `compose.list` | `{}`，返回 result.projects，使用 `docker compose ls --all --format json` |
 | `systemd.list` | `{}`，使用 systemctl JSON 输出 |
 | `systemd.action` | `{name,action:'start'\|'stop'\|'restart'\|'reload'\|'enable'\|'disable'}` |
 | `files.list/read/write/mkdir/remove` | `{path,content?}`，只接受绝对路径；删除不递归 |
 | `nginx.check/reload` | `{}`，reload 前先做语法检查 |
 | `nginx.apply` | `{domain,config}`，验证失败还原旧配置，成功后 reload |
+| `nginx.acme` | `{domain,email,staging?,timeoutSeconds?}`，certbot webroot 签发，默认超时 10 分钟 |
+| `nginx.certificate` | `{domain,staging?}`，只读公钥证书域名及到期时间 |
+| `nginx.renew` | `{domain?,staging?,timeoutSeconds?}`，certbot renew 后检查并 reload Nginx，默认 15 分钟 |
 | `firewall.list` | `{}`，使用 UFW |
 | `firewall.rule` | `{action:'allow'\|'deny'\|'reject'\|'delete',port,protocol:'tcp'\|'udp'}`，delete 删除对应 allow 规则 |
 | `software.install` | `{name}`，仅 nginx/git/curl/wget/htop/unzip/docker/certbot/ufw，使用 apt-get 或 dnf |
-| `agent.upgrade` | `{url,sha256}`，仅 HTTPS，校验 SHA-256、ELF 和架构后原子替换；返回 `requiresRestart:true` |
+| `agent.upgrade` | `{url,sha256,restart?}`，仅 HTTPS，校验 SHA-256、ELF 和架构后保留回滚副本并原子替换；restart=true 时等结果持久确认后重启 |
 
 除 `system.info`、`probe.run` 外，所有运维任务只允许在 Linux 执行。Docker/Compose、Nginx、systemd、UFW 及软件包管理依赖相应主机工具；缺失时返回真实错误，不静默替代。软件安装不自动更新包索引，也不添加第三方软件源。
 
@@ -89,12 +106,41 @@ sudo journalctl -u pipkerops-agent -f
 
 HTTP 探针支持 method/headers/body/expectedStatus，限制请求体 128 KiB、响应体 1 MiB，拒绝跨来源重定向，HTTPS 校验证书。mapping 使用 `{"业务字段":"$.data.items.0.count"}` 点路径及数字数组索引；不执行 JSONPath 表达式或代码。HTTP/TCP 探针连接被指定目标，用于基础设施内部检查；Agent 与主控、升级分发始终要求 TLS。
 
+ACME 任务依赖已安装的 certbot、正确的域名 DNS、对外 80 端口和 Nginx challenge 路由。`nginx.apply` 接收完整配置，平台生成的 HTTP server 应包含：
+
+```nginx
+location ^~ /.well-known/acme-challenge/ {
+    root /var/lib/pipkerops/acme;
+    default_type text/plain;
+    try_files $uri =404;
+}
+```
+
+生产证书由 certbot 保存于 `/etc/letsencrypt`；`staging:true` 使用独立 `/var/lib/pipkerops/acme-staging/{config,work,logs}`，避免测试证书替换生产证书。域名只接受 ASCII 完整主机名（不接受 IP/通配符），IDN 应先转 punycode。签发前检查 Nginx 语法，固定 `--cert-name domain`；签发不自动替用户重写 HTTPS 配置，主控应在证书确认后生成 443 配置并走 `nginx.apply`。查询只返回到期元数据，不返回私钥或证书正文。
+
+`nginx.renew` 可按域名续期，省略 domain 则检查该存储下所有证书。`renewalChecked:true` 仅表示 certbot 检查成功，未临期证书可能无需续期；后续 Nginx 语法通过才 reload。生产签发和续期均必须由主控明确授权，本开发测试不会执行真实签发。
+
+升级默认只替换二进制，返回 `requiresRestart:true`，由操作者在任务成功后执行 `systemctl restart pipkerops-agent.service`。可选 `restart:true` 仅接受实际运行于 Linux systemd 的 `pipkerops-agent.service` MainPID：升级前和重启前均验证，容器/手动进程或其他单元均不允许自动重启。
+
+自动重启严格先完成任务结果的同步落盘、发送结果、接收并持久化 Gateway `task.ack`，再延迟 2 秒并持久写入“一次性重启已分发”标记，最后执行 `systemctl --no-block restart pipkerops-agent.service`。重复 ACK 不会反复重启。未确认结果不会触发重启；systemd 分发失败或在标记落盘后进程中断时不自动猜测重试，应查看日志后人工重启。重启可能中断并行运维任务，升级前应排空节点上其他任务；不使用 shell.exec 在结果确认前杀死 Agent。
+
+升级把上一个二进制备份到当前可执行路径的 `.previous`，替换及备份均同步落盘，返回 `rollbackPath`。若新版本不能启动，可在节点执行：
+
+```sh
+sudo systemctl stop pipkerops-agent.service
+sudo install -m 0755 /usr/local/bin/pipker-agent.previous /usr/local/bin/pipker-agent
+sudo systemctl start pipkerops-agent.service
+```
+
+保留私有状态目录和任务 journal，回滚不重新注册、不清空去重记录。再次升级会更新 `.previous`，应在确认新版本正常后再发起下一次升级。
+
 ## PTY
 
 Gateway 发送顶层字段：
 
 ```json
 {"type":"terminal.open","sessionId":"opaque-session-id","cols":120,"rows":32}
+{"type":"terminal.open","sessionId":"container-session-id","containerId":"container-name-or-id","cols":120,"rows":32}
 {"type":"terminal.input","sessionId":"opaque-session-id","data":"ls\r"}
 {"type":"terminal.resize","sessionId":"opaque-session-id","cols":100,"rows":30}
 {"type":"terminal.close","sessionId":"opaque-session-id"}
@@ -102,8 +148,14 @@ Gateway 发送顶层字段：
 
 返回 `terminal.output` 的 `data`、`terminal.exit` 的 `exitCode`，失败返回 `terminal.error.error`。每个连接最多八个会话，输入每帧最多 32 KiB，窗口尺寸 2–500。断线时关闭全部 PTY 并终止进程组，不在重连后复活旧终端。
 
+非空 `containerId` 使用独立参数执行 `docker exec -it <containerId> /bin/sh`，不拼接到 shell。容器必须已运行并含 `/bin/sh`，镜像无 shell 时会返回 Docker 的真实错误。进程及终端清理规则与主机 PTY 一致。
+
 主控必须完成用户/API Key scope、节点权限、高危操作确认及审计校验，Agent 的 mTLS 身份和参数检查不替代这些校验。systemd 默认以 root 运行是为了明确授权的主机管理功能，应把平台管理权限视作节点管理员权限。
 
 ## 当前验证边界
 
 已在 macOS 开发机使用真实本地 HTTP/TCP/TLS 服务验证注册、信任拒绝、探针与 JSON 映射，验证 journal 去重/UNKNOWN 恢复、命令组超时、输出上限、路径保护。Linux systemd、Docker、Nginx、UFW、安装和升级需要在专用 Linux 节点进行联调；交叉编译不能代替这些系统级执行验证。
+
+Docker/Compose 新任务通过临时 CLI fixture 验证参数及 JSON 输出结构；ACME 通过参数生成、staging 隔离、临时公钥证书到期解析和 renew/check/reload 顺序验证，未联系 ACME CA。容器 PTY 单元测试仅验证参数边界，实际 Docker/PTY 行为需主线程 Linux 隔离环境联调。
+
+证书轮换使用临时 CA/客户端证书验证阈值、节流、请求匹配、节点/私钥/到期检查、原子落盘失败及重启加载；升级自动重启用惰性回调验证结果/ACK/分发标记顺序及重复确认去重，测试绝不调用真实 systemd 重启。

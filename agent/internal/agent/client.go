@@ -1,8 +1,8 @@
 // @file client.go
 // @project PipkerOps
 // @module agent/connection
-// @description Agent 主动 mTLS 长连接、退避重连、心跳及执行调度。
-// @logic 单连接串行写；采集与最多四个持久化任务并行；断线关闭 PTY，结果重连对账。
+// @description Agent 主动 mTLS 长连接、证书轮换、心跳及执行调度。
+// @logic 单连接串行写；最多四任务并行；证书持久化后重连，升级结果确认后才可重启。
 // @dependencies gorilla/websocket, agent journal, collector, executor
 // @index_tags agent, gateway, websocket, reconnect
 // @author holic512
@@ -29,13 +29,19 @@ import (
 )
 
 type Client struct {
-	config   Config
-	journal  *journal
-	executor *Executor
-	mu       sync.Mutex
-	conn     *websocket.Conn
-	slots    chan struct{}
-	wg       sync.WaitGroup
+	config              Config
+	journal             *journal
+	executor            *Executor
+	mu                  sync.Mutex
+	conn                *websocket.Conn
+	slots               chan struct{}
+	wg                  sync.WaitGroup
+	rotationMu          sync.Mutex
+	identity            *identity
+	tlsConfig           *tls.Config
+	rotationLastAttempt time.Time
+	rotationRequestedAt time.Time
+	rotationRequestID   string
 }
 
 func Run(ctx context.Context, c Config) error {
@@ -62,13 +68,17 @@ func Run(ctx context.Context, c Config) error {
 	if err != nil {
 		return err
 	}
-	client := &Client{config: c, journal: j, executor: &Executor{StateDir: c.StateDir}, slots: make(chan struct{}, 4)}
+	client := &Client{config: c, journal: j, executor: &Executor{StateDir: c.StateDir}, slots: make(chan struct{}, 4), identity: id, tlsConfig: tlsConfig}
 	delay := time.Second
 	for ctx.Err() == nil {
 		started := time.Now()
-		err = client.connect(ctx, id.ID, tlsConfig)
+		err = client.connect(ctx, id.ID, client.currentTLS())
 		if ctx.Err() != nil {
 			break
+		}
+		if errors.Is(err, errIdentityRotated) {
+			delay = time.Second
+			continue
 		}
 		slog.Warn("gateway disconnected", "error", err, "retryAfter", delay)
 		if time.Since(started) > time.Minute {
@@ -166,7 +176,18 @@ func (c *Client) connect(ctx context.Context, nodeID string, tlsConfig *tls.Conf
 				_ = c.send(Message{Type: "task.busy", TaskID: message.Task.ID, Error: "agent execution capacity reached"})
 			}
 		case "task.ack":
-			_ = c.journal.ack(message.TaskID)
+			if err = c.journal.ack(message.TaskID); err != nil {
+				slog.Error("task acknowledgement was not persisted", "taskId", message.TaskID, "error", err)
+			} else {
+				c.maybeRestartAfterAck(ctx, message.TaskID)
+			}
+		case "cert.renewed", "cert.renew.error":
+			if renewalErr := c.acceptRenewedIdentity(message, time.Now()); renewalErr != nil {
+				slog.Warn("client certificate renewal failed; keeping current identity", "error", renewalErr)
+			} else {
+				slog.Info("client certificate renewed; reconnecting")
+				return errIdentityRotated
+			}
 		case "terminal.open", "terminal.input", "terminal.resize", "terminal.close":
 			terminal.handle(connCtx, message)
 		case "ping":
@@ -188,6 +209,7 @@ func (c *Client) monitor(ctx context.Context) {
 		}
 		c.mu.Unlock()
 		_ = c.send(Message{Type: "heartbeat", Payload: map[string]any{"timestamp": time.Now().UTC().Format(time.RFC3339Nano), "agentVersion": Version}})
+		c.maybeRenewCertificate()
 		collectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		metrics := Collect(collectCtx)
 		cancel()

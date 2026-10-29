@@ -52,7 +52,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("endpoint must be %s without userinfo", p.scheme)
 		}
 	}
-	if !filepath.IsAbs(c.StateDir) || c.Name == "" || len(c.Name) > 120 {
+	if !filepath.IsAbs(c.StateDir) || filepath.Clean(c.StateDir) == string(filepath.Separator) || c.Name == "" || len(c.Name) > 120 {
 		return errors.New("a name up to 120 bytes and an absolute state-dir are required")
 	}
 	return nil
@@ -270,27 +270,45 @@ func enroll(ctx context.Context, c Config) (*identity, *tls.Config, error) {
 			return nil, nil, err
 		}
 	}
-	pair, err := tls.X509KeyPair([]byte(id.CertificatePEM), keyPEM)
+	tlsConfig, err := identityTLS(c, id, keyPEM)
 	if err != nil {
 		return nil, nil, err
+	}
+	return id, tlsConfig, nil
+}
+
+// identity.json is the atomic source of truth for renewed certificate and CA.
+// ca.pem remains a bootstrap compatibility file and is never partially rotated.
+func identityTLS(c Config, id *identity, keyPEM []byte) (*tls.Config, error) {
+	pool, err := trustPool(c)
+	if err != nil {
+		return nil, err
+	}
+	if id.CAPEM != "" && !pool.AppendCertsFromPEM([]byte(id.CAPEM)) {
+		return nil, errors.New("identity CA contains no certificates")
+	}
+	pair, err := tls.X509KeyPair([]byte(id.CertificatePEM), keyPEM)
+	if err != nil {
+		return nil, err
 	}
 	cert, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if id.Status != "APPROVED" || cert.Subject.CommonName != id.ID {
-		return nil, nil, errors.New("client certificate must be approved and bound to the enrolled node")
+		return nil, errors.New("client certificate must be approved and bound to the enrolled node")
 	}
 	intermediates := x509.NewCertPool()
 	for _, der := range pair.Certificate[1:] {
 		chainCert, e := x509.ParseCertificate(der)
 		if e != nil {
-			return nil, nil, e
+			return nil, e
 		}
 		intermediates.AddCert(chainCert)
 	}
 	if _, err = cert.Verify(x509.VerifyOptions{Roots: pool, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
-		return nil, nil, fmt.Errorf("saved client certificate is invalid or expired: %w", err)
+		return nil, fmt.Errorf("saved client certificate is invalid or expired: %w", err)
 	}
-	return id, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{pair}}, nil
+	pair.Leaf = cert
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{pair}}, nil
 }

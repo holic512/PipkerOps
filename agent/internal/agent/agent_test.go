@@ -38,6 +38,11 @@ func TestConfigRejectsPlaintextAndUserinfo(t *testing.T) {
 			t.Fatal("unsafe config was accepted")
 		}
 	}
+	invalid := valid
+	invalid.StateDir = "/"
+	if invalid.Validate() == nil {
+		t.Fatal("filesystem root accepted as private state directory")
+	}
 }
 
 func TestJournalPreventsDuplicateAndRecoversUnknown(t *testing.T) {
