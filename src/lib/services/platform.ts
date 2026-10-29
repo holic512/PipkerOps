@@ -14,7 +14,7 @@ import { db } from "../db";
 import { ApiError, authorize, confirm, nodeFilter, type Actor } from "../auth";
 import { randomToken, hashToken } from "../crypto";
 import * as nodes from "./nodes";
-import { createTask, listTasks, getTask, taskSpecs } from "./tasks";
+import { createTask, validateTask, listTasks, getTask } from "./tasks";
 import { redis } from "../redis";
 import { privateHost } from "../config";
 const id = z.string().min(1).max(100);
@@ -79,7 +79,12 @@ async function audit(
 }
 export function validateProbeTarget(type: string, target: string) {
   if (type === "HTTP") {
-    const url = new URL(target);
+    let url: URL;
+    try {
+      url = new URL(target);
+    } catch {
+      throw new ApiError(400, "无效的 HTTP 探测地址");
+    }
     if (
       !["http:", "https:"].includes(url.protocol) ||
       url.username ||
@@ -90,7 +95,8 @@ export function validateProbeTarget(type: string, target: string) {
       throw new ApiError(400, "无效的 HTTP 探测地址");
   } else if (
     !/^([a-zA-Z0-9_.-]+|\[[a-fA-F0-9:]+\]):\d{1,5}$/.test(target) ||
-    Number(target.slice(target.lastIndexOf(":") + 1)) > 65535
+    Number(target.slice(target.lastIndexOf(":") + 1)) > 65535 ||
+    Number(target.slice(target.lastIndexOf(":") + 1)) < 1
   )
     throw new ApiError(400, "TCP 目标格式必须为 host:port");
 }
@@ -219,6 +225,7 @@ export async function execute(
               id: true,
               name: true,
               status: true,
+              enabled: true,
               results: {
                 take: 1,
                 orderBy: { recordedAt: "desc" },
@@ -793,11 +800,14 @@ export async function execute(
       authorize(actor, "schedules:write");
 
       const d = methodSchemas["schedules.save"].parse(p);
-      const spec = taskSpecs[d.taskType];
-      if (!spec) throw new ApiError(400, "未知任务类型");
-      authorize(actor, spec.scope, d.nodeId, spec.dangerous);
-      if (spec.dangerous) confirm(d.confirmed);
-      spec.schema.parse(d.payload);
+      authorize(actor, "schedules:write", d.nodeId);
+      confirm(d.confirmed);
+      const validated = await validateTask(actor, {
+        type: d.taskType,
+        nodeId: d.nodeId,
+        payload: d.payload,
+        confirmed: d.confirmed,
+      });
       let nextRunAt: Date;
       try {
         nextRunAt = CronExpressionParser.parse(d.cron, { tz: d.timezone })
@@ -817,8 +827,8 @@ export async function execute(
         cron: d.cron,
         timezone: d.timezone,
         taskType: d.taskType,
-        nodeId: d.nodeId,
-        payload: d.payload,
+        nodeId: d.nodeId ?? null,
+        payload: validated.payload,
       };
       const fields = {
         ...data,

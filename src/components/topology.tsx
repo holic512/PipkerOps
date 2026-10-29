@@ -22,7 +22,12 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Plus, RotateCw } from "lucide-react";
-import { type AppData, type NodeData, type ProbeData } from "@/lib/client";
+import {
+  probeHealth,
+  type AppData,
+  type NodeData,
+  type ProbeData,
+} from "@/lib/client";
 import {
   PageTitle,
   QueryState,
@@ -71,11 +76,7 @@ export function Topology() {
         (p) =>
           (p as ProbeData & { applicationId?: string }).applicationId === a.id,
       );
-      const state = probes.some((p) => p.status === "UNHEALTHY")
-        ? "UNHEALTHY"
-        : probes.length && probes.every((p) => p.status === "HEALTHY")
-          ? "HEALTHY"
-          : "UNKNOWN";
+      const state = probeHealth(probes);
       nodes.push({
         id: `app:${a.id}`,
         position: { x: 20, y: deploymentRow * 105 },
@@ -161,7 +162,9 @@ export function Topology() {
       const unhealthy = d.probes.some(
         (p) =>
           (p as ProbeData & { applicationId?: string }).applicationId ===
-            dep.toApplicationId && p.status === "UNHEALTHY",
+            dep.toApplicationId &&
+          p.enabled &&
+          p.status === "UNHEALTHY",
       );
       edges.push({
         id: dep.id,
@@ -277,8 +280,14 @@ export function Topology() {
                   ...n,
                   position: positions[n.id] ?? n.position,
                 }))}
-                onNodeDragStop={(_, node) =>
-                  setPositions((p) => ({ ...p, [node.id]: node.position }))
+                onNodesChange={(changes) =>
+                  setPositions((previous) => {
+                    const next = { ...previous };
+                    for (const change of changes)
+                      if (change.type === "position" && change.position)
+                        next[change.id] = change.position;
+                    return next;
+                  })
                 }
                 edges={graph.edges}
                 fitView
@@ -399,15 +408,21 @@ export function Topology() {
                       <tr key={source.id ?? "control"}>
                         <th>{source.name}</th>
                         {targets.map((target) => {
-                          const p = q.data?.probes.find(
+                          const probes = q.data?.probes.filter(
                             (p) =>
                               p.sourceNodeId === source.id &&
                               p.target === target,
                           );
                           return (
                             <td key={target}>
-                              {p ? (
-                                <Status value={p.status} />
+                              {probes?.length ? (
+                                <Status
+                                  value={
+                                    probes.some((p) => p.enabled)
+                                      ? probeHealth(probes)
+                                      : "PAUSED"
+                                  }
+                                />
                               ) : (
                                 <span className="muted">未检测</span>
                               )}

@@ -23,6 +23,7 @@ import {
 import {
   rpc,
   date,
+  probeHealth,
   type AppData,
   type NodeData,
   type ProbeData,
@@ -146,17 +147,7 @@ export function Applications() {
                   <span className="app-symbol">
                     <Boxes size={23} />
                   </span>
-                  <Status
-                    value={
-                      !a.probes.length
-                        ? "UNKNOWN"
-                        : a.probes.some((p) => p.status === "UNHEALTHY")
-                          ? "UNHEALTHY"
-                          : a.probes.every((p) => p.status === "HEALTHY")
-                            ? "HEALTHY"
-                            : "DEGRADED"
-                    }
-                  />
+                  <Status value={probeHealth(a.probes)} />
                 </div>
                 <h2>{a.name}</h2>
                 <p>{a.description || "未填写描述"}</p>
@@ -386,7 +377,8 @@ export function Applications() {
                 ?.probes.map((probe) => (
                   <section key={probe.id}>
                     <h3>
-                      {probe.name} · <Status value={probe.status} />
+                      {probe.name} ·{" "}
+                      <Status value={probe.enabled ? probe.status : "PAUSED"} />
                     </h3>
                     <small>
                       {date(probe.results?.[0]?.recordedAt)} ·{" "}
@@ -596,7 +588,7 @@ export function Probes() {
               </td>
               <td>{p.sourceNode?.name ?? "主控"}</td>
               <td>
-                <Status value={p.status} />
+                <Status value={p.enabled ? p.status : "PAUSED"} />
               </td>
               <td>
                 {p.results[0] ? `${p.results[0].latencyMs.toFixed(1)} ms` : "—"}

@@ -72,3 +72,19 @@ LINUX_AGENT_BINARY=/absolute/path/pipkerops-agent-linux-arm64 npm run test:syste
 夹具以privileged和私有cgroup命名空间运行自己的systemd，不挂载宿主文件系统、cgroup或Docker socket。真实验证服务查询/启停/reload、UFW规则增删（不启用全局防火墙）、APT索引更新后安装htop、错误升级摘要拒绝、HTTPS二进制替换/.previous备份及结果ACK后实际systemd进程重启。只清理本次资源，审计保留。首次镜像构建和APT安装依赖可达软件源，测试上限10分钟；不接受用模拟输出替代失败结果。
 
 2026-10-29该测试通过，用时216.9秒；Agent重启后重新接入并成功执行system.info。Linux容器/Compose/PTY/Nginx与此测试分别运行，实际ACME公网签发仍需要授权域名及DNS条件。
+
+
+## 双节点连通性联调
+
+沿用9543/9544验收Gateway与已构建的Linux夹具：
+
+```sh
+LINUX_AGENT_BINARY=/absolute/path/pipkerops-agent-linux-arm64 npm run test:connectivity
+```
+
+测试为两个独立Linux容器建立临时网络，Agent通过mTLS审批接入，分别执行A到B的HTTP/TCP和B到A的HTTP，验证JSON字段来自目标节点。停止B的Nginx后验证连续失败阈值、拓扑依赖中的真实故障结果，再启动服务确认恢复。无需privileged，不启动嵌套Docker，不挂载宿主文件；本次资源按ID清理。2026-10-29实际通过，用时37.6秒。
+
+
+## 告警联调
+
+开发Worker需使用 `NODE_EXTRA_CA_CERTS=/absolute/path/ca.crt` 信任本地HTTPS夹具，Web/Gateway/Worker运行后执行 `npm run test:alerts`。测试真实HTTP健康目标与本地HTTPS Webhook，验证连续失败、只发送一次、恢复通知、下一次故障重新发送，以及失败HTTP状态的审计记录；不会向第三方服务发消息。2026-10-29实际通过，用时26秒。

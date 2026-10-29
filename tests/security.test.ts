@@ -11,7 +11,9 @@ import { acceptsFingerprint } from "../src/lib/services/nodes";
 import { canonicalJson } from "../src/lib/crypto";
 import { mapFields, runProbe } from "../src/lib/probe";
 import { createServer } from "node:http";
-import { backendUrl } from "../src/lib/config";
+import { backendUrl, privateHost } from "../src/lib/config";
+import { validateProbeTarget } from "../src/lib/services/platform";
+import { probeHealth } from "../src/lib/client";
 const actor: Actor = {
   userId: "u",
   role: "ADMIN",
@@ -55,6 +57,45 @@ test("生产不能通过开发例外使用公网明文后端", () => {
   } finally {
     process.env = old;
   }
+});
+test("内网例外只匹配真实地址，公网域名不能伪装私网前缀绕过TLS", () => {
+  for (const host of [
+    "127.attacker.test",
+    "10.example.test",
+    "192.168.external.test",
+    "172.16.attacker.test",
+  ])
+    assert.equal(privateHost(host), false);
+  for (const host of [
+    "127.0.0.1",
+    "10.2.3.4",
+    "192.168.1.1",
+    "172.31.1.2",
+    "[::1]",
+  ])
+    assert.equal(privateHost(host), true);
+  assert.throws(
+    () => validateProbeTarget("HTTP", "http://127.attacker.test"),
+    ApiError,
+  );
+  assert.throws(() => validateProbeTarget("HTTP", "invalid"), ApiError);
+  assert.throws(() => validateProbeTarget("TCP", "localhost:0"), ApiError);
+  validateProbeTarget("HTTP", "http://127.0.0.1:3000");
+});
+test("停用或未确认探针不会使应用伪报健康", () => {
+  assert.equal(probeHealth([{ enabled: false, status: "HEALTHY" }]), "UNKNOWN");
+  assert.equal(
+    probeHealth([
+      { enabled: true, status: "HEALTHY" },
+      { enabled: false, status: "UNHEALTHY" },
+    ]),
+    "HEALTHY",
+  );
+  assert.equal(probeHealth([{ enabled: true, status: "UNKNOWN" }]), "UNKNOWN");
+  assert.equal(
+    probeHealth([{ enabled: true, status: "DEGRADED" }]),
+    "DEGRADED",
+  );
 });
 
 test("旧证书指纹宽限仅24小时，规范JSON不依赖键顺序", () => {

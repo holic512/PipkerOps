@@ -294,16 +294,16 @@ export const taskInput = z.object({
   confirmed: z.boolean().optional(),
   idempotencyKey: z.string().min(8).max(200).optional(),
 });
-export async function createTask(
+export async function validateTask(
   actor: Actor,
   input: unknown,
-  source: "WEB" | "MCP" | "CRON" | "SYSTEM" = "WEB",
   transaction?: Prisma.TransactionClient,
 ) {
   const client = transaction ?? db();
   const data = taskInput.parse(input);
+  if (!Object.hasOwn(taskSpecs, data.type))
+    throw new ApiError(400, "不支持的任务类型");
   const spec = taskSpecs[data.type];
-  if (!spec) throw new ApiError(400, "不支持的任务类型");
   authorize(actor, spec.scope, data.nodeId, spec.dangerous);
   if (spec.dangerous) confirm(data.confirmed);
   let payload = spec.schema.parse(data.payload) as Record<string, unknown>;
@@ -362,6 +362,20 @@ export async function createTask(
         ).toUpperCase(),
       ) ||
       payload.type === "TCP");
+  return { data, payload, idempotent, spec };
+}
+export async function createTask(
+  actor: Actor,
+  input: unknown,
+  source: "WEB" | "MCP" | "CRON" | "SYSTEM" = "WEB",
+  transaction?: Prisma.TransactionClient,
+) {
+  const client = transaction ?? db();
+  const { data, payload, idempotent, spec } = await validateTask(
+    actor,
+    input,
+    transaction,
+  );
   const key = data.idempotencyKey
     ? hashToken(
         `${actor.userId}:${actor.apiKeyId ?? "web"}:${data.idempotencyKey}`,

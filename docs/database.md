@@ -86,3 +86,12 @@ Prisma `migrate diff --from-empty --to-schema` 在当前环境报告 `Error in S
 
 
 探针授权迁移 `202610290003_probe_authorization` 增加 `Probe.createdById/createdByApiKeyId`。这些字段刻意保留身份ID，删除Key不能通过SET NULL退化为完整用户权限；调度时重新查验用户/Key，缺失或失效则停用并通知，重新保存绑定新授权。实例健康探针与普通探针使用相同机制。
+
+
+`202610290004_task_key_identity` 移除Task→ApiKey的SET NULL外键，保留创建Key ID。物理删除Key后排队任务重授权失败并取消，不降级成用户权限；标准平台联调已验证。
+
+历史API的1–48小时窗口按请求起点做动态时间桶（最多1440点），返回均值/峰值/采样数，不传输每条进程/容器payload。更长窗口按UTC小时合并MetricHourly与原始小时尾部，同桶以仍保留的raw聚合覆盖旧摘要，避免迟到数据丢失及双计数。
+
+`202610290005_metric_maintenance` 新增MetricMaintenanceState单行水位/成功时间/摘要。首次或长时间停机先补聚合保留期内的旧原始样本，再清理到期数据；后续只回看48小时和未处理区间，不跨已经清理的旧边界。相同保留参数同UTC日成功调用快速跳过；DEFAULT阻挡建分区时保留数据并返回blockedPartitions，可修复后重试。advisory事务锁防并发维护，函数锁等待5秒；Worker总语句超时5分钟、失败5分钟退避，后台维护不阻塞任务调度，并通知维护失败/分区阻挡。
+
+隔离PGlite执行全部6个迁移，验证完整1/24/48小时（11520条15秒样本）、长窗去重/尾部、删除Key身份保留、同日skip、迟到回看、短保留边界、120天停机补偿、事务失败不推进水位和DEFAULT阻挡/修复。并发DDL锁等待耗时与50节点长期负载尚需实际部署压测。

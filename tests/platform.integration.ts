@@ -465,6 +465,22 @@ test(
         },
       );
       keyIds.push(cronKey.id);
+      await call(
+        "Bearer " + cronKey.key,
+        "schedules.save",
+        {
+          name: run + "-outside-scope",
+          cron: "*/5 * * * * *",
+          timezone: "UTC",
+          taskType: "http.request",
+          payload: {
+            url: `https://localhost:${httpsAddress.port}/action`,
+            method: "POST",
+          },
+          confirmed: true,
+        },
+        403,
+      );
       const schedule = await call<{ id: string }>(
         "Bearer " + cronKey.key,
         "schedules.save",
@@ -521,6 +537,29 @@ test(
         { type: "system.info", nodeId, payload: {} },
       );
       await call(cookie, "keys.revoke", { id: queuedKey.id, confirmed: true });
+      const removedKey = await call<{ id: string; key: string }>(
+        cookie,
+        "keys.create",
+        {
+          name: run + "-deleted-key",
+          scopes: ["system:read"],
+          nodeIds: [nodeId],
+          days: 1,
+          confirmed: true,
+        },
+      );
+      keyIds.push(removedKey.id);
+      const orphaned = await call<TaskData>(
+        "Bearer " + removedKey.key,
+        "tasks.create",
+        { type: "system.info", nodeId, payload: {} },
+      );
+      await db().apiKey.delete({ where: { id: removedKey.id } });
+      assert.equal(
+        (await db().task.findUniqueOrThrow({ where: { id: orphaned.id } }))
+          .apiKeyId,
+        removedKey.id,
+      );
       child = spawn(binary, restartArgs, {
         env: { ...process.env },
         stdio: ["ignore", "pipe", "pipe"],
@@ -530,6 +569,14 @@ test(
         () => call<TaskData>(cookie, "tasks.get", { id: queued.id }),
         (t) => t.status === "CANCELLED",
         "revoked queued task authorization",
+      );
+      await waitFor(
+        () => call<TaskData>(cookie, "tasks.get", { id: orphaned.id }),
+        (t) => t.status === "CANCELLED",
+        "physically removed Key cannot inherit user authority",
+      );
+      console.log(
+        "Verified physically removed API Key keeps original Task identity and cancels dispatch",
       );
       console.log(
         "Verified HTTPS POST custom action, scoped Cron and revocation before scheduling/dispatch",

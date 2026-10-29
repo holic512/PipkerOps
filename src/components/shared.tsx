@@ -76,6 +76,7 @@ const states: Record<string, [string, string]> = {
   UNHEALTHY: ["故障", "bad"],
   DEGRADED: ["异常", "warn"],
   UNKNOWN: ["待确认", "neutral"],
+  PAUSED: ["已停用", "neutral"],
   QUEUED: ["排队中", "neutral"],
   DISPATCHED: ["已分发", "info"],
   RUNNING: ["执行中", "info"],

@@ -8,6 +8,7 @@
  * @index_tags config, tls, secrets
  * @author holic512
  */
+import { isIP } from "node:net";
 export const production = () => process.env.NODE_ENV === "production";
 export function required(name: string) {
   const value = process.env[name];
@@ -15,13 +16,15 @@ export function required(name: string) {
   return value;
 }
 export function privateHost(host: string) {
+  const name = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (["localhost", "::1", "postgres", "redis"].includes(name)) return true;
+  if (isIP(name) !== 4) return false;
+  const [a, b] = name.split(".").map(Number);
   return (
-    host === "localhost" ||
-    host === "::1" ||
-    host === "[::1]" ||
-    host === "postgres" ||
-    host === "redis" ||
-    /^127\.|^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    a === 127 ||
+    a === 10 ||
+    (a === 192 && b === 168) ||
+    (a === 172 && b >= 16 && b <= 31)
   );
 }
 export function backendUrl(name: "DATABASE_URL" | "REDIS_URL") {

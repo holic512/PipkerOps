@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { z } from "zod";
 import { methodSchemas, mcpTaskInput } from "../src/lib/services/contracts";
 import { execute } from "../src/lib/services/platform";
+import { validateTask } from "../src/lib/services/tasks";
 
 test("MCP公开任务payload契约并拒绝缺少脚本、未知任务及软件注入参数", () => {
   const json = JSON.stringify(z.toJSONSchema(mcpTaskInput));
@@ -52,8 +53,17 @@ test("业务契约公开必填节点、请求枚举并校验实际输入", () =>
 });
 
 test("未知和继承原型的方法名明确拒绝，不进入数据库", async () => {
-  for (const method of ["toString", "__proto__", "constructor", "unknown"])
+  for (const method of ["toString", "__proto__", "constructor", "unknown"]) {
+    await assert.rejects(
+      validateTask(
+        { userId: "test", role: "ADMIN" },
+        { type: method, payload: {} },
+        {} as never,
+      ),
+      { status: 400 },
+    );
     await assert.rejects(execute({ userId: "test", role: "ADMIN" }, method), {
       status: 404,
     });
+  }
 });

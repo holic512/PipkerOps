@@ -60,6 +60,13 @@ export type NodeData = {
   labels: string[];
   metrics: Metric[];
 };
+export function probeHealth(probes: { enabled: boolean; status: string }[]) {
+  const active = probes.filter((p) => p.enabled);
+  if (!active.length) return "UNKNOWN";
+  if (active.some((p) => p.status === "UNHEALTHY")) return "UNHEALTHY";
+  if (active.some((p) => p.status === "DEGRADED")) return "DEGRADED";
+  return active.every((p) => p.status === "HEALTHY") ? "HEALTHY" : "UNKNOWN";
+}
 export type AppData = {
   id: string;
   name: string;
@@ -71,6 +78,7 @@ export type AppData = {
     id: string;
     name: string;
     status: string;
+    enabled: boolean;
     results?: {
       recordedAt: string;
       data: Record<string, unknown>;
