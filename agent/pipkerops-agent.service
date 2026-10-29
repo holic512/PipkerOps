@@ -1,0 +1,26 @@
+[Unit]
+Description=PipkerOps Linux Agent
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/pipkerops/agent.env
+ExecStart=/usr/local/bin/pipker-agent
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+KillMode=control-group
+UMask=0077
+# Root is required for the explicitly authorized host administration features.
+# Do not add ProtectSystem/PrivateDevices here without adapting those features.
+NoNewPrivileges=true
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
