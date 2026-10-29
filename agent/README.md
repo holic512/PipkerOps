@@ -90,15 +90,16 @@ sudo journalctl -u pipkerops-agent -f
 | `files.list/read/write/mkdir/remove` | `{path,content?}`，只接受绝对路径；删除不递归 |
 | `nginx.check/reload` | `{}`，reload 前先做语法检查 |
 | `nginx.apply` | `{domain,config}`，验证失败还原旧配置，成功后 reload |
+| `nginx.remove` | `{domain}`，仅删除匹配私有受管记录的站点配置；备份后检查/reload，失败恢复并验证 |
 | `nginx.acme` | `{domain,email,staging?,timeoutSeconds?}`，certbot webroot 签发，默认超时 10 分钟 |
 | `nginx.certificate` | `{domain,staging?}`，只读公钥证书域名及到期时间 |
 | `nginx.renew` | `{domain?,staging?,timeoutSeconds?}`，certbot renew 后检查并 reload Nginx，默认 15 分钟 |
 | `firewall.list` | `{}`，使用 UFW |
-| `firewall.rule` | `{action:'allow'\|'deny'\|'reject'\|'delete',port,protocol:'tcp'\|'udp'}`，delete 删除对应 allow 规则 |
+| `firewall.rule` | `{action:'allow'\|'deny'\|'reject'\|'delete',port,protocol:'tcp'\|'udp',ruleAction?:'allow'\|'deny'\|'reject'}`，delete 按 ruleAction 删除，默认 allow |
 | `software.install` | `{name}`，仅 nginx/git/curl/wget/htop/unzip/docker/certbot/ufw，使用 apt-get 或 dnf |
 | `agent.upgrade` | `{url,sha256,restart?}`，仅 HTTPS，校验 SHA-256、ELF 和架构后保留回滚副本并原子替换；restart=true 时等结果持久确认后重启 |
 
-除 `system.info`、`probe.run` 外，所有运维任务只允许在 Linux 执行。Docker/Compose、Nginx、systemd、UFW 及软件包管理依赖相应主机工具；缺失时返回真实错误，不静默替代。软件安装不自动更新包索引，也不添加第三方软件源。
+除 `system.info`、`probe.run` 外，所有运维任务只允许在 Linux 执行。Docker/Compose、Nginx、systemd、UFW 及软件包管理依赖相应主机工具；缺失时返回真实错误，不静默替代。APT 软件安装先 `apt-get update`，成功后才安装，复用同一任务超时并保留两步输出/实时日志；更新失败不会继续安装。DNF 使用其原有安装流程；不添加第三方软件源。
 
 命令参数不会经 shell 拼接，只有显式 `shell.exec` 使用 shell。子进程不继承 `PIPKEROPS_*` 环境变量。默认命令超时 5 分钟，可设置 1–3600 秒；输出最多保存 256 KiB，stdout/stderr 分别限制实时日志字节数；协议帧最大 2 MiB，结构化结果最多 1 MiB。
 
@@ -117,6 +118,10 @@ location ^~ /.well-known/acme-challenge/ {
 ```
 
 生产证书由 certbot 保存于 `/etc/letsencrypt`；`staging:true` 使用独立 `/var/lib/pipkerops/acme-staging/{config,work,logs}`，避免测试证书替换生产证书。域名只接受 ASCII 完整主机名（不接受 IP/通配符），IDN 应先转 punycode。签发前检查 Nginx 语法，固定 `--cert-name domain`；签发不自动替用户重写 HTTPS 配置，主控应在证书确认后生成 443 配置并走 `nginx.apply`。查询只返回到期元数据，不返回私钥或证书正文。
+
+`nginx.apply` 成功后，在私有状态目录 `nginx-managed/<domain>.json` 记录配置路径和 SHA-256。`nginx.remove` 只接受 `/etc/nginx/conf.d/<domain>.conf` 中与该记录一致的常规文件，拒绝符号链接、非受管配置和手工改写后的配置；旧版 Agent 写入的站点需重新 apply 一次确认接管。文件不存在时幂等成功，保留的受管摘要不会让不同内容的外部重建配置被删除。
+
+删除前保存 0600 的 `nginx-backups/<domain>-<sha256>.conf`，删除后先 `nginx -t` 再 reload。任一步失败则恢复原文件及权限，并在独立 30 秒恢复窗口中检查和 reload；恢复失败会明确报告，不能将站点数据库记录标为删除成功。该操作不删除 ACME 证书和私钥，避免影响其他站点或续期配置。
 
 `nginx.renew` 可按域名续期，省略 domain 则检查该存储下所有证书。`renewalChecked:true` 仅表示 certbot 检查成功，未临期证书可能无需续期；后续 Nginx 语法通过才 reload。生产签发和续期均必须由主控明确授权，本开发测试不会执行真实签发。
 

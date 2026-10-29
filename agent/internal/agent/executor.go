@@ -44,6 +44,7 @@ type executionParams struct {
 	TimeoutSeconds int    `json:"timeoutSeconds"`
 	ID             string `json:"id"`
 	Action         string `json:"action"`
+	RuleAction     string `json:"ruleAction"`
 	Tail           int    `json:"tail"`
 	Image          string `json:"image"`
 	Project        string `json:"project"`
@@ -175,6 +176,8 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		return command("nginx", "-s", "reload")
 	case "nginx.apply":
 		return e.nginx(ctx, p, log)
+	case "nginx.remove":
+		return e.removeNginx(ctx, p, "/etc/nginx/conf.d", log)
 	case "nginx.acme":
 		return e.acme(ctx, p, log)
 	case "nginx.certificate":
@@ -185,37 +188,13 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 	case "firewall.list":
 		return command("ufw", "status", "numbered")
 	case "firewall.rule":
-		if p.Port < 1 || p.Port > 65535 {
-			return "", nil, errors.New("port must be between 1 and 65535")
+		args, err := firewallRuleArgs(p)
+		if err != nil {
+			return "", nil, err
 		}
-		if p.Protocol != "tcp" && p.Protocol != "udp" {
-			return "", nil, errors.New("protocol must be tcp or udp")
-		}
-		switch p.Action {
-		case "allow", "deny", "reject", "delete":
-		default:
-			return "", nil, errors.New("unsupported firewall action")
-		}
-		if p.Action == "delete" {
-			return command("ufw", "--force", "delete", "allow", strconv.Itoa(p.Port)+"/"+p.Protocol)
-		}
-		return command("ufw", p.Action, strconv.Itoa(p.Port)+"/"+p.Protocol)
+		return command("ufw", args...)
 	case "software.install":
-		allowed := map[string]string{"nginx": "nginx", "git": "git", "curl": "curl", "wget": "wget", "htop": "htop", "unzip": "unzip", "docker": "docker.io", "certbot": "certbot", "ufw": "ufw"}
-		pkg, ok := allowed[p.Name]
-		if !ok {
-			return "", nil, errors.New("software is not in the supported package list")
-		}
-		if _, err := exec.LookPath("apt-get"); err == nil {
-			return command("apt-get", "install", "-y", "--", pkg)
-		}
-		if _, err := exec.LookPath("dnf"); err == nil {
-			if p.Name == "docker" {
-				pkg = "docker"
-			}
-			return command("dnf", "install", "-y", "--", pkg)
-		}
-		return "", nil, errors.New("software.install supports apt-get or dnf only")
+		return installSoftware(ctx, p, log)
 	case "agent.upgrade":
 		e.configMu.Lock()
 		defer e.configMu.Unlock()
@@ -223,6 +202,56 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 	default:
 		return "", nil, fmt.Errorf("unsupported task type: %s", task.Type)
 	}
+}
+
+func installSoftware(ctx context.Context, p executionParams, log logFunc) (string, any, error) {
+	allowed := map[string]string{"nginx": "nginx", "git": "git", "curl": "curl", "wget": "wget", "htop": "htop", "unzip": "unzip", "docker": "docker.io", "certbot": "certbot", "ufw": "ufw"}
+	pkg, ok := allowed[p.Name]
+	if !ok {
+		return "", nil, errors.New("software is not in the supported package list")
+	}
+	if _, err := exec.LookPath("apt-get"); err == nil {
+		output, err := runCommand(ctx, log, "apt-get", "update")
+		if err != nil {
+			return output, nil, fmt.Errorf("apt-get update failed; package was not installed: %w", err)
+		}
+		installed, err := runCommand(ctx, log, "apt-get", "install", "-y", "--", pkg)
+		return joinOutput(output, installed), map[string]any{}, err
+	}
+	if _, err := exec.LookPath("dnf"); err == nil {
+		if p.Name == "docker" {
+			pkg = "docker"
+		}
+		output, err := runCommand(ctx, log, "dnf", "install", "-y", "--", pkg)
+		return output, map[string]any{}, err
+	}
+	return "", nil, errors.New("software.install supports apt-get or dnf only")
+}
+
+func firewallRuleArgs(p executionParams) ([]string, error) {
+	if p.Port < 1 || p.Port > 65535 {
+		return nil, errors.New("port must be between 1 and 65535")
+	}
+	if p.Protocol != "tcp" && p.Protocol != "udp" {
+		return nil, errors.New("protocol must be tcp or udp")
+	}
+	switch p.Action {
+	case "allow", "deny", "reject", "delete":
+	default:
+		return nil, errors.New("unsupported firewall action")
+	}
+	if p.RuleAction != "" && p.RuleAction != "allow" && p.RuleAction != "deny" && p.RuleAction != "reject" {
+		return nil, errors.New("ruleAction must be allow, deny or reject")
+	}
+	target := strconv.Itoa(p.Port) + "/" + p.Protocol
+	if p.Action == "delete" {
+		ruleAction := p.RuleAction
+		if ruleAction == "" {
+			ruleAction = "allow"
+		}
+		return []string{"--force", "delete", ruleAction, target}, nil
+	}
+	return []string{p.Action, target}, nil
 }
 
 // outputWriter bounds retained output and log traffic while continuing to drain
@@ -450,33 +479,7 @@ func (e *Executor) compose(ctx context.Context, p executionParams, log logFunc) 
 }
 
 func (e *Executor) nginx(ctx context.Context, p executionParams, log logFunc) (string, any, error) {
-	if !domainName.MatchString(p.Domain) || strings.Contains(p.Domain, "..") || p.Config == "" || len(p.Config) > maxOutput {
-		return "", nil, errors.New("valid domain and nginx config up to 256 KiB are required")
-	}
-	e.configMu.Lock()
-	defer e.configMu.Unlock()
-	path := filepath.Join("/etc/nginx/conf.d", p.Domain+".conf")
-	old, readErr := os.ReadFile(path)
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return "", nil, readErr
-	}
-	if err := privateWrite(path, []byte(p.Config)); err != nil {
-		return "", nil, err
-	}
-	if out, err := runCommand(ctx, log, "nginx", "-t"); err != nil {
-		var restore error
-		if os.IsNotExist(readErr) {
-			restore = os.Remove(path)
-		} else {
-			restore = privateWrite(path, old)
-		}
-		if restore != nil {
-			return out, nil, fmt.Errorf("nginx validation failed: %v; restoring prior config failed: %w", err, restore)
-		}
-		return out, nil, fmt.Errorf("nginx validation failed; previous config restored: %w", err)
-	}
-	out, err := runCommand(ctx, log, "nginx", "-s", "reload")
-	return out, map[string]any{"path": path, "syntaxValid": true}, err
+	return e.applyNginx(ctx, p, "/etc/nginx/conf.d", log)
 }
 
 func upgrade(ctx context.Context, p executionParams) (string, any, error) {
