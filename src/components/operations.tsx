@@ -596,7 +596,8 @@ function OperationsForm({
             {node ? (
               <ResourceForm
                 key={`${action}:${node}`}
-                busy={op.busy || !selectedNode?.connected}
+                busy={op.busy}
+                disabled={!selectedNode?.connected}
                 fields={current.fields.map((f) =>
                   ["id", "project", "name"].includes(f.name) &&
                   target &&
@@ -1383,7 +1384,7 @@ export function Resources({ mode }: { mode: string }) {
               const { nodeId, ...values } = d;
               op.ask(
                 `执行 ${runAction.name}？`,
-                "参数将发送到服务端校验，远程操作进入任务队列并记录审计。",
+                `执行位置：${nodeId ? (nodes.data?.find((n) => n.id === nodeId)?.name ?? nodeId) : "主控"}；参数：${JSON.stringify(values)}。参数将发送到服务端校验，远程操作进入任务队列并记录审计。`,
                 async () => {
                   const r = await submitAction<{ id?: string; url?: string }>(
                     "actions.run",

@@ -4,7 +4,7 @@
  * @project PipkerOps
  * @module shared-ui
  * @description 业务查询、表单、状态与操作确认的共用组件。
- * @logic 查询呈现加载与失败状态；确认操作保留错误，并显示调用方指定的成功反馈。
+ * @logic 查询呈现加载与失败状态；表单区分禁用和提交中，表格支持键盘滚动；确认保留错误及指定成功反馈。
  * @dependencies React, SWR, RPC, UI components
  * @index_tags forms, queries, confirmation, feedback
  * @author holic512
@@ -137,7 +137,12 @@ export function DataTable({
   children: React.ReactNode;
 }) {
   return (
-    <div className="table-wrap">
+    <div
+      className="table-wrap"
+      role="region"
+      aria-label={`${headers[0]}表格，可横向滚动`}
+      tabIndex={0}
+    >
       <table>
         <thead>
           <tr>
@@ -261,12 +266,14 @@ export function ResourceForm({
   fields,
   onSubmit,
   busy,
+  disabled = false,
   submit = "保存",
   children,
 }: {
   fields: Field[];
   onSubmit: (data: Record<string, unknown>) => Promise<unknown>;
   busy: boolean;
+  disabled?: boolean;
   submit?: string;
   children?: React.ReactNode;
 }) {
@@ -362,7 +369,7 @@ export function ResourceForm({
         </p>
       )}
       <div className="form-footer">
-        <Button type="submit" disabled={busy}>
+        <Button type="submit" disabled={busy || disabled}>
           {busy ? "正在处理…" : submit}
         </Button>
       </div>
