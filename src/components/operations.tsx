@@ -1380,7 +1380,12 @@ export function Resources({ mode }: { mode: string }) {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setRunAction(r)}
+                      onClick={() => {
+                        setRunAction(r);
+                        setActionTask("");
+                        setActionUrl("");
+                        op.clear();
+                      }}
                     >
                       <Play size={13} />
                       执行
@@ -1444,6 +1449,8 @@ export function Resources({ mode }: { mode: string }) {
                 `执行 ${runAction.name}？`,
                 `执行位置：${nodeId ? (nodes.data?.find((n) => n.id === nodeId)?.name ?? nodeId) : "主控"}；参数：${JSON.stringify(values)}。参数将发送到服务端校验，远程操作进入任务队列并记录审计。`,
                 async () => {
+                  setActionTask("");
+                  setActionUrl("");
                   const r = await submitAction<{ id?: string; url?: string }>(
                     "actions.run",
                     { id: runAction.id, nodeId, values, confirmed: true },
