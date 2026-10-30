@@ -54,6 +54,8 @@ HTTP探针公网目标必须HTTPS；私网/回环允许HTTP用于内网健康检
 
 ## 持久化任务
 
+共用Web运维/动作提交在网络失败或5xx无法明确结果时提示任务可能已入队，保留当前页面同参数的原幂等键供用户显式找回；不自动重放。4xx继续显示准确权限/参数错误。页面刷新或修改参数会丢失/改变待定提交身份，不能据此盲目重提非幂等操作。
+
 `tasks.create`：`{type,nodeId?,payload,confirmed?,idempotencyKey?}`；Key最少8最多200字符，同一身份同一键只对应相同类型/节点/规范化参数，参数变化返回409。所有远程操作返回Task，须通过 `tasks.get:{id}` / `tasks.list` 检查最终结果和日志。`tasks.list:{scheduleId?}`可筛选某计划最近100条任务，仍叠加当前scope/节点范围。任务的可空`scheduleId`由Worker写入，调用方不能通过创建参数指定；删除计划后置空但保留任务/日志/来源，旧历史不自动回填。MCP结构化任务响应保留可选字段以兼容旧数据和客户端。`tasks.cancel:{id,confirmed:true}`仅取消QUEUED。其他状态不暗示Agent停止。
 
 | type | payload | scope | 高危 |
