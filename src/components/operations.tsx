@@ -1082,7 +1082,11 @@ export function Resources({ mode }: { mode: string }) {
               if (["actions", "schedules", "mcp"].includes(mode))
                 op.ask(
                   editing ? "确认保存修改？" : "确认创建？",
-                  "请检查工具范围、执行目标和操作内容。该设置可能允许后台或 AI Agent 执行远程操作。",
+                  mode === "mcp"
+                    ? `密钥：${d.name}。工具权限：${JSON.stringify(d.scopes)}。节点范围：${JSON.stringify(d.nodeIds)}（[] 无节点权限，["*"] 为全部节点）。高危操作：${d.allowDangerous ? "允许" : "禁止"}。有效期：${d.days} 天。确认后将创建可供 AI Agent 使用的密钥，请核对授权范围。`
+                    : mode === "schedules"
+                      ? `计划：${d.name}。状态：${d.enabled ? "启用" : "停用"}。节点：${nodes.data?.find((n) => n.id === d.nodeId)?.name ?? d.nodeId}（${d.nodeId}）。任务：${d.taskType}。Cron：${d.cron}；时区：${d.timezone}。参数：${JSON.stringify(d.payload)}。启用后将按此配置在后台执行。`
+                      : "请检查工具范围、执行目标和操作内容。该设置可能允许后台或 AI Agent 执行远程操作。",
                   () => save({ ...d, ...(editing ? { id: editing.id } : {}) }),
                 );
               else
