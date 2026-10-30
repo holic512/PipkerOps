@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module topology-ui
  * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 准确身份合并部署容器，配置端点关联站点上游；鼠标与键盘选择同步详情，刷新保留布局，矩阵固定列序并适配画布。
+ * @logic 准确身份关联资源；选择同步详情，受控交互锁定保留刷新状态且禁止手工连线；矩阵固定列序并适配画布。
  * @dependencies React Flow, RPC, shared UI
  * @index_tags topology, connectivity, ui
  * @author holic512
@@ -65,6 +65,7 @@ export function Topology() {
   const [tab, setTab] = useState("graph");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [show, setShow] = useState(false);
+  const [interactive, setInteractive] = useState(true);
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
   const canvasRef = useRef<HTMLElement>(null);
   const [layout, setLayout] = useState<
@@ -358,6 +359,7 @@ export function Topology() {
                 nodes={graph.nodes.map((n) => ({
                   ...n,
                   ...layout[n.id],
+                  connectable: false,
                 }))}
                 onNodesChange={(changes) => {
                   for (const change of changes) {
@@ -387,7 +389,8 @@ export function Topology() {
                 fitView
                 minZoom={0.2}
                 maxZoom={1.8}
-                nodesDraggable
+                nodesDraggable={interactive}
+                elementsSelectable={interactive}
                 nodesConnectable={false}
                 onNodeClick={(_, node) => setSelectedId(node.id)}
                 onPaneClick={() => setSelectedId(null)}
@@ -401,7 +404,7 @@ export function Topology() {
                 }}
               >
                 <Background color="#dce3eb" gap={24} />
-                <Controls />
+                <Controls onInteractiveChange={setInteractive} />
                 <MiniMap
                   nodeColor={(n) =>
                     String(n.data.state) === "UNHEALTHY" ? "#e69a9a" : "#b5cbeb"
