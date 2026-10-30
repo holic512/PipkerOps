@@ -1337,10 +1337,12 @@ td.inline-actions {
 @media (max-width: 850px) {
   .sidebar {
     transform: translateX(-100%);
+    visibility: hidden;
     width: 224px;
   }
   .sidebar-open {
     transform: translateX(0);
+    visibility: visible;
   }
   .console-body {
     margin-left: 0;
