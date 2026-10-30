@@ -94,7 +94,11 @@ export function ResourceHistory({ nodeId }: { nodeId: string }) {
           !data?.series.some((s) => s.points.some((p) => p.value !== null))
         }
         emptyTitle="暂无可用资源历史"
-        emptyText="选择其他设备或时间范围。网络和 IO 速率至少需要两次连续采样。"
+        emptyText={
+          kind === "disk"
+            ? "所选设备或时间范围暂无有效磁盘采样，请选择其他设备或时间范围。"
+            : "所选设备或时间范围暂无可靠速率。至少需要两次连续采样；采样中断、设备变化或计数重置会保留缺口，可缩短时间范围或选择其他设备。"
+        }
       >
         {data && <ResourceChart data={data} />}
       </QueryState>
@@ -124,7 +128,9 @@ function ResourceChart({ data }: { data: History }) {
               <i style={{ background: colors[i % colors.length] }} />
               {s.name}{" "}
               {latest?.value == null
-                ? "暂无速率"
+                ? data.unit === "%"
+                  ? "暂无数据"
+                  : "暂无速率"
                 : valueLabel(latest.value, data.unit)}
             </span>
           );
@@ -218,7 +224,12 @@ function ResourceChart({ data }: { data: History }) {
       </div>
       <details className="resource-history-values">
         <summary>查看最近采样值</summary>
-        <div className="table-wrap">
+        <div
+          className="table-wrap"
+          role="region"
+          aria-label="最近资源采样值，可横向滚动"
+          tabIndex={0}
+        >
           <table className="data-table">
             <thead>
               <tr>
