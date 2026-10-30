@@ -150,7 +150,7 @@ export function Tasks() {
                     onClick={() =>
                       op.ask(
                         "取消排队任务？",
-                        "已分发或正在执行的任务无法通过此操作取消。",
+                        `任务：${t.id}；类型：${t.type}；节点：${t.node?.name ?? "主控"}。仅取消尚未分发的排队任务；已分发或正在执行的任务无法通过此操作取消。`,
                         () =>
                           rpc("tasks.cancel", { id: t.id, confirmed: true }),
                       )
