@@ -1,67 +1,36 @@
 # PipkerOps
 
-面向个人开发者和 10–50 台 Linux 节点的轻量集群运维平台，集中管理节点监控、设备长期历史、应用、探针、拓扑和远程任务，并通过 MCP 向 AI Agent 开放平台能力。
+面向个人开发者和维护 10–50 台 Linux 节点的小团队的运维平台。集中查看节点与设备历史、应用健康、探针和拓扑，执行可追踪的远程任务，并通过 MCP 向 AI Agent 开放同一套能力。
 
-Go Agent 主动连接主控；Next.js 提供管理界面与 API，Gateway 维护 Agent 连接，Worker 执行调度。PostgreSQL 保存业务与任务数据，Redis 用于临时协调和限流。
+Go Agent 主动建立 TLS 连接；Next.js 提供界面与 API，Gateway 维护 Agent 连接，Worker 负责调度。PostgreSQL 保存业务和任务事实，Redis 负责临时协调与限流。项目仍在开发，生产公网和长期稳定性验收范围见[开发文档](docs/DEVELOPMENT.md)。
 
-项目仍在开发。主要模块已实现，剩余功能和验收条件见 [开发计划](docs/PLAN.md)。
+## 部署
 
-## 本地启动
-
-需要 Node.js 22.12+、Go 1.26+、PostgreSQL 和 Redis。先启动数据库与 Redis，再运行：
+准备 Linux 服务器、Docker Compose v2、外部 PostgreSQL 17、独立 Redis 逻辑库及 Web HTTPS 证书。克隆仓库后进入目录：
 
 ```sh
-npm ci
-cp .env.example .env
+sudo sh deploy/menu.sh
 ```
 
-编辑 `.env`，填写连接配置、管理员邮箱和随机密码；本地设置 `APP_ORIGIN=http://127.0.0.1:3000`。
+选择“安装”，脚本创建配置模板。填写 `deploy/config/app.env`，在 `deploy/certs/web` 放置 `fullchain.pem` 和 `privkey.pem`，再次安装即可拉取镜像、初始化并启动。宿主机路径和版本放在 `deploy/compose.env`，应用凭据只放在映射配置中。
 
-```sh
-npm run db:generate
-npm run db:deploy
-npm run bootstrap
-npm run pki:init
-npm run dev
-```
+修改 `deploy/config/app.env` 后选择“重启并重读配置”。切换到空数据库时会先执行迁移和管理员初始化；配置切换不搬迁数据。完整步骤、权限、私有镜像登录和恢复说明见[部署文档](docs/DEPLOYMENT.md)。
 
-另开两个终端，分别运行 `npm run gateway` 和 `npm run worker`。打开 http://127.0.0.1:3000，用配置的管理员账户登录；`bootstrap` 不覆盖已有账户。
+## Agent
 
-在节点管理生成注册令牌，将 CA 公钥复制到节点，按 [Agent 安装说明](agent/README.md) 安装并审批。CA 私钥留在主控。默认 mTLS 端口为 9443，注册与终端 TLS 端口为 9444。生产部署使用 HTTPS/TLS，见 [部署文档](docs/DEPLOYMENT.md)。
+从 [GitHub Releases](https://github.com/holic512/PipkerOps/releases) 下载 Linux amd64/arm64 安装包和 `SHA256SUMS`，校验后手动安装。`master` 测试构建附件位于 [GitHub Actions](https://github.com/holic512/PipkerOps/actions)。
 
-## 开发验证
-
-```sh
-npm run db:validate
-npm run check
-npm run lint
-npm test
-npm run build
-cd agent && go test ./...
-```
-
-`npm run test:database` 使用一次性 PostgreSQL 17 容器验证并发，不读取 `.env`。`npm run test:history-capacity` 在同样的隔离流程中额外构造50节点30天设备摘要，检查查询、占用和维护前后结果；测试边界见数据库文档。平台、Linux、systemd、连通性、告警、恢复和容量联调的运行条件见 [部署文档](docs/DEPLOYMENT.md)，需先启动对应服务和夹具。
-
-提交前运行 `node scripts/check-secrets.mjs` 检查暂存区。配置、私钥、Agent 状态、备份和构建产物不入库。
-
-## API 与任务
-
-Web 使用 `POST /api/rpc`，请求格式为 `{ "method":"nodes.list", "params":{} }`。MCP 使用 `/api/mcp` 的无状态 Streamable HTTP；工具名将方法名的 `.` 换成 `_`，参数放在 `params` 中。节点列表及指标/设备历史、应用列表和任务创建、详情、列表同时公开输出 Schema 与 `structuredContent.data`，保留原 JSON 文本兼容。
-
-独立 API Key 使用 `Authorization: Bearer ...`。服务端统一校验角色、scope、节点范围及高危操作许可。空节点列表表示无节点权限，`["*"]` 表示全部节点。
-
-应用中心的部署实例可直接进入对应 Docker/Compose、systemd 和终端页面，预填节点与目标；自定义动作预填已声明的同名实例参数，检查后确认执行。拓扑按准确容器身份、Compose 标签和同节点唯一应用探针端点展示资源关系，未确定目标保留未关联。
-
-远程操作返回任务编号，在任务中心查看日志和结果。非幂等任务最多尝试一次；失联后结果无法确认时标记 `UNKNOWN`，等待 Agent journal 对账。
-
-定时调度列表的“执行记录”进入按计划筛选的任务中心，再查看日志与结果。升级后的Worker记录准确计划关联；旧任务和删除计划后的任务仍可从全部任务查看。
+在管理端生成注册令牌，将主控 CA **公钥**交给节点，配置 Agent 并审批接入。安装包同时保留原始二进制供在线升级使用，详见 [Agent 安装与协议](agent/README.md)。
 
 ## 文档
 
-- [开发计划与验收范围](docs/PLAN.md)
-- [部署、备份与恢复](docs/DEPLOYMENT.md)
-- [数据库模型与维护](docs/database.md)
-- [API 与 MCP 参数](docs/API.md)
-- [Agent 安装与配置](agent/README.md)
+- [部署与运维](docs/DEPLOYMENT.md)：配置、容器菜单、版本、TLS、备份恢复。
+- [开发与验证](docs/DEVELOPMENT.md)：本地开发、目录职责、测试、CI、当前验收边界。
+- [API 与 MCP](docs/API.md)：方法、授权、任务和结构化输出。
+- [数据库模型与维护](docs/database.md)：迁移、指标保留和容量验证。
+- [Agent](agent/README.md)：安装、配置、任务协议和升级。
+- [产品定位](PRODUCT.md)与[界面规范](DESIGN.md)。
+
+Web、MCP、Cron 共享授权与任务服务；远程操作返回任务编号，结果不明的非幂等任务保留 `UNKNOWN`，通过 Agent journal 对账。生产使用 HTTPS/TLS，真实配置、私钥、备份及运行状态不入库。
 
 许可证：[Apache-2.0](LICENSE)。

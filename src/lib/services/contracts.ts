@@ -76,6 +76,9 @@ export const METHODS = [
   "keys.create",
   "keys.revoke",
   "audit.list",
+  "backups.list",
+  "backups.create",
+  "backups.delete",
   "terminal.ticket",
   "users.me",
 ] as const;
@@ -312,6 +315,12 @@ export const methodSchemas = {
     .extend({ confirmed: confirmation }),
   "keys.revoke": z.object({ id, confirmed: confirmation }),
   "audit.list": z.object({}),
+  "backups.list": z.object({}),
+  "backups.create": z.object({
+    confirmed: confirmation,
+    idempotencyKey: z.string().min(8).max(200),
+  }),
+  "backups.delete": z.object({ id: z.uuid(), confirmed: confirmation }),
   "terminal.ticket": z.object({
     nodeId: id,
     containerId: z

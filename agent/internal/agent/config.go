@@ -30,7 +30,8 @@ import (
 	"time"
 )
 
-const Version = "0.1.0"
+// Release builds inject the tag with go build -ldflags -X.
+var Version = "dev"
 const maxFrame = 2 << 20
 const maxOutput = 256 << 10
 

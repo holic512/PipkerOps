@@ -13,3 +13,16 @@ test-results
 *.log
 *.tsbuildinfo
 .impeccable
+
+# Deployment runtime and editor state
+.idea/
+deploy/config/
+deploy/data/
+deploy/certs/
+deploy/compose.env
+dist/
+backups/
+*.dump
+*.backup
+*.tar.gz
+*.rdb

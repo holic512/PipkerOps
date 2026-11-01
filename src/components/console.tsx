@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module manage-shell
  * @description 分组侧栏、访问标签、登录状态与模块页面的管理端入口。
- * @logic 路由选择真实业务页面，认证失败转登录；访问标签保留当前会话导航。
+ * @logic 路由选择真实业务及系统备份页面，认证失败转登录；访问标签保留当前会话导航。
  * @dependencies React, Next.js, SWR, Lucide
  * @index_tags ui, navigation, console
  * @author holic512
@@ -28,6 +28,7 @@ import {
   ListChecks,
   Bell,
   KeyRound,
+  Archive,
   ScrollText,
   Menu,
   X,
@@ -46,6 +47,7 @@ import {
   TerminalPage,
 } from "./operations";
 import { Topology } from "./topology";
+import { Backups } from "./backups";
 const nav = [
   {
     group: "集群",
@@ -80,6 +82,7 @@ const nav = [
     group: "平台",
     items: [
       { path: "/mcp", name: "MCP 与密钥", icon: KeyRound },
+      { path: "/backups", name: "系统备份", icon: Archive },
       { path: "/audit", name: "操作审计", icon: ScrollText },
     ],
   },
@@ -123,6 +126,7 @@ export function Console() {
     if (path.startsWith("/tasks/"))
       return <TaskDetail id={path.split("/")[2]} />;
     if (path === "/tasks") return <Tasks />;
+    if (path === "/backups") return <Backups />;
     if (path === "/terminal") return null;
     if (["/docker", "/files", "/system"].includes(path))
       return <Operations key={path} mode={path.slice(1)} />;

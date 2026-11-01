@@ -4,15 +4,43 @@
 
 ## 编译与安装
 
+发布版本可在 [GitHub Releases](https://github.com/holic512/PipkerOps/releases) 下载，无需在节点安装 Go。每个版本包含：
+
+| 文件 | 用途 |
+| --- | --- |
+| `pipker-agent-linux-amd64` / `pipker-agent-linux-arm64` | 原始静态 ELF，供手工替换或平台 `agent.upgrade` 使用 |
+| 同名 `.tar.gz` | 手工安装包，包含二进制、`install.sh`、systemd 单元、配置示例和本说明 |
+| `SHA256SUMS` | 两个架构的原始二进制与安装包校验和 |
+
+下载适合节点架构的安装包及同一版本的 `SHA256SUMS`，在解压前检查对应文件：
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf pipker-agent-linux-amd64.tar.gz
+cd pipker-agent-linux-amd64
+sudo sh install.sh ./pipker-agent
+sudoedit /etc/pipkerops/agent.env
+# 通过可信渠道安装主控 CA 公钥证书 /etc/pipkerops/ca.pem。
+sudo systemctl enable --now pipkerops-agent
+sudo journalctl -u pipkerops-agent -f
+```
+
+`uname -m` 为 `x86_64` 时使用 amd64，为 `aarch64`/`arm64` 时使用 arm64。平台升级使用原始 ELF 的 HTTPS 下载地址和对应 SHA-256，不接受压缩包。注册令牌和可信 CA 需要从主控获取，安装包不携带私有配置。
+
+源码开发与打包：
+
 ```sh
 cd agent
 go mod download
 go test -race ./...
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/pipker-agent-linux-amd64 ./cmd/pipker-agent
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o /tmp/pipker-agent-linux-arm64 ./cmd/pipker-agent
+cd ..
+sh scripts/package-agent.sh 0.1.0-dev amd64
+sh scripts/package-agent.sh 0.1.0-dev arm64
 ```
 
-将对应架构的已核验二进制及本目录的安装文件复制到 Linux 节点，然后执行：
+产物默认位于 `dist/agent/`；可通过第三个参数指定目录。每次打包生成该架构的 `SHA256SUMS-linux-<arch>`。直接 `go build` 的版本为 `dev`，打包脚本使用 linker 参数注入指定版本，可通过 `pipker-agent --version` 验证。
+
+也可以将对应架构的已核验原始二进制及本目录的安装文件复制到 Linux 节点，然后执行：
 
 ```sh
 sudo sh agent/install.sh /path/to/pipker-agent-linux-amd64
@@ -23,6 +51,16 @@ sudo journalctl -u pipkerops-agent -f
 ```
 
 安装脚本保留已有 `agent.env` 和状态目录，不自动开启服务。环境文件权限必须为 0600，状态目录为 0700。首次启动需要由平台创建的注册令牌，优先存入 0600 的 `/etc/pipkerops/enrollment.token`，避免作为进程参数传递；获批并获得证书后可删除令牌文件。不要将真实 `agent.env`、状态、私钥或证书提交到 Git。
+
+## CI 与版本发布
+
+[CI and release](../.github/workflows/ci.yml) 在 Pull Request、master 推送、`v*` tag 推送和手动触发时执行检查。Agent 在原生 Linux amd64/arm64 runner 上运行 `go test -race ./...`，随后构建安装包并验证版本输出与校验清单。普通构建的两架构产物保留在 Actions artifacts 中七天。
+
+推送合法 SemVer tag（如 `v1.2.3` 或 `v1.2.3-rc.1`）后，只有源码检查、两个架构的镜像部署验收和 Agent 测试全部通过，才会发布 GHCR 镜像与 GitHub Release。Agent 版本输出不包含 tag 的 `v` 前缀；预发布标记为 prerelease，不成为 latest。Release 使用相同构建任务生成的产物，不二次编译。
+
+主应用镜像的 master 构建发布 `edge` 和 `sha-<完整提交 SHA>`。正式版本发布完整版本、major、minor、`latest`；预发布仅发布完整版本标签。SemVer build metadata 中的 `+` 在 Docker 标签中替换为 `_`。手动触发只有选择 master 才会发布 `edge`，其他分支只执行检查。发布只使用工作流的 `GITHUB_TOKEN`，无需填写数据库、注册令牌或其他部署 Secret。
+
+## 配置参数
 
 参数优先于环境变量：
 

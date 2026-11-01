@@ -2,13 +2,14 @@
  * @file worker.ts
  * @project PipkerOps
  * @module background-worker
- * @description 持久化 Cron/多源探针调度、主控探针执行、租约恢复、告警及数据维护。
+ * @description 持久化 Cron/探针调度、平台备份、租约恢复、告警及数据维护。
  * @logic PostgreSQL行锁领取；非幂等失联仅UNKNOWN；调度游标、任务及计划关联同事务；告警逐节点LIMIT 1读取最新采样，Redis保存告警窗口。
  * @dependencies Prisma, Redis, shared task/probe services, cron-parser
  * @index_tags worker, cron, probes, alerts, recovery
  * @author holic512
  */
 import { randomUUID } from "node:crypto";
+import { processBackupQueue } from "../lib/services/backups";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../lib/db";
 import { redis } from "../lib/redis";
@@ -19,6 +20,17 @@ import { withLatestMetrics } from "../lib/services/nodes";
 import { authorize, refreshActor } from "../lib/auth";
 import { hashToken } from "../lib/crypto";
 let stopping = false;
+let backupJob: Promise<void> | undefined;
+function backups() {
+  if (backupJob) return;
+  backupJob = processBackupQueue()
+    .catch(() => {
+      console.error("Platform backup task failed");
+    })
+    .finally(() => {
+      backupJob = undefined;
+    });
+}
 let maintenanceNextAt = 0;
 let maintenanceNoticeAt = 0;
 let maintenanceJob: Promise<void> | undefined;
@@ -226,7 +238,7 @@ async function recover() {
     },
     data: {
       status: "UNKNOWN",
-      error: "执行租约过期，结果待 Agent 对账；非幂等任务不会自动重试",
+      error: "执行租约过期，结果待核对；非幂等任务不会自动重试",
       leaseExpiresAt: null,
     },
   });
@@ -398,6 +410,7 @@ async function alerts() {
   }
 }
 async function tick() {
+  backups();
   await recover();
   await schedules();
   await probes();
@@ -421,6 +434,7 @@ async function main() {
       );
   }
   await maintenanceJob;
+  await backupJob;
   await db().$disconnect();
   process.exit(0);
 }

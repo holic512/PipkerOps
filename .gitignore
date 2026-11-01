@@ -35,3 +35,10 @@ backups/
 .DS_Store
 playwright-report/
 test-results/
+
+# Deployment runtime and editor state
+.idea/
+deploy/config/
+deploy/data/
+deploy/certs/
+deploy/compose.env

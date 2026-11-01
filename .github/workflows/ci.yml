@@ -1,0 +1,307 @@
+# @file ci.yml
+# @project PipkerOps
+# @module delivery/ci
+# @description 验证源码与双架构运行镜像，发布相同镜像和可手工安装的 Agent。
+# @logic 检查与原生验收通过后传递镜像制品；仅 master 或合法版本 tag 发布 GHCR/Release。
+# @dependencies GitHub Actions, Docker Buildx, Node.js 24, Go 1.26
+# @index_tags ci, ghcr, agent, release
+# @author holic512
+name: CI and release
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.metadata.outputs.image }}
+      version: ${{ steps.metadata.outputs.version }}
+      tags: ${{ steps.metadata.outputs.tags }}
+      publish: ${{ steps.metadata.outputs.publish }}
+      release: ${{ steps.metadata.outputs.release }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+    steps:
+      - name: Resolve publication policy
+        id: metadata
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { EVENT_NAME: event, REF: ref, REPOSITORY: repository, COMMIT: commit } = process.env;
+          const image = `ghcr.io/${repository.toLowerCase()}`;
+          let version = `dev-${commit.slice(0, 12)}`;
+          let tags = [];
+          let release = false;
+          let prerelease = false;
+          if (event === 'push' && ref.startsWith('refs/tags/')) {
+            const tag = ref.slice('refs/tags/'.length);
+            const id = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
+            const pattern = new RegExp(`^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-${id}(?:\\.${id})*)?(\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`);
+            const match = pattern.exec(tag);
+            if (!match) throw new Error('Release tags must use vMAJOR.MINOR.PATCH with optional SemVer prerelease/build identifiers.');
+            version = tag.slice(1);
+            release = true;
+            prerelease = Boolean(match[4]);
+            const dockerVersion = version.replace('+', '_');
+            if (dockerVersion.length > 128) throw new Error('Version exceeds the Docker tag length limit.');
+            tags = [dockerVersion];
+            if (!prerelease) tags.push(`${match[1]}.${match[2]}`, match[1], 'latest');
+          } else if (ref === 'refs/heads/master' && ['push', 'workflow_dispatch'].includes(event)) {
+            tags = ['edge', `sha-${commit}`];
+          }
+          const outputs = { image, version, tags: JSON.stringify(tags), publish: tags.length > 0, release, prerelease };
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([key, value]) => `${key}=${value}\n`).join(''));
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Publication: ${tags.length ? tags.map(tag => `${image}:${tag}`).join(', ') : 'checks only'}\n`);
+          NODE
+
+  checks:
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+      - run: node scripts/check-secrets.mjs --all
+      - name: Check shell syntax
+        run: find deploy scripts agent tests -type f -name '*.sh' -print0 | xargs -0 -r -n 1 sh -n
+      - run: npm ci
+      - run: npm run db:validate
+      - run: npm run db:generate
+      - run: npm run check
+      - run: npm run lint
+      - run: npm test
+
+  agent:
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Test Agent on its native architecture
+        working-directory: agent
+        run: go test -race ./...
+      - name: Package and check version
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          sh scripts/package-agent.sh "$VERSION" "$ARCH"
+          binary="dist/agent/pipker-agent-linux-$ARCH"
+          test "$("$binary" --version)" = "$VERSION"
+          cd dist/agent
+          sha256sum -c "SHA256SUMS-linux-$ARCH"
+      - name: Verify actual installation and configuration preservation
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: sudo sh tests/agent-install.integration.sh "dist/agent/pipker-agent-linux-$ARCH" "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: agent-${{ matrix.arch }}
+          path: dist/agent/*
+          if-no-files-found: error
+          retention-days: 7
+
+  images:
+    needs: [metadata, checks]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build and load the candidate image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          tags: pipkerops:test
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.metadata.outputs.version }}
+          cache-from: type=gha,scope=app-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=app-${{ matrix.arch }}
+      - name: Verify deployment using the candidate image
+        env:
+          IMAGE: pipkerops:test
+        run: sudo env IMAGE="$IMAGE" sh tests/deployment.integration.sh
+      - name: Save the verified image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/verified-image"
+          docker image inspect --format '{{.Id}}' pipkerops:test > "$RUNNER_TEMP/verified-image/image-id"
+          docker save pipkerops:test | gzip -1 > "$RUNNER_TEMP/verified-image/image.tar.gz"
+          cd "$RUNNER_TEMP/verified-image"
+          sha256sum image.tar.gz image-id > SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: verified-image-${{ matrix.arch }}
+          path: ${{ runner.temp }}/verified-image/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  push-images:
+    needs: [metadata, checks, agent, images]
+    if: needs.metadata.outputs.publish == 'true'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: verified-image-${{ matrix.arch }}
+          path: verified-image
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the exact verified image
+        env:
+          IMAGE_NAME: ${{ needs.metadata.outputs.image }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          cd verified-image
+          sha256sum -c SHA256SUMS
+          docker load -i image.tar.gz
+          test "$(docker image inspect --format '{{.Id}}' pipkerops:test)" = "$(cat image-id)"
+          reference="$IMAGE_NAME:build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$ARCH"
+          docker tag pipkerops:test "$reference"
+          docker push "$reference"
+          mkdir -p "$RUNNER_TEMP/image-digest"
+          docker image inspect --format '{{index .RepoDigests 0}}' "$reference" > "$RUNNER_TEMP/image-digest/$ARCH"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/image-digest/*
+          if-no-files-found: error
+          retention-days: 3
+
+  manifest:
+    needs: [metadata, push-images]
+    permissions:
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: image-digest-*
+          path: image-digest
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the two-platform manifest
+        env:
+          IMAGE_NAME: ${{ needs.metadata.outputs.image }}
+          TAGS_JSON: ${{ needs.metadata.outputs.tags }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const image = process.env.IMAGE_NAME;
+          const tags = JSON.parse(process.env.TAGS_JSON);
+          const sources = ['amd64', 'arm64'].map(arch => fs.readFileSync(`image-digest/${arch}`, 'utf8').trim());
+          execFileSync('docker', ['buildx', 'imagetools', 'create', ...tags.flatMap(tag => ['--tag', `${image}:${tag}`]), ...sources], { stdio: 'inherit' });
+          const manifest = JSON.parse(execFileSync('docker', ['buildx', 'imagetools', 'inspect', '--raw', `${image}:${tags[0]}`], { encoding: 'utf8' }));
+          const platforms = manifest.manifests.map(item => `${item.platform.os}/${item.platform.architecture}`).sort();
+          if (JSON.stringify(platforms) !== JSON.stringify(['linux/amd64', 'linux/arm64'])) throw new Error(`Unexpected published platforms: ${platforms}`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, tags.map(tag => `Published \`${image}:${tag}\`\n`).join(''));
+          NODE
+
+  release:
+    needs: [metadata, manifest, agent]
+    if: needs.metadata.outputs.release == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: agent-*
+          path: dist/agent
+          merge-multiple: true
+      - name: Verify and publish Agent assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+        run: |
+          cd dist/agent
+          cat SHA256SUMS-linux-amd64 SHA256SUMS-linux-arm64 > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          assets=(pipker-agent-linux-amd64 pipker-agent-linux-arm64 pipker-agent-linux-amd64.tar.gz pipker-agent-linux-arm64.tar.gz SHA256SUMS)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            options=(--verify-tag --title "$RELEASE_TAG" --generate-notes)
+            if [ "$PRERELEASE" = true ]; then
+              options+=(--prerelease --latest=false)
+            else
+              options+=(--latest)
+            fi
+            gh release create "$RELEASE_TAG" "${assets[@]}" "${options[@]}"
+          fi

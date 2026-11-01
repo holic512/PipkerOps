@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module configuration
  * @description 校验运行时配置与公网 TLS 边界，不输出连接凭据。
- * @logic 仅开发显式允许明文后端；生产仅可信内网或 TLS。
+ * @logic 启动入口集中校验必填项与协议；仅开发显式允许明文公网后端。
  * @dependencies Node.js environment
  * @index_tags config, tls, secrets
  * @author holic512
@@ -29,7 +29,12 @@ export function privateHost(host: string) {
 }
 export function backendUrl(name: "DATABASE_URL" | "REDIS_URL") {
   const value = required(name);
-  const url = new URL(value);
+  const url = configUrl(name, value);
+  const protocols =
+    name === "DATABASE_URL"
+      ? ["postgres:", "postgresql:"]
+      : ["redis:", "rediss:"];
+  if (!protocols.includes(url.protocol)) throw new Error(`${name} 协议无效`);
   const tls =
     name === "REDIS_URL"
       ? url.protocol === "rediss:"
@@ -46,9 +51,53 @@ export function backendUrl(name: "DATABASE_URL" | "REDIS_URL") {
   return value;
 }
 export function appOrigin() {
-  const url = new URL(required("APP_ORIGIN"));
+  const url = configUrl("APP_ORIGIN", required("APP_ORIGIN"));
+  if (!["https:", "http:"].includes(url.protocol))
+    throw new Error("APP_ORIGIN 协议无效");
   if (production() && url.protocol !== "https:")
     throw new Error("生产 APP_ORIGIN 必须为 HTTPS");
   return url.origin;
 }
 export const pkiDir = () => process.env.PKI_DIR ?? "./.data/pki";
+
+export function validateRuntime(initializing = false) {
+  backendUrl("DATABASE_URL");
+  backendUrl("REDIS_URL");
+  appOrigin();
+  for (const [name, protocol] of [
+    ["GATEWAY_PUBLIC_URL", "wss:"],
+    ["ENROLL_PUBLIC_URL", "https:"],
+  ]) {
+    const url = configUrl(name, required(name));
+    if (url.protocol !== protocol)
+      throw new Error(`${name} 必须使用 ${protocol}`);
+  }
+  required("PKI_HOSTS");
+  if (initializing) {
+    if (!/^[^\s@]+@[^\s@]+$/.test(required("BOOTSTRAP_EMAIL")))
+      throw new Error("BOOTSTRAP_EMAIL 格式无效");
+    const password = required("BOOTSTRAP_PASSWORD");
+    if (password.length < 16 || password.includes("CHANGE_ME"))
+      throw new Error("BOOTSTRAP_PASSWORD 必须为至少16位随机密码");
+  }
+  for (const name of ["GATEWAY_PORT", "ENROLL_PORT", "WORKER_INTERVAL_MS"]) {
+    const value = process.env[name];
+    if (
+      value &&
+      (!/^\d+$/.test(value) ||
+        Number(value) < 1 ||
+        (name.endsWith("PORT") && Number(value) > 65535))
+    )
+      throw new Error(`${name} 数值无效`);
+  }
+}
+
+function configUrl(name: string, value: string) {
+  try {
+    const url = new URL(value);
+    if (!url.hostname) throw new Error();
+    return url;
+  } catch {
+    throw new Error(`${name} URL 格式无效`);
+  }
+}

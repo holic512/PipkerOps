@@ -81,7 +81,7 @@ npm run test:database
 
 `npm test` 覆盖历史窗口、设备隔离/速率断点、水位、迟到回看、停机补偿、事务回滚和 DEFAULT 分区阻挡。`test:database` 使用一次性本机 PostgreSQL 17 容器，不读取 `.env`，覆盖 advisory lock、约 5 秒 DDL 锁等待及 `55P03` 回滚、`SKIP LOCKED` 并发领取。
 
-10–50 节点长期负载、磁盘增长及生产灾备仍需部署验收，见 [开发计划](PLAN.md)。
+10–50 节点长期负载、磁盘增长及生产灾备仍需部署验收，见 [开发与验收](DEVELOPMENT.md)。
 
 ## 设备长期聚合迁移与规模
 

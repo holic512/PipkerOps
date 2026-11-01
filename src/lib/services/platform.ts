@@ -2,7 +2,7 @@
  * @file platform.ts
  * @project PipkerOps
  * @module business-api
- * @description Web 与 MCP 共用的资源服务入口，显式路由业务方法与输入契约。
+ * @description Web 与 MCP 共用的资源服务入口，路由业务方法、平台备份与输入契约。
  * @logic 查询执行scope/节点过滤，总览在SQL限制逐节点最新采样；任务按计划筛选，远端操作统一持久化并审计。
  * @dependencies Prisma, authorization, node/task services, cron-parser
  * @index_tags api, apps, probes, topology, automation
@@ -14,6 +14,7 @@ import { db } from "../db";
 import { ApiError, authorize, confirm, nodeFilter, type Actor } from "../auth";
 import { randomToken, hashToken } from "../crypto";
 import * as nodes from "./nodes";
+import * as backups from "./backups";
 import { metricDetails } from "./metric-details";
 import { createTask, validateTask, listTasks, getTask } from "./tasks";
 import { redis } from "../redis";
@@ -111,6 +112,16 @@ export async function execute(
   const schema = methodSchemas[method as keyof typeof methodSchemas];
   const p = schema.passthrough().parse(input);
   switch (method) {
+    case "backups.list":
+      return backups.listBackups(actor);
+    case "backups.create": {
+      const data = methodSchemas["backups.create"].parse(p);
+      return backups.queueBackup(actor, data.confirmed, data.idempotencyKey);
+    }
+    case "backups.delete": {
+      const data = methodSchemas["backups.delete"].parse(p);
+      return backups.removeBackup(actor, data.id, data.confirmed);
+    }
     case "users.me":
       return db().user.findUnique({
         where: { id: actor.userId },
@@ -160,6 +171,8 @@ export async function execute(
     case "tasks.cancel": {
       const t = await getTask(actor, id.parse(p.id));
       authorize(actor, "tasks:write", t.nodeId ?? undefined);
+      if (t.type === "platform.backup")
+        authorize(actor, "admin:write", undefined, true);
       confirm(p.confirmed);
       const changed = await db().task.updateMany({
         where: { id: t.id, status: "QUEUED" },

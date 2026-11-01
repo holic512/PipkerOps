@@ -3,12 +3,13 @@
  * @project PipkerOps
  * @module tasks
  * @description 统一校验任务类型、目标权限、高危确认与幂等键，持久化执行意图和审计。
- * @logic Web/MCP/Cron共用校验与执行；列表可按计划关联筛选且保留节点授权过滤；非幂等任务只有一次尝试。
+ * @logic 平台备份由主控执行；Web/MCP/Cron共用校验与执行；列表可按计划关联筛选且保留节点授权过滤；非幂等任务只有一次尝试。
  * @dependencies Prisma, Zod, authorization
  * @index_tags tasks, audit, execution
  * @author holic512
  */
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { db } from "../db";
 import type { Prisma } from "@/generated/prisma/client";
 import { authorize, ApiError, confirm, type Actor } from "../auth";
@@ -23,6 +24,12 @@ export const taskSpecs: Record<
   string,
   { scope: string; dangerous: boolean; idempotent: boolean; schema: z.ZodType }
 > = {
+  "platform.backup": {
+    scope: "admin:write",
+    dangerous: true,
+    idempotent: false,
+    schema: z.object({}),
+  },
   "system.info": {
     scope: "system:read",
     dangerous: false,
@@ -310,7 +317,6 @@ export async function validateTask(
   input: unknown,
   transaction?: Prisma.TransactionClient,
 ) {
-  const client = transaction ?? db();
   const data = taskInput.parse(input);
   if (!Object.hasOwn(taskSpecs, data.type))
     throw new ApiError(400, "不支持的任务类型");
@@ -319,6 +325,7 @@ export async function validateTask(
   if (spec.dangerous) confirm(data.confirmed);
   let payload = spec.schema.parse(data.payload) as Record<string, unknown>;
   if (data.type === "probe.run") {
+    const client = transaction ?? db();
     const probe = await client.probe.findUnique({
       where: { id: String(payload.probeId) },
     });
@@ -344,11 +351,15 @@ export async function validateTask(
       mapping: probe.mapping,
     };
   }
-  if (!["probe.run", "http.request"].includes(data.type) && !data.nodeId)
+  if (
+    !["probe.run", "http.request", "platform.backup"].includes(data.type) &&
+    !data.nodeId
+  )
     throw new ApiError(400, "请选择执行节点");
-  if (data.type === "http.request" && data.nodeId)
-    throw new ApiError(400, "HTTP动作由主控执行，节点来源请使用探针");
+  if (["http.request", "platform.backup"].includes(data.type) && data.nodeId)
+    throw new ApiError(400, "此任务由主控执行，请勿选择执行节点");
   if (data.nodeId) {
+    const client = transaction ?? db();
     const node = await client.node.findUnique({ where: { id: data.nodeId } });
     if (!node || node.status !== "APPROVED")
       throw new ApiError(409, "节点尚未批准或已吊销");
@@ -409,6 +420,7 @@ export async function createTask(
   const persist = async (tx: Prisma.TransactionClient) => {
     const task = await tx.task.create({
       data: {
+        ...(data.type === "platform.backup" ? { id: randomUUID() } : {}),
         type: data.type,
         nodeId: data.nodeId,
         payload: payload as never,

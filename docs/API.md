@@ -118,3 +118,16 @@ systemd 周期采样新增 `payload.services`，仅包含已加载的服务单�
 运维表单及自定义动作在当前页面实例中为尚未收到成功响应的同一请求保留幂等键，显式再次提交时可恢复已创建任务；不自动重放。成功响应后新一次操作使用新键。`actions.run`将可选幂等键传入统一任务服务，键对应的配置改变时返回409。页面重载或切换后若旧结果不明，应先在任务中心核对，不能通过新键盲目重提。任务找回不意味着重新入队，页面提示“任务已记录”，实际状态以任务详情为准。
 
 节点指标历史输出通过resolution区分raw与hour，分别约束recordedAt/cpuPercent/memoryPercent和bucketAt/cpuAvg/memoryAvg；两种分支均声明样本数和峰值。设备历史约束单位、设备选择、方向和时间点，保留null及空集；接受PostgreSQL JSON时间的显式UTC偏移，不将缺口转换为零。标准客户端覆盖1小时和7天两种窗口。
+
+## 系统备份
+
+备份仅管理员可操作；API Key 还须具备 `admin:write` 与高危许可。所有创建、下载、删除均记录审计。
+
+| 方法 | 输入与结果 |
+| --- | --- |
+| `backups.list` | `{}`，返回 `items` 完成归档与最近20条 `jobs`；归档含 `id/createdAt/sizeBytes/sha256` |
+| `backups.create` | `{confirmed:true,idempotencyKey}`，创建 `platform.backup` 主控任务，返回任务记录；无 Agent 节点 |
+| `backups.delete` | `{id:UUID,confirmed:true}`，删除持久归档，保留任务和审计历史 |
+| `GET /api/backups/:id` | 认证后流式下载归档，支持管理员 Session 或合规 Bearer Key，不公开绝对文件路径 |
+
+Worker 在实际执行前重新校验创建者权限。备份超时、失败或执行状态不明不会自动重放；页面可通过原幂等键找回任务。归档文件保存在 Docker 持久目录，更新容器不清理。离线恢复步骤见部署文档，运行中的业务接口不提供覆盖恢复。

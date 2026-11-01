@@ -24,7 +24,7 @@ web
 
 ## Capabilities and Constraints
 
-完整目标与验收见 docs/PLAN.md。所有数据来自真实 API；空集不填充演示节点。非幂等任务结果不明时不自动重试。不得将真实连接凭据、私钥或运行日志提交 Git。
+完整目标与验收见 docs/DEVELOPMENT.md。所有数据来自真实 API；空集不填充演示节点。非幂等任务结果不明时不自动重试。不得将真实连接凭据、私钥或运行日志提交 Git。
 
 ## Brand Commitments
 
@@ -32,7 +32,7 @@ web
 
 ## Evidence on Hand
 
-初始仓库只有 README/许可证，无 HTML Demo、已有品牌资产或业务实现。数据库模型已建立，尚需真实联调。
+现有 Web/Gateway/Worker、Go Agent、真实数据库及 Linux 联调测试；具体验证范围和待完成项见开发文档。
 
 ## Open Decisions
 
