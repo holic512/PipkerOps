@@ -226,7 +226,11 @@ rpc '{"method":"backups.list"}' > "$fixture/backup-list.json"
 stage=backup-download
 archive_hash=$(python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["items"][0]["sha256"])' < "$fixture/backup-list.json")
 curl -ksSf -b "$fixture/cookies" "$(web_url)/api/backups/$backup_id" -o "$fixture/download.tar.gz"
-[ "$archive_hash" = "$(openssl dgst -sha256 "$fixture/download.tar.gz" | awk '{print $NF}')" ]
+download_hash=$(python3 -c 'import hashlib,sys; print(hashlib.file_digest(open(sys.argv[1], "rb"), "sha256").hexdigest())' "$fixture/download.tar.gz")
+if [ "$archive_hash" != "$download_hash" ]; then
+  echo "Archive digest mismatch: expected=$archive_hash actual=$download_hash bytes=$(wc -c < "$fixture/download.tar.gz")" >&2
+  exit 1
+fi
 stage=backup-anonymous-permission
 [ "$(curl -ksS -o /dev/null -w '%{http_code}' "$(web_url)/api/backups/$backup_id")" = 401 ]
 stage=backup-viewer-permission
