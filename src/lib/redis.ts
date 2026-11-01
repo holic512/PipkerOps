@@ -1,5 +1,5 @@
 import { createClient } from "redis";
-import { backendUrl } from "./config";
+import { backendUrl, redisTlsOptions } from "./config";
 let client: ReturnType<typeof createClient> | undefined;
 let connecting: Promise<unknown> | undefined;
 export async function redis() {
@@ -7,6 +7,7 @@ export async function redis() {
     client = createClient({
       url: backendUrl("REDIS_URL"),
       socket: {
+        ...redisTlsOptions(),
         connectTimeout: 5000,
         reconnectStrategy: (attempt) => Math.min(attempt * 500, 5000),
       },

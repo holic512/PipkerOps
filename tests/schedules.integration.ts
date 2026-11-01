@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 /** Real schedule acceptance against an explicitly selected disposable node. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,13 +17,13 @@ test(
       nodeId,
       "Set SCHEDULE_TEST_NODE_ID to an authorized disposable node",
     );
-    const origin = process.env.APP_ORIGIN ?? "http://127.0.0.1:3000";
+    const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
       headers: { Origin: origin, "Content-Type": "application/json" },
       body: JSON.stringify({
-        email: process.env.BOOTSTRAP_EMAIL,
-        password: process.env.BOOTSTRAP_PASSWORD,
+        email: configValues.BOOTSTRAP_EMAIL,
+        password: configValues.BOOTSTRAP_PASSWORD,
       }),
     });
     assert.equal(login.status, 200);

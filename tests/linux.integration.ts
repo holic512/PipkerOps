@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 /** Real operations in an isolated privileged Docker-in-Docker Linux node.
  * Never mounts the host Docker socket or host filesystem into the fixture.
  */
@@ -9,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { db } from "../src/lib/db";
 import { topologyLinks } from "../src/lib/topology-links";
-const origin = process.env.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
 const docker = (...args: string[]) =>
   execFileSync("docker", args, {
     encoding: "utf8",
@@ -45,8 +46,8 @@ test(
       method: "POST",
       headers: { Origin: origin, "Content-Type": "application/json" },
       body: JSON.stringify({
-        email: process.env.BOOTSTRAP_EMAIL,
-        password: process.env.BOOTSTRAP_PASSWORD,
+        email: configValues.BOOTSTRAP_EMAIL,
+        password: configValues.BOOTSTRAP_PASSWORD,
       }),
     });
     assert.equal(login.status, 200);

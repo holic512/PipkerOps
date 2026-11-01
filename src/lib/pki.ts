@@ -1,3 +1,4 @@
+import { configValues } from "./config";
 /**
  * @file pki.ts
  * @project PipkerOps
@@ -18,8 +19,8 @@ export function pkiFiles() {
   return {
     ca: join(dir, "ca.crt"),
     caKey: join(dir, "ca.key"),
-    cert: process.env.GATEWAY_TLS_CERT ?? join(dir, "server.crt"),
-    key: process.env.GATEWAY_TLS_KEY ?? join(dir, "server.key"),
+    cert: configValues.GATEWAY_TLS_CERT ?? join(dir, "server.crt"),
+    key: configValues.GATEWAY_TLS_KEY ?? join(dir, "server.key"),
   };
 }
 export function validateCsr(pem: string) {
@@ -90,7 +91,7 @@ export function initPki() {
   cert.validity.notAfter = new Date(Date.now() + 365 * 86400000);
   cert.setSubject([{ name: "commonName", value: "PipkerOps Gateway" }]);
   cert.setIssuer(ca.subject.attributes);
-  const hosts = (process.env.PKI_HOSTS ?? "localhost,127.0.0.1")
+  const hosts = (configValues.PKI_HOSTS ?? "localhost,127.0.0.1")
     .split(",")
     .map((v) => v.trim());
   cert.setExtensions([

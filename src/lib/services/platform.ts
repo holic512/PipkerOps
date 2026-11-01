@@ -1,3 +1,4 @@
+import { configValues } from "../config";
 /**
  * @file platform.ts
  * @project PipkerOps
@@ -1012,7 +1013,7 @@ export async function execute(
       );
       await audit(actor, method, "Node", nodeId);
       const url = new URL(
-        process.env.ENROLL_PUBLIC_URL ?? "https://localhost:9444",
+        configValues.ENROLL_PUBLIC_URL ?? "https://localhost:9444",
       );
       url.protocol = "wss:";
       url.pathname = "/terminal";

@@ -1,3 +1,4 @@
+import { configValues } from "../lib/config";
 /**
  * @file worker.ts
  * @project PipkerOps
@@ -430,7 +431,7 @@ async function main() {
     }
     if (!stopping)
       await new Promise((r) =>
-        setTimeout(r, Number(process.env.WORKER_INTERVAL_MS ?? 2000)),
+        setTimeout(r, Number(configValues.WORKER_INTERVAL_MS ?? 2000)),
       );
   }
   await maintenanceJob;

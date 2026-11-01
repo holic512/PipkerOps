@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 /** Real probe failures drive durable alerts, HTTPS webhooks, deduplication and recovery. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "../src/lib/db";
 import { redis } from "../src/lib/redis";
 import type { TaskData } from "../src/lib/client";
-const origin = process.env.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
 async function wait<T>(
   read: () => Promise<T>,
   accept: (v: T) => boolean,
@@ -68,8 +69,8 @@ test(
       method: "POST",
       headers: { Origin: origin, "Content-Type": "application/json" },
       body: JSON.stringify({
-        email: process.env.BOOTSTRAP_EMAIL,
-        password: process.env.BOOTSTRAP_PASSWORD,
+        email: configValues.BOOTSTRAP_EMAIL,
+        password: configValues.BOOTSTRAP_PASSWORD,
       }),
     });
     assert.equal(login.status, 200);

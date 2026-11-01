@@ -16,14 +16,14 @@ fi
 load_paths
 install -d -m 0750 -o 10001 -g 10001 "$CONFIG_DIR" "$DATA_DIR" "$DATA_DIR/pki" "$DATA_DIR/backups"
 install -d -m 0700 "$TLS_DIR"
-if [ ! -e "$CONFIG_DIR/app.env" ]; then
-  install -m 0600 -o 10001 -g 10001 "$DEPLOY_DIR/app.env.example" "$CONFIG_DIR/app.env"
-  echo "已创建配置模板：$CONFIG_DIR/app.env"
+if [ ! -e "$CONFIG_DIR/app.conf" ]; then
+  install -m 0600 -o 10001 -g 10001 "$DEPLOY_DIR/app.conf.example" "$CONFIG_DIR/app.conf"
+  echo "已创建配置模板：$CONFIG_DIR/app.conf"
   echo "请填写外部数据库、Redis、域名、管理员配置，并在 $TLS_DIR 放置 Web 证书，然后重新运行安装。"
   exit 0
 fi
-chown 10001:10001 "$CONFIG_DIR/app.env" "$DATA_DIR/pki"
-chmod 0600 "$CONFIG_DIR/app.env"
+chown 10001:10001 "$CONFIG_DIR/app.conf" "$DATA_DIR/pki"
+chmod 0600 "$CONFIG_DIR/app.conf"
 check_files
 compose pull --policy missing
 start_app

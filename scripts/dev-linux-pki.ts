@@ -1,11 +1,12 @@
+import { configValues } from "../src/lib/config";
 // Local Linux acceptance needs a SAN reachable from isolated Docker containers.
 import forge from "node-forge";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { pkiFiles } from "../src/lib/pki";
 const files = pkiFiles();
-const target = process.env.DEV_TLS_CERT ?? ".data/pki/server-linux.crt";
-const keyTarget = process.env.DEV_TLS_KEY ?? ".data/pki/server-linux.key";
+const target = configValues.DEV_TLS_CERT ?? ".data/pki/server-linux.crt";
+const keyTarget = configValues.DEV_TLS_KEY ?? ".data/pki/server-linux.key";
 if (existsSync(target) || existsSync(keyTarget))
   throw new Error("Dev certificate already exists; refusing to overwrite");
 const ca = forge.pki.certificateFromPem(readFileSync(files.ca, "utf8"));

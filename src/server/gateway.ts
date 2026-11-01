@@ -1,3 +1,4 @@
+import { configValues } from "../lib/config";
 /**
  * @file gateway.ts
  * @project PipkerOps
@@ -561,13 +562,13 @@ async function dispatch() {
 }
 const timer = setInterval(() => void dispatch(), 1000);
 enrollment.listen(
-  Number(process.env.ENROLL_PORT ?? 9444),
-  process.env.GATEWAY_HOST ?? "0.0.0.0",
+  Number(configValues.ENROLL_PORT ?? 9444),
+  configValues.GATEWAY_HOST ?? "0.0.0.0",
   () => console.log("TLS enrollment/terminal gateway ready"),
 );
 agents.listen(
-  Number(process.env.GATEWAY_PORT ?? 9443),
-  process.env.GATEWAY_HOST ?? "0.0.0.0",
+  Number(configValues.GATEWAY_PORT ?? 9443),
+  configValues.GATEWAY_HOST ?? "0.0.0.0",
   () => console.log("mTLS agent gateway ready"),
 );
 async function shutdown() {

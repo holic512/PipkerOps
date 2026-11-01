@@ -12,9 +12,9 @@ Go Agent 主动建立 TLS 连接；Next.js 提供界面与 API，Gateway 维护 
 sudo sh deploy/menu.sh
 ```
 
-选择“安装”，脚本创建配置模板。填写 `deploy/config/app.env`，在 `deploy/certs/web` 放置 `fullchain.pem` 和 `privkey.pem`，再次安装即可拉取镜像、初始化并启动。宿主机路径和版本放在 `deploy/compose.env`，应用凭据只放在映射配置中。
+选择“安装”，脚本创建配置模板。填写 `deploy/config/app.conf`，在 `deploy/certs/web` 放置 `fullchain.pem` 和 `privkey.pem`，再次安装即可拉取镜像、初始化并启动。宿主机路径和版本放在 `deploy/compose.env`，应用凭据只放在映射配置中。
 
-修改 `deploy/config/app.env` 后选择“重启并重读配置”。切换到空数据库时会先执行迁移和管理员初始化；配置切换不搬迁数据。完整步骤、权限、私有镜像登录和恢复说明见[部署文档](docs/DEPLOYMENT.md)。
+修改 `deploy/config/app.conf` 后选择“重启并重读配置”。切换到空数据库时会先执行迁移和管理员初始化；配置切换不搬迁数据。完整步骤、权限、私有镜像登录和恢复说明见[部署文档](docs/DEPLOYMENT.md)。
 
 ## Agent
 

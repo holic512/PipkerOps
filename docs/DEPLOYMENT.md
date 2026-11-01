@@ -28,13 +28,13 @@ sudo sh deploy/install.sh
 | 文件／目录 | 用途 |
 | --- | --- |
 | `deploy/compose.env` | 镜像、版本、项目名、宿主端口和映射路径；不放应用凭据 |
-| `deploy/config/app.env` | 运行配置，目录只读映射到 `/app/config` |
+| `deploy/config/app.conf` | 运行配置，目录只读映射到 `/app/config` |
 | `deploy/data/pki/` | Agent CA 与 Gateway 证书，映射到 `/app/.data/pki` |
 | `deploy/data/backups/` | 系统备份归档与校验记录，映射到 `/app/.data/backups` |
 | `deploy/certs/web/fullchain.pem` | 浏览器 HTTPS 完整证书链 |
 | `deploy/certs/web/privkey.pem` | 浏览器 HTTPS 私钥 |
 
-容器使用 UID/GID `10001:10001`。安装脚本将配置目录和 PKI 目录授权给该身份，`app.env` 为 0600；编辑配置需管理员权限。已有 PKI 文件不被覆盖。Web 证书由 Nginx root 主进程读取；配置目录中的自定义后端 CA 文件也需允许 UID 10001 读取。
+容器使用 UID/GID `10001:10001`。安装脚本将配置目录和 PKI 目录授权给该身份，`app.conf` 为 0600；编辑配置需管理员权限。已有 PKI 文件不被覆盖。Web 证书由 Nginx root 主进程读取；配置目录中的自定义后端 CA 文件也需允许 UID 10001 读取。
 
 默认路径相对仓库根目录解析。自定义位置先复制 `deploy/compose.env.example`，编辑绝对路径或相对根目录的路径，再执行安装。`compose.env` 使用不带引号、不含变量引用的 `KEY=value` 字面量。可通过绝对路径环境变量 `PIPKEROPS_COMPOSE_ENV` 选择另一份部署配置；sudo 时用 `sudo env PIPKEROPS_COMPOSE_ENV=/absolute/compose.env sh deploy/install.sh` 显式传递。
 
@@ -42,12 +42,13 @@ sudo sh deploy/install.sh
 
 ## 运行配置
 
-以 `deploy/app.env.example` 为准。采用 Node 原生 env-file 语法：值是字面量，不执行 shell，也不展开 `${VAR}`。连接 URL 中的密码需要 URL 编码。切勿设置 `NEXT_PUBLIC_` 凭据。
+以 `deploy/app.conf.example` 为准。采用文本键值语法，应用通过 `parseEnv` 直接读取文件，不写入进程环境，不接受业务环境变量覆盖。密码填写原文，包含 `#` 或空格时使用引号；连接串由应用内部编码拼接。修改后重启生效。
 
 | 配置 | 含义 |
 | --- | --- |
-| `DATABASE_URL` | 外部 PostgreSQL 连接，公网须带 `sslmode=require/verify-ca/verify-full` |
-| `REDIS_URL` | 专用 Redis 逻辑库，公网使用 `rediss://` |
+| `DATABASE_HOST / DATABASE_PORT / DATABASE_USERNAME / DATABASE_PASSWORD / DATABASE_NAME` | PostgreSQL 地址、端口、用户名、原文密码和库名 |
+| `DATABASE_SSL_MODE / DATABASE_CA_FILE` | TLS 模式与可选 CA 文件；公网必须 require、verify-ca 或 verify-full |
+| `REDIS_HOST / REDIS_PORT / REDIS_USERNAME / REDIS_PASSWORD / REDIS_DATABASE / REDIS_TLS` | Redis 分项参数；公网必须启用 TLS |
 | `APP_ORIGIN` | 浏览器访问源，生产必须是 HTTPS；包含非默认 Web 端口 |
 | `BOOTSTRAP_EMAIL/PASSWORD/NAME` | 首次管理员，密码至少16位且不包含占位符 |
 | `GATEWAY_PUBLIC_URL` | 节点可达的 `wss://域名:端口/agent` |
@@ -57,11 +58,11 @@ sudo sh deploy/install.sh
 | `BACKUP_DIR` | 容器内固定为 `/app/.data/backups`，实际存于宿主数据映射目录 |
 | `GATEWAY_HOST/GATEWAY_PORT/ENROLL_PORT` | 容器内使用 `0.0.0.0/9443/9444`；宿主端口在 Compose 配置中调整 |
 | `WORKER_INTERVAL_MS` | 调度间隔，默认2000毫秒 |
-| `NODE_EXTRA_CA_CERTS` | 可选，后端私有 CA 的容器内 PEM 路径，如 `/app/config/backend-ca.pem` |
+| `REDIS_CA_FILE` | 可选，Redis 私有 CA 的容器内 PEM 路径，如 `/app/config/backend-ca.pem` |
 
-同一镜像不包含实际配置。每次容器启动，统一入口重新读取文件，校验配置并检查 PostgreSQL/Redis 连接。修改文件可由编辑器原子替换，因映射的是目录，重启后仍读取新文件。编辑或替换后保持 `app.env` 属于 `10001:10001` 且权限为0600；若编辑器改变了所有者，先用 `sudo chown 10001:10001 deploy/config/app.env` 修正。
+同一镜像不包含实际配置。每次容器启动，统一入口重新读取文件，校验配置并检查 PostgreSQL/Redis 连接。修改文件可由编辑器原子替换，因映射的是目录，重启后仍读取新文件。编辑或替换后保持 `app.conf` 属于 `10001:10001` 且权限为0600；若编辑器改变了所有者，先用 `sudo chown 10001:10001 deploy/config/app.conf` 修正。
 
-修改 `app.env` 后运行：
+修改 `app.conf` 后运行：
 
 ```sh
 sudo sh deploy/restart.sh
@@ -128,7 +129,7 @@ sh deploy/start.sh
 
 ## 故障定位
 
-- 配置不存在或不可读：核对映射目录、`app.env` 和 UID 10001 权限；不会回退到镜像内旧配置。
+- 配置不存在或不可读：核对映射目录、`app.conf` 和 UID 10001 权限；不会回退到镜像内旧配置。
 - 初始化失败：入口仅显示失败阶段以避免输出凭据；检查协议、数据库权限、后端可达性和 TLS CA。需要数据库诊断时在可信管理环境查看服务端日志。
 - Web 不健康：`/api/health` 同时验证 PostgreSQL 和 Redis；查看 Web、init 状态。
 - Gateway 不健康：检查 PKI 文件、首个 SAN、容器内9444端口；Agent 还需正确 CA、域名与审批。

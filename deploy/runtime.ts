@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module deployment/runtime
  * @description 容器角色启动、外部后端预检及系统备份的离线恢复入口。
- * @logic 配置由 Node env-file 载入；预检成功后启动角色，维护命令不输出连接凭据。
+ * @logic 配置由应用文本文件载入；预检成功后启动角色，维护命令不输出连接凭据。
  * @dependencies Node.js, Prisma, Redis, PostgreSQL 17 client
  * @index_tags deployment, config, init, backup
  * @author holic512
@@ -13,7 +13,11 @@ import { spawn } from "node:child_process";
 import { db } from "../src/lib/db";
 import { restoreBackup } from "../src/lib/backup-storage";
 import { z } from "zod";
-import { validateRuntime } from "../src/lib/config";
+import {
+  backendUrl,
+  validateRuntime,
+  redisTlsOptions,
+} from "../src/lib/config";
 
 const role = process.argv[2] ?? "web";
 let stage = "配置校验";
@@ -64,8 +68,12 @@ try {
 
 async function preflight() {
   const client = createClient({
-    url: process.env.REDIS_URL,
-    socket: { connectTimeout: 5000, reconnectStrategy: false },
+    url: backendUrl("REDIS_URL"),
+    socket: {
+      ...redisTlsOptions(),
+      connectTimeout: 5000,
+      reconnectStrategy: false,
+    },
   });
   client.on("error", () => {});
   try {

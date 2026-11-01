@@ -5,6 +5,7 @@ const config: NextConfig = {
   outputFileTracingExcludes: {
     "/*": [
       "./.env*",
+      "./config/**/*",
       "./.data/**/*",
       "./certs/**/*",
       "./deploy/config/**/*",

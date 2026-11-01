@@ -1,3 +1,4 @@
+import { configValues } from "./config";
 /**
  * @file backup-storage.ts
  * @project PipkerOps
@@ -34,7 +35,7 @@ import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { Pool } from "pg";
 import { createClient } from "redis";
-import { backendUrl, pkiDir } from "./config";
+import { backendUrl, pkiDir, redisTlsOptions } from "./config";
 
 export interface BackupRecord {
   id: string;
@@ -64,7 +65,7 @@ type Manifest = {
 };
 
 export function backupDirectory() {
-  return process.env.BACKUP_DIR ?? "./.data/backups";
+  return configValues.BACKUP_DIR ?? "./.data/backups";
 }
 
 export async function createBackup(id: string): Promise<BackupRecord> {
@@ -149,7 +150,9 @@ export async function createBackup(id: string): Promise<BackupRecord> {
     temporary = undefined;
     return record;
   } catch {
-    throw new Error(`备份创建失败（${stage}），请检查 PostgreSQL、PKI 和持久目录权限。`);
+    throw new Error(
+      `备份创建失败（${stage}），请检查 PostgreSQL、PKI 和持久目录权限。`,
+    );
   } finally {
     if (temporary)
       await rm(/* turbopackIgnore: true */ temporary, {
@@ -259,7 +262,11 @@ export async function restoreBackup(id: string): Promise<void> {
       throw new Error("数据库 public schema 非空");
     redis = createClient({
       url: backendUrl("REDIS_URL"),
-      socket: { connectTimeout: 5000, reconnectStrategy: false },
+      socket: {
+        ...redisTlsOptions(),
+        connectTimeout: 5000,
+        reconnectStrategy: false,
+      },
     });
     redis.on("error", () => {});
     await redis.connect();
@@ -423,9 +430,7 @@ function pgEnvironment(): NodeJS.ProcessEnv {
     PGSSLMODE: url.searchParams.get("sslmode") ?? "prefer",
     ...(url.searchParams.has("sslrootcert")
       ? { PGSSLROOTCERT: url.searchParams.get("sslrootcert")! }
-      : process.env.NODE_EXTRA_CA_CERTS
-        ? { PGSSLROOTCERT: process.env.NODE_EXTRA_CA_CERTS }
-        : {}),
+      : {}),
   };
 }
 

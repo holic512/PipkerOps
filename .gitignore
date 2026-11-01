@@ -42,3 +42,6 @@ deploy/config/
 deploy/data/
 deploy/certs/
 deploy/compose.env
+
+config/*
+!config/app.conf.example

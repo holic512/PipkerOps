@@ -8,10 +8,11 @@ PipkerOps 由 Next.js Web/API、独立 TLS Gateway、后台 Worker 和 Go Agent 
 
 ```sh
 npm ci
-cp .env.example .env
+mkdir -p config
+cp config/app.conf.example config/app.conf
 ```
 
-编辑 `.env`，填写数据库、Redis、管理员和 Gateway 配置；本地 `APP_ORIGIN=http://127.0.0.1:3000`。开发明文公网后端仅可显式设置 `ALLOW_INSECURE_BACKENDS=true`，生产不接受此例外。
+编辑 `config/app.conf`，填写数据库、Redis、管理员和 Gateway 配置；本地 `APP_ORIGIN=http://127.0.0.1:3000`。开发明文公网后端仅可显式设置 `ALLOW_INSECURE_BACKENDS=true`，生产不接受此例外。
 
 ```sh
 npm run db:generate
@@ -66,7 +67,7 @@ npm run test:database
 # 额外生成50节点30天摘要，非完整生产采集压力
 npm run test:history-capacity
 # 真实生产镜像、映射文件、外部后端与系统备份
-# 不需要根目录 .env，不访问现有业务库
+# 不需要本地配置文件，不访问现有业务库
 # 本地构建使用原生架构；CI 两个原生架构各执行一次
 
 docker build --provenance=false -f deploy/Dockerfile -t pipkerops:test .
@@ -80,7 +81,7 @@ IMAGE=pipkerops:test sh tests/deployment.integration.sh
 以下测试会创建真实资源，需专用开发环境，不能直接指向生产节点。先启动 Web、Gateway、Worker，编译 Agent，生成开发验收证书：
 
 ```sh
-npx tsx --env-file=.env scripts/dev-linux-pki.ts
+npx tsx scripts/dev-linux-pki.ts
 NODE_EXTRA_CA_CERTS="$PWD/.data/pki/ca.crt" npm run worker
 AGENT_BINARY=/absolute/path/pipker-agent npm run test:integration
 ```

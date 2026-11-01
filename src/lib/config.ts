@@ -2,16 +2,32 @@
  * @file config.ts
  * @project PipkerOps
  * @module configuration
- * @description 校验运行时配置与公网 TLS 边界，不输出连接凭据。
- * @logic 启动入口集中校验必填项与协议；仅开发显式允许明文公网后端。
- * @dependencies Node.js environment
+ * @description 从文本文件读取业务配置，组装后端连接并校验公网 TLS 边界。
+ * @logic 固定读取 config/app.conf；入口校验分项配置，内部编码凭据组装连接。
+ * @dependencies Node.js filesystem, util.parseEnv, URL
  * @index_tags config, tls, secrets
  * @author holic512
  */
+import { readFileSync } from "node:fs";
+import { parseEnv } from "node:util";
+import { join } from "node:path";
 import { isIP } from "node:net";
+// 配置只从文件读取，进程环境不能覆盖业务参数；构建阶段允许文件不存在。
+export const configValues: Record<string, string | undefined> =
+  readConfiguration();
+function readConfiguration() {
+  try {
+    return parseEnv(
+      readFileSync(join(process.cwd(), "config/app.conf"), "utf8"),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new Error("配置文件 config/app.conf 不可读");
+  }
+}
 export const production = () => process.env.NODE_ENV === "production";
 export function required(name: string) {
-  const value = process.env[name];
+  const value = configValues[name];
   if (!value) throw new Error(`缺少配置 ${name}`);
   return value;
 }
@@ -28,13 +44,43 @@ export function privateHost(host: string) {
   );
 }
 export function backendUrl(name: "DATABASE_URL" | "REDIS_URL") {
-  const value = required(name);
-  const url = configUrl(name, value);
-  const protocols =
-    name === "DATABASE_URL"
-      ? ["postgres:", "postgresql:"]
-      : ["redis:", "rediss:"];
-  if (!protocols.includes(url.protocol)) throw new Error(`${name} 协议无效`);
+  const database = name === "DATABASE_URL";
+  const prefix = database ? "DATABASE" : "REDIS";
+  const host = required(`${prefix}_HOST`);
+  if (/[\s/@?#]/.test(host)) throw new Error(`${prefix}_HOST 地址无效`);
+  if (
+    !database &&
+    !["true", "false"].includes(configValues.REDIS_TLS ?? "false")
+  )
+    throw new Error("REDIS_TLS 必须为 true 或 false");
+  const port = configValues[`${prefix}_PORT`] ?? (database ? "5432" : "6379");
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)
+    throw new Error(`${prefix}_PORT 数值无效`);
+  const url = configUrl(
+    prefix,
+    `${database ? "postgresql" : configValues.REDIS_TLS === "true" ? "rediss" : "redis"}://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`,
+  );
+  url.username = database
+    ? required("DATABASE_USERNAME")
+    : (configValues.REDIS_USERNAME ?? "");
+  url.password = required(`${prefix}_PASSWORD`);
+  if (database) {
+    url.pathname = "/" + encodeURIComponent(required("DATABASE_NAME"));
+    const mode = configValues.DATABASE_SSL_MODE ?? "disable";
+    if (
+      !["disable", "prefer", "require", "verify-ca", "verify-full"].includes(
+        mode,
+      )
+    )
+      throw new Error("DATABASE_SSL_MODE 无效");
+    url.searchParams.set("sslmode", mode);
+    if (configValues.DATABASE_CA_FILE)
+      url.searchParams.set("sslrootcert", configValues.DATABASE_CA_FILE);
+  } else {
+    const index = configValues.REDIS_DATABASE ?? "0";
+    if (!/^\d+$/.test(index)) throw new Error("REDIS_DATABASE 数值无效");
+    url.pathname = "/" + index;
+  }
   const tls =
     name === "REDIS_URL"
       ? url.protocol === "rediss:"
@@ -44,11 +90,11 @@ export function backendUrl(name: "DATABASE_URL" | "REDIS_URL") {
   if (
     !tls &&
     !privateHost(url.hostname) &&
-    !(process.env.ALLOW_INSECURE_BACKENDS === "true" && !production())
+    !(configValues.ALLOW_INSECURE_BACKENDS === "true" && !production())
   ) {
     throw new Error(`${name} 的公网连接必须启用 TLS`);
   }
-  return value;
+  return url.toString();
 }
 export function appOrigin() {
   const url = configUrl("APP_ORIGIN", required("APP_ORIGIN"));
@@ -58,7 +104,7 @@ export function appOrigin() {
     throw new Error("生产 APP_ORIGIN 必须为 HTTPS");
   return url.origin;
 }
-export const pkiDir = () => process.env.PKI_DIR ?? "./.data/pki";
+export const pkiDir = () => configValues.PKI_DIR ?? "./.data/pki";
 
 export function validateRuntime(initializing = false) {
   backendUrl("DATABASE_URL");
@@ -81,7 +127,7 @@ export function validateRuntime(initializing = false) {
       throw new Error("BOOTSTRAP_PASSWORD 必须为至少16位随机密码");
   }
   for (const name of ["GATEWAY_PORT", "ENROLL_PORT", "WORKER_INTERVAL_MS"]) {
-    const value = process.env[name];
+    const value = configValues[name];
     if (
       value &&
       (!/^\d+$/.test(value) ||
@@ -100,4 +146,15 @@ function configUrl(name: string, value: string) {
   } catch {
     throw new Error(`${name} URL 格式无效`);
   }
+}
+
+export function redisTlsOptions() {
+  return configValues.REDIS_TLS === "true"
+    ? {
+        tls: true as const,
+        ...(configValues.REDIS_CA_FILE
+          ? { ca: readFileSync(configValues.REDIS_CA_FILE) }
+          : {}),
+      }
+    : {};
 }

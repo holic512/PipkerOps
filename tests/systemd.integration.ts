@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 /** Full systemd/ufw/software/verified upgrade acceptance in a disposable Linux container. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -13,7 +14,7 @@ const docker = (...args: string[]) =>
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 120000,
   });
-const origin = process.env.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
 async function wait<T>(
   read: () => Promise<T>,
   accept: (v: T) => boolean,
@@ -64,8 +65,8 @@ test(
       method: "POST",
       headers: { Origin: origin, "Content-Type": "application/json" },
       body: JSON.stringify({
-        email: process.env.BOOTSTRAP_EMAIL,
-        password: process.env.BOOTSTRAP_PASSWORD,
+        email: configValues.BOOTSTRAP_EMAIL,
+        password: configValues.BOOTSTRAP_PASSWORD,
       }),
     });
     assert.equal(login.status, 200);

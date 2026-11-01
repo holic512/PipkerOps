@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 /** End-to-end acceptance against running Web/Gateway/Worker and a real Go Agent.
  * Uses uniquely named resources and cleans only IDs created by this test.
  */
@@ -19,7 +20,7 @@ import { db } from "../src/lib/db";
 import { hashPassword } from "../src/lib/crypto";
 import { createTaskSubmission } from "../src/lib/task-submission";
 import type { NodeData, TaskData, ProbeData } from "../src/lib/client";
-const origin = process.env.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
 async function waitFor<T>(
   read: () => Promise<T>,
   accept: (value: T) => boolean,
@@ -73,8 +74,8 @@ test(
       process.env.AGENT_BINARY ?? "agent/bin/pipker-agent",
     );
     const cookie = await login(
-      process.env.BOOTSTRAP_EMAIL!,
-      process.env.BOOTSTRAP_PASSWORD!,
+      configValues.BOOTSTRAP_EMAIL!,
+      configValues.BOOTSTRAP_PASSWORD!,
     );
     const target = createServer((req, res) => {
       res.setHeader("Content-Type", "application/json");

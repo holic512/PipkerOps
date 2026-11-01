@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 import { request } from "node:https";
 import { readFileSync } from "node:fs";
 import { pkiFiles } from "../src/lib/pki";
@@ -7,7 +8,7 @@ const req = request(
     port: 9444,
     path: "/health",
     ca: readFileSync(pkiFiles().ca),
-    servername: (process.env.PKI_HOSTS ?? "localhost").split(",")[0].trim(),
+    servername: (configValues.PKI_HOSTS ?? "localhost").split(",")[0].trim(),
     timeout: 3000,
   },
   (res) => {

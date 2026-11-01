@@ -58,10 +58,19 @@ SETTINGS
 write_config() {
   database=$1
   redis_db=$2
-  cat > "$fixture/config/app.env.new" <<SETTINGS
+  cat > "$fixture/config/app.conf.new" <<SETTINGS
 APP_ORIGIN=https://localhost
-DATABASE_URL=postgresql://pipkerops:$password@postgres:5432/$database?sslmode=disable
-REDIS_URL=redis://:$password@redis:6379/$redis_db
+DATABASE_HOST=postgres
+DATABASE_PORT=5432
+DATABASE_USERNAME=pipkerops
+DATABASE_PASSWORD=$password
+DATABASE_NAME=$database
+DATABASE_SSL_MODE=disable
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=$password
+REDIS_DATABASE=$redis_db
+REDIS_TLS=false
 BOOTSTRAP_EMAIL=admin@fixture.test
 BOOTSTRAP_PASSWORD=$admin_password
 BOOTSTRAP_NAME=Fixture
@@ -72,11 +81,11 @@ PKI_DIR=/app/.data/pki
 BACKUP_DIR=/app/.data/backups
 WORKER_INTERVAL_MS=500
 SETTINGS
-  mv "$fixture/config/app.env.new" "$fixture/config/app.env"
+  mv "$fixture/config/app.conf.new" "$fixture/config/app.conf"
   permissions
 }
 permissions() {
-  docker run --rm --user 0 --entrypoint sh -v "$fixture:/fixture" "$image" -c 'chown -R 10001:10001 /fixture/config /fixture/data; chmod 750 /fixture/config /fixture/data; chmod 600 /fixture/config/app.env' >/dev/null
+  docker run --rm --user 0 --entrypoint sh -v "$fixture:/fixture" "$image" -c 'chown -R 10001:10001 /fixture/config /fixture/data; chmod 750 /fixture/config /fixture/data; chmod 600 /fixture/config/app.conf' >/dev/null
 }
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$fixture/tls/privkey.pem" -out "$fixture/tls/fullchain.pem" -days 1 -subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1 >/dev/null 2>&1
 write_config pko_a 1
@@ -125,28 +134,28 @@ assert_connections pko_a
 ca_hash=$(docker run --rm --entrypoint sha256sum -v "$fixture/data/pki:/pki:ro" "$image" /pki/ca.crt)
 echo 'PASS initial deployment, login, and all three roles connected to A'
 stage=runtime-failures
-cp "$fixture/config/app.env" "$fixture/good.env"
+cp "$fixture/config/app.conf" "$fixture/good.env"
 expect_failure() {
   if compose run --rm --no-deps -T web init > "$fixture/failure.log" 2>&1; then echo 'Expected failure but command succeeded' >&2; exit 1; fi
   if grep -q "$password\|$admin_password" "$fixture/failure.log"; then echo 'Credential leak detected' >&2; exit 1; fi
 }
-rm "$fixture/config/app.env"
+rm "$fixture/config/app.conf"
 expect_failure
-cp "$fixture/good.env" "$fixture/config/app.env"
-chmod 000 "$fixture/config/app.env"
+cp "$fixture/good.env" "$fixture/config/app.conf"
+chmod 000 "$fixture/config/app.conf"
 expect_failure
-chmod 0600 "$fixture/config/app.env"
-cp "$fixture/good.env" "$fixture/config/app.env"
-sed 's|DATABASE_URL=.*|DATABASE_URL=https://user:secret-canary@example.com/db|' "$fixture/good.env" > "$fixture/config/app.env"
+chmod 0600 "$fixture/config/app.conf"
+cp "$fixture/good.env" "$fixture/config/app.conf"
+sed 's|DATABASE_PORT=.*|DATABASE_PORT=invalid|' "$fixture/good.env" > "$fixture/config/app.conf"
 permissions
 expect_failure
-sed 's|DATABASE_URL=.*|DATABASE_URL=postgresql://example.com/db?sslmode=disable|' "$fixture/good.env" > "$fixture/config/app.env"
+sed 's|DATABASE_HOST=.*|DATABASE_HOST=example.com|' "$fixture/good.env" > "$fixture/config/app.conf"
 permissions
 expect_failure
-sed "s|@postgres:5432/|@postgres:1/|" "$fixture/good.env" > "$fixture/config/app.env"
+sed "s|DATABASE_PORT=5432|DATABASE_PORT=1|" "$fixture/good.env" > "$fixture/config/app.conf"
 permissions
 expect_failure
-cp "$fixture/good.env" "$fixture/config/app.env"
+cp "$fixture/good.env" "$fixture/config/app.conf"
 permissions
 echo 'PASS missing/unreadable config, protocol/TLS validation, unreachable backend, redacted errors'
 stage=switch-empty-B
@@ -255,5 +264,5 @@ rpc '{"method":"backups.list"}' > "$fixture/backup-list.json"
 echo 'PASS backup deletion removes persistent archive without deleting live application records'
 stage=image-content
 [ "$(docker image inspect --format '{{.Config.User}}' "$image")" = '10001:10001' ]
-docker run --rm --entrypoint sh "$image" -c 'test ! -e /app/.env && test ! -e /app/config/app.env && test ! -e /app/.git && test ! -e /app/.data/pki/ca.key'
+docker run --rm --entrypoint sh "$image" -c 'test ! -e /app/.env && test ! -e /app/config/app.conf && test ! -e /app/.git && test ! -e /app/.data/pki/ca.key'
 echo 'PASS non-root image excludes runtime credentials and private keys'

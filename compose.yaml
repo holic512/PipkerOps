@@ -4,7 +4,6 @@ x-runtime: &runtime
   restart: unless-stopped
   environment:
     NODE_ENV: production
-    PIPKEROPS_CONFIG_FILE: /app/config/app.env
   volumes:
     - type: bind
       source: ${PIPKEROPS_CONFIG_DIR:-./deploy/config}
@@ -43,7 +42,7 @@ services:
     depends_on:
       init: {condition: service_completed_successfully}
     healthcheck:
-      test: [CMD, node, --env-file=/app/config/app.env, --import, tsx, deploy/health.ts, gateway]
+      test: [CMD, node, --import, tsx, deploy/health.ts, gateway]
       interval: 5s
       timeout: 5s
       retries: 12

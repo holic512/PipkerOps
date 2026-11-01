@@ -1,3 +1,4 @@
+import { parseEnv } from "node:util";
 // @file check-secrets.mjs
 // @project PipkerOps
 // @module tooling/secrets
@@ -16,34 +17,14 @@ if (args.length > 1 || (args.length === 1 && args[0] !== "--all")) {
 }
 const all = args[0] === "--all";
 // Reads local secrets only for comparison; never prints their values.
-const local = existsSync(".env")
-  ? Object.fromEntries(
-      readFileSync(".env", "utf8")
-        .split("\n")
-        .filter((l) => l && !l.startsWith("#"))
-        .map((l) => {
-          const i = l.indexOf("=");
-          return [l.slice(0, i), l.slice(i + 1).replace(/^['"]|['"]$/g, "")];
-        }),
-    )
+const local = existsSync("config/app.conf")
+  ? parseEnv(readFileSync("config/app.conf", "utf8"))
   : {};
-const needles = [];
-for (const key of ["DATABASE_URL", "REDIS_URL"]) {
-  if (local[key]) {
-    try {
-      const u = new URL(local[key]);
-      if (u.password) needles.push(decodeURIComponent(u.password));
-      if (!["localhost", "127.0.0.1", "postgres", "redis"].includes(u.hostname))
-        needles.push(u.hostname);
-    } catch {
-      console.error(
-        `Secret check could not parse local ${key}; value omitted.`,
-      );
-      process.exit(1);
-    }
-  }
-}
-if (local.BOOTSTRAP_PASSWORD) needles.push(local.BOOTSTRAP_PASSWORD);
+const needles = [
+  local.DATABASE_PASSWORD,
+  local.REDIS_PASSWORD,
+  local.BOOTSTRAP_PASSWORD,
+].filter(Boolean);
 const files = execFileSync(
   "git",
   all
@@ -60,6 +41,7 @@ for (const file of files) {
     (/(^|\/)[^/]*\.env($|\.)/.test(file) && !file.endsWith(".example")) ||
     /(^|\/)(\.data|secrets|certs|node_modules|\.next|\.idea)\//.test(file) ||
     /^deploy\/(config|data)\//.test(file) ||
+    (file.startsWith("config/") && !file.endsWith(".example")) ||
     /\.(key|pem|p12|pfx|dump|backup)$/.test(file)
   ) {
     failures.push(file);

@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 /** Two real isolated Linux nodes exercise cross-node probes, fault paths and recovery. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -6,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { db } from "../src/lib/db";
 import type { ProbeData, TaskData } from "../src/lib/client";
-const origin = process.env.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
 const docker = (...args: string[]) =>
   execFileSync("docker", args, {
     encoding: "utf8",
@@ -48,8 +49,8 @@ test(
       method: "POST",
       headers: { Origin: origin, "Content-Type": "application/json" },
       body: JSON.stringify({
-        email: process.env.BOOTSTRAP_EMAIL,
-        password: process.env.BOOTSTRAP_PASSWORD,
+        email: configValues.BOOTSTRAP_EMAIL,
+        password: configValues.BOOTSTRAP_PASSWORD,
       }),
     });
     assert.equal(login.status, 200);

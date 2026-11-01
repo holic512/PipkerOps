@@ -105,9 +105,10 @@ export async function processBackupQueue() {
     } catch (error) {
       await finishTask(task.id, null, {
         success: false,
-        error: error instanceof Error && error.message.startsWith("备份创建失败（")
-          ? error.message
-          : "备份未完成，请检查备份目录权限、可用空间、数据库和 PKI。",
+        error:
+          error instanceof Error && error.message.startsWith("备份创建失败（")
+            ? error.message
+            : "备份未完成，请检查备份目录权限、可用空间、数据库和 PKI。",
         result: {},
       });
     }

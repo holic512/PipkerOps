@@ -3,7 +3,7 @@
 # @project PipkerOps
 # @module deployment/common
 # @description 部署脚本共用路径、Compose 调用、配置检查和初始化流程。
-# @logic 显式使用部署配置，路径相对仓库解析，不执行 app.env 内容。
+# @logic 显式使用部署配置，路径相对仓库解析，不执行 app.conf 内容。
 # @dependencies POSIX sh, Docker Compose v2
 # @index_tags deployment, compose, config
 # @author holic512
@@ -31,7 +31,7 @@ load_paths() {
 }
 compose() { docker compose --project-directory "$PROJECT_ROOT" --env-file "$DEPLOY_ENV" -f "$PROJECT_ROOT/compose.yaml" "$@"; }
 check_files() {
-  [ -f "$CONFIG_DIR/app.env" ] || fail "缺少 $CONFIG_DIR/app.env"
+  [ -f "$CONFIG_DIR/app.conf" ] || fail "缺少 $CONFIG_DIR/app.conf"
   [ -f "$TLS_DIR/fullchain.pem" ] && [ -f "$TLS_DIR/privkey.pem" ] || fail "请在 $TLS_DIR 放置 fullchain.pem 和 privkey.pem。"
   [ -d "$DATA_DIR/pki" ] || fail '缺少 PKI 目录，请运行安装入口。'
   compose config --quiet

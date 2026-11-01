@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { authorize, ApiError, type Actor } from "../src/lib/auth";
@@ -47,15 +48,24 @@ test("密码随机盐及恒时摘要校验", async () => {
 });
 test("生产不能通过开发例外使用公网明文后端", () => {
   const old = { ...process.env };
+  const saved = { ...configValues };
   try {
     Object.assign(process.env, { NODE_ENV: "production" });
-    process.env.ALLOW_INSECURE_BACKENDS = "true";
-    process.env.DATABASE_URL = "postgresql://example.com/test?sslmode=disable";
+    configValues.ALLOW_INSECURE_BACKENDS = "true";
+    Object.assign(configValues, {
+      DATABASE_HOST: "example.com",
+      DATABASE_NAME: "test",
+      DATABASE_USERNAME: "test",
+      DATABASE_PASSWORD: "test",
+      DATABASE_SSL_MODE: "disable",
+    });
     assert.throws(() => backendUrl("DATABASE_URL"));
-    process.env.DATABASE_URL = "postgresql://postgres/test?sslmode=disable";
+    configValues.DATABASE_HOST = "postgres";
     assert.ok(backendUrl("DATABASE_URL"));
   } finally {
     process.env = old;
+    for (const key of Object.keys(configValues)) delete configValues[key];
+    Object.assign(configValues, saved);
   }
 });
 test("内网例外只匹配真实地址，公网域名不能伪装私网前缀绕过TLS", () => {

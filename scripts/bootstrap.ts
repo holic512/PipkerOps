@@ -1,3 +1,4 @@
+import { configValues } from "../src/lib/config";
 import { db } from "../src/lib/db";
 import { hashPassword } from "../src/lib/crypto";
 import { required } from "../src/lib/config";
@@ -13,7 +14,7 @@ try {
       data: {
         email,
         passwordHash: await hashPassword(password),
-        displayName: process.env.BOOTSTRAP_NAME ?? "管理员",
+        displayName: configValues.BOOTSTRAP_NAME ?? "管理员",
         role: "ADMIN",
       },
     });

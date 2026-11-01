@@ -1,3 +1,4 @@
+import { configValues } from "../config";
 /**
  * @file nodes.ts
  * @project PipkerOps
@@ -96,8 +97,8 @@ export async function enrollmentToken(actor: Actor, input: unknown) {
     id: result.id,
     token,
     expiresAt: result.expiresAt,
-    gateway: process.env.GATEWAY_PUBLIC_URL,
-    enrollUrl: process.env.ENROLL_PUBLIC_URL,
+    gateway: configValues.GATEWAY_PUBLIC_URL,
+    enrollUrl: configValues.ENROLL_PUBLIC_URL,
   };
 }
 export async function enroll(input: unknown) {
