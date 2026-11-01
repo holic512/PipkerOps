@@ -24,7 +24,7 @@ compose() { docker compose --project-directory "$root" --env-file "$PIPKEROPS_CO
 cleanup() {
   result=$?
   trap - EXIT INT TERM
-  if [ "$result" -ne 0 ]; then echo "Deployment verification failed at: $stage" >&2; compose logs --tail 20 init web gateway worker 2>/dev/null || true; if [ -f "$fixture/registry.log" ]; then tail -20 "$fixture/registry.log"; fi; fi
+  if [ "$result" -ne 0 ]; then echo "Deployment verification failed at: $stage" >&2; compose logs --tail 20 init web gateway worker proxy 2>/dev/null || true; if [ -f "$fixture/registry.log" ]; then tail -20 "$fixture/registry.log"; fi; fi
   docker rm -f "$pg_container" "$redis_container" "$registry_container" >/dev/null 2>&1 || true
   compose down --remove-orphans >/dev/null 2>&1 || true
   docker run --rm --user 0 --entrypoint sh -v "$fixture:/fixture" "$image" -c 'rm -rf /fixture/*' >/dev/null 2>&1 || true
@@ -203,11 +203,14 @@ docker exec "$pg_container" psql -U pipkerops -d pko_a -v ON_ERROR_STOP=1 -c "IN
 rpc() {
   curl -ksSf -b "$fixture/cookies" -H 'Origin: https://localhost' -H 'Content-Type: application/json' --data-binary "$1" "$(web_url)/api/rpc"
 }
+stage=backup-enqueue
 backup_key=$(openssl rand -hex 16)
 rpc "{\"method\":\"backups.create\",\"params\":{\"confirmed\":true,\"idempotencyKey\":\"$backup_key\"}}" > "$fixture/backup-task.json"
 backup_id=$(python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["id"])' < "$fixture/backup-task.json")
+stage=backup-idempotency
 rpc "{\"method\":\"backups.create\",\"params\":{\"confirmed\":true,\"idempotencyKey\":\"$backup_key\"}}" > "$fixture/backup-repeat.json"
 [ "$backup_id" = "$(python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["id"])' < "$fixture/backup-repeat.json")" ]
+stage=backup-worker
 attempt=0
 while :; do
   rpc "{\"method\":\"tasks.get\",\"params\":{\"id\":\"$backup_id\"}}" > "$fixture/backup-job.json"
@@ -220,16 +223,20 @@ while :; do
   attempt=$((attempt+1)); [ "$attempt" -lt 90 ] || exit 1; sleep 1
 done
 rpc '{"method":"backups.list"}' > "$fixture/backup-list.json"
+stage=backup-download
 archive_hash=$(python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["items"][0]["sha256"])' < "$fixture/backup-list.json")
 curl -ksSf -b "$fixture/cookies" "$(web_url)/api/backups/$backup_id" -o "$fixture/download.tar.gz"
 [ "$archive_hash" = "$(openssl dgst -sha256 "$fixture/download.tar.gz" | awk '{print $NF}')" ]
+stage=backup-anonymous-permission
 [ "$(curl -ksS -o /dev/null -w '%{http_code}' "$(web_url)/api/backups/$backup_id")" = 401 ]
+stage=backup-viewer-permission
 # A real VIEWER session must not list or download platform backup secrets.
 docker exec "$pg_container" psql -U pipkerops -d pko_a -v ON_ERROR_STOP=1 -c "INSERT INTO \"User\" (id,email,\"passwordHash\",\"displayName\",role,\"updatedAt\") SELECT 'backup-viewer','viewer@fixture.test',\"passwordHash\",'Backup viewer','VIEWER',now() FROM \"User\" WHERE email='admin@fixture.test'" >/dev/null
 printf '{"email":"viewer@fixture.test","password":"%s"}' "$admin_password" > "$fixture/viewer-login.json"
 curl -ksSf -c "$fixture/viewer-cookies" -H 'Origin: https://localhost' -H 'Content-Type: application/json' --data-binary @"$fixture/viewer-login.json" "$(web_url)/api/auth/login" >/dev/null
 [ "$(curl -ksS -b "$fixture/viewer-cookies" -o /dev/null -w '%{http_code}' -H 'Origin: https://localhost' -H 'Content-Type: application/json' --data '{"method":"backups.list"}' "$(web_url)/api/rpc")" = 403 ]
 [ "$(curl -ksS -b "$fixture/viewer-cookies" -o /dev/null -w '%{http_code}' "$(web_url)/api/backups/$backup_id")" = 403 ]
+stage=backup-restart-persistence
 compose restart web worker > "$fixture/operation.log" 2>&1
 attempt=0
 until curl -ksSf "$(web_url)/api/health" >/dev/null 2>&1; do attempt=$((attempt+1)); [ "$attempt" -lt 60 ] || exit 1; sleep 1; done
