@@ -225,9 +225,12 @@ done
 rpc '{"method":"backups.list"}' > "$fixture/backup-list.json"
 stage=backup-download
 archive_hash=$(python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["items"][0]["sha256"])' < "$fixture/backup-list.json")
-curl -ksSf -b "$fixture/cookies" "$(web_url)/api/backups/$backup_id" -o "$fixture/download.tar.gz"
+curl -ksSf -D "$fixture/download-headers" -b "$fixture/cookies" "$(web_url)/api/backups/$backup_id" -o "$fixture/download.tar.gz"
 download_hash=$(python3 -c 'import hashlib,sys; print(hashlib.file_digest(open(sys.argv[1], "rb"), "sha256").hexdigest())' "$fixture/download.tar.gz")
 if [ "$archive_hash" != "$download_hash" ]; then
+  docker run --rm --entrypoint sha256sum -v "$fixture/data/backups:/backups:ro" "$image" "/backups/$backup_id/archive.tar.gz" >&2
+  python3 -c 'import sys; print("Download magic:", open(sys.argv[1], "rb").read(2).hex())' "$fixture/download.tar.gz" >&2
+  grep -iE '^(content-type|content-encoding|content-length|transfer-encoding):' "$fixture/download-headers" >&2 || true
   echo "Archive digest mismatch: expected=$archive_hash actual=$download_hash bytes=$(wc -c < "$fixture/download.tar.gz")" >&2
   exit 1
 fi
