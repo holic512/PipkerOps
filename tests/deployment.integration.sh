@@ -226,6 +226,7 @@ rpc '{"method":"backups.list"}' > "$fixture/backup-list.json"
 stage=backup-download
 archive_hash=$(python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["items"][0]["sha256"])' < "$fixture/backup-list.json")
 curl -ksSf -D "$fixture/download-headers" -b "$fixture/cookies" "$(web_url)/api/backups/$backup_id" -o "$fixture/download.tar.gz"
+grep -qi '^content-type: application/gzip' "$fixture/download-headers" || { echo 'Backup download returned an unexpected content type' >&2; exit 1; }
 download_hash=$(python3 -c 'import hashlib,sys; print(hashlib.file_digest(open(sys.argv[1], "rb"), "sha256").hexdigest())' "$fixture/download.tar.gz")
 if [ "$archive_hash" != "$download_hash" ]; then
   docker run --rm --entrypoint sha256sum -v "$fixture/data/backups:/backups:ro" "$image" "/backups/$backup_id/archive.tar.gz" >&2

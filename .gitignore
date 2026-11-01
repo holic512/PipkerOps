@@ -29,7 +29,7 @@ certs/
 *.backup
 *.tar.gz
 *.rdb
-backups/
+/backups/
 *.log
 *.pid
 .DS_Store

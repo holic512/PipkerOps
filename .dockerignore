@@ -21,7 +21,7 @@ deploy/data/
 deploy/certs/
 deploy/compose.env
 dist/
-backups/
+/backups/
 *.dump
 *.backup
 *.tar.gz
