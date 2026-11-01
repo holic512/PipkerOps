@@ -203,7 +203,10 @@ attempt=0
 while :; do
   rpc "{\"method\":\"tasks.get\",\"params\":{\"id\":\"$backup_id\"}}" > "$fixture/backup-job.json"
   status=$(python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["status"])' < "$fixture/backup-job.json")
-  [ "$status" != FAILED ] && [ "$status" != UNKNOWN ] || exit 1
+  if [ "$status" = FAILED ] || [ "$status" = UNKNOWN ]; then
+    python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("Backup task:", d["status"], d.get("error"))' < "$fixture/backup-job.json" >&2
+    exit 1
+  fi
   [ "$status" != SUCCEEDED ] || break
   attempt=$((attempt+1)); [ "$attempt" -lt 90 ] || exit 1; sleep 1
 done

@@ -69,6 +69,7 @@ export function backupDirectory() {
 
 export async function createBackup(id: string): Promise<BackupRecord> {
   let temporary: string | undefined;
+  let stage = "创建持久目录";
   try {
     await prepareDirectory();
     temporary = await mkdtemp(
@@ -79,12 +80,14 @@ export async function createBackup(id: string): Promise<BackupRecord> {
       recursive: true,
       mode: 0o700,
     });
+    stage = "导出数据库";
     await run(
       "pg_dump",
       ["--format=custom", "--no-owner", "--no-acl"],
       join(/* turbopackIgnore: true */ payload, "postgres.dump"),
       pgEnvironment(),
     );
+    stage = "复制证书";
     for (const name of pkiNames) {
       const destination = join(
         /* turbopackIgnore: true */ payload,
@@ -99,6 +102,7 @@ export async function createBackup(id: string): Promise<BackupRecord> {
       );
       await chmod(destination, 0o600);
     }
+    stage = "生成归档";
     const createdAt = new Date().toISOString();
     const files: Record<string, string> = {};
     for (const name of payloadNames)
@@ -145,7 +149,7 @@ export async function createBackup(id: string): Promise<BackupRecord> {
     temporary = undefined;
     return record;
   } catch {
-    throw new Error("备份创建失败，请检查 PostgreSQL、PKI 和持久目录权限。");
+    throw new Error(`备份创建失败（${stage}），请检查 PostgreSQL、PKI 和持久目录权限。`);
   } finally {
     if (temporary)
       await rm(/* turbopackIgnore: true */ temporary, {

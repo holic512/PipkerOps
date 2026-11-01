@@ -102,10 +102,12 @@ export async function processBackupQueue() {
         output: "数据库与 Agent PKI 备份已保存，可在系统备份页面下载。",
       });
       await auditBackup(actor, "backups.create", task.id);
-    } catch {
+    } catch (error) {
       await finishTask(task.id, null, {
         success: false,
-        error: "备份未完成，请检查备份目录权限、可用空间、数据库和 PKI。",
+        error: error instanceof Error && error.message.startsWith("备份创建失败（")
+          ? error.message
+          : "备份未完成，请检查备份目录权限、可用空间、数据库和 PKI。",
         result: {},
       });
     }
