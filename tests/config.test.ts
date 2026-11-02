@@ -18,10 +18,6 @@ test("文件配置组装连接、编码原文密码并拒绝无效端口", () =>
       REDIS_HOST: "redis",
       REDIS_PASSWORD: "p@ss:#/word",
       REDIS_DATABASE: "1",
-      APP_ORIGIN: "https://ops.example.com",
-      GATEWAY_PUBLIC_URL: "wss://ops.example.com:9443/agent",
-      ENROLL_PUBLIC_URL: "https://ops.example.com:9444",
-      PKI_HOSTS: "ops.example.com",
       BOOTSTRAP_EMAIL: "admin@example.com",
       BOOTSTRAP_PASSWORD: "a-long-random-test-password",
     });
@@ -37,10 +33,6 @@ test("文件配置组装连接、编码原文密码并拒绝无效端口", () =>
       message: "DATABASE_PORT 数值无效",
     });
     configValues.DATABASE_PORT = "5432";
-    delete configValues.APP_ORIGIN;
-    delete configValues.GATEWAY_PUBLIC_URL;
-    delete configValues.ENROLL_PUBLIC_URL;
-    delete configValues.PKI_HOSTS;
     validateRuntime();
     configValues.GATEWAY_PORT = "70000";
     assert.throws(() => validateRuntime(), {

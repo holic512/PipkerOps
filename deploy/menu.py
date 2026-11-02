@@ -2,7 +2,7 @@
 # @project PipkerOps
 # @module deployment/menu
 # @description 主控容器和本地 Agent 的统一管理菜单。
-# @logic 按组件选择子菜单，分别调用主控部署和 Agent 安装服务管理。
+# @logic 按组件选择子菜单，将 Ops 安装、镜像测速与服务启停分开执行。
 # @dependencies Python 3, deployment core, Agent management
 # @index_tags deployment, menu, agent
 # @author holic512
@@ -28,15 +28,15 @@ def menu():
 
 
 def control_menu():
-    options = {'1': 'status', '2': 'start', '3': 'stop', '4': 'restart', '5': 'update'}
+    options = {'1': 'install', '2': 'status', '3': 'start', '4': 'stop', '5': 'restart', '6': 'update', '7': 'mirrors'}
     while True:
-        choice = input('\n主控管理\n1. 查看详情\n2. 启动\n3. 停止\n4. 重启\n5. 更新\n0. 返回\n请选择：').strip()
+        choice = input('\n主控管理\n1. 安装 Ops（不启动）\n2. 查看详情\n3. 启动\n4. 停止\n5. 重启\n6. 更新\n7. 镜像源测速\n0. 返回\n请选择：').strip()
         if choice == '0':
             return
         if choice not in options:
             print('请选择有效编号。')
             continue
-        version = input('目标版本（例如 0.1.2 或 edge）：').strip() if choice == '5' else None
+        version = input('目标版本（例如 0.1.4 或 edge）：').strip() if choice == '6' else None
         control_main(options[choice], version)
 
 

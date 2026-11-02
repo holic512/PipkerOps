@@ -12,7 +12,7 @@ mkdir -p config
 cp config/app.conf.example config/app.conf
 ```
 
-编辑 `config/app.conf`，填写数据库、Redis 和管理员配置；不配置外部域名。开发明文公网后端仅可显式设置 `ALLOW_INSECURE_BACKENDS=true`，生产不接受此例外。
+编辑 `config/app.conf`，按数据库、缓存 Redis、初始管理员、持久目录、后台任务的顺序填写；不配置外部域名或旧注册网关、PKI 参数。数据库和 Redis 是否使用 TLS 仅由 `DATABASE_SSL_MODE`、`REDIS_TLS` 决定；生产同样支持 `disable`、`false`，无需额外的明文后端开关。
 
 ```sh
 npm run db:generate

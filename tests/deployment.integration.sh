@@ -84,6 +84,10 @@ permissions() {
 }
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$fixture/web-cert/privkey.pem" -out "$fixture/web-cert/fullchain.pem" -days 1 -subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1 >/dev/null 2>&1
 write_config pko_a 1
+stage=install-without-start
+python3 "$deployment/script/install.py" > "$fixture/operation.log" 2>&1
+[ -z "$(compose ps -aq)" ]
+echo 'PASS Ops installation prepares configuration and images without creating containers'
 sync_config
 compose create init >/dev/null
 network=${project}_default
@@ -161,7 +165,10 @@ cp "$fixture/good.env" "$deployment/data/ops/config/app.conf"
 sed 's|DATABASE_PORT=.*|DATABASE_PORT=invalid|' "$fixture/good.env" > "$deployment/data/ops/config/app.conf"
 permissions
 expect_failure
-sed 's|DATABASE_HOST=.*|DATABASE_HOST=example.com|' "$fixture/good.env" > "$deployment/data/ops/config/app.conf"
+sed 's|DATABASE_SSL_MODE=.*|DATABASE_SSL_MODE=invalid|' "$fixture/good.env" > "$deployment/data/ops/config/app.conf"
+permissions
+expect_failure
+sed 's|REDIS_TLS=.*|REDIS_TLS=invalid|' "$fixture/good.env" > "$deployment/data/ops/config/app.conf"
 permissions
 expect_failure
 sed "s|DATABASE_PORT=5432|DATABASE_PORT=1|" "$fixture/good.env" > "$deployment/data/ops/config/app.conf"

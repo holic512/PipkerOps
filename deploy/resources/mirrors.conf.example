@@ -1,0 +1,23 @@
+# 镜像源配置：键=值，多个地址用英文逗号分隔；不填写协议、版本或凭据。
+# 留空表示关闭这一类候选；删除本文件则使用内置默认值。
+
+# =======================
+# GHCR 公共代理
+# =======================
+GHCR_MIRRORS=ghcr.nju.edu.cn,m.daocloud.io/ghcr.io
+
+# =======================
+# Docker Hub 公共代理
+# =======================
+# 腾讯云地址仅供支持的云内网使用；不可达时自动跳过。
+# 阿里云、华为云专属加速地址可追加在这里，仅适用于其支持的 Docker Hub 镜像。
+DOCKER_HUB_MIRRORS=docker.nju.edu.cn,m.daocloud.io/docker.io,mirror.ccs.tencentyun.com
+
+# =======================
+# 已同步的国内仓库
+# =======================
+# 填写不含版本的完整仓库，例如 registry.example.com/team/pipkerops。
+# 这些额外候选仅在使用默认公开 Ops/Nginx 仓库时参与匿名测速。
+# 私有仓库请先 docker login，再在 compose.env 中直接指定镜像，不参与公共代理测速。
+OPS_REPOSITORIES=
+NGINX_REPOSITORIES=

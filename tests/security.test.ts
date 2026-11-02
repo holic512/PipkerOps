@@ -51,12 +51,12 @@ test("密码随机盐及恒时摘要校验", async () => {
   assert.equal(await verifyPassword("wrong", a), false);
   assert.equal(hashToken(randomToken()).length, 64);
 });
-test("生产不能通过开发例外使用公网明文后端", () => {
+test("生产按显式连接配置支持公网、私网 PostgreSQL 和 Redis 无 TLS", () => {
   const old = { ...process.env };
   const saved = { ...configValues };
   try {
     Object.assign(process.env, { NODE_ENV: "production" });
-    configValues.ALLOW_INSECURE_BACKENDS = "true";
+    delete configValues.ALLOW_INSECURE_BACKENDS;
     Object.assign(configValues, {
       DATABASE_HOST: "example.com",
       DATABASE_NAME: "test",
@@ -64,16 +64,35 @@ test("生产不能通过开发例外使用公网明文后端", () => {
       DATABASE_PASSWORD: "test",
       DATABASE_SSL_MODE: "disable",
     });
-    assert.throws(() => backendUrl("DATABASE_URL"));
-    configValues.DATABASE_HOST = "postgres";
-    assert.ok(backendUrl("DATABASE_URL"));
+    for (const host of ["example.com", "203.0.113.10", "postgres"]) {
+      configValues.DATABASE_HOST = host;
+      const url = new URL(backendUrl("DATABASE_URL"));
+      assert.equal(url.hostname, host);
+      assert.equal(url.searchParams.get("sslmode"), "disable");
+    }
+    Object.assign(configValues, {
+      REDIS_PORT: "6379",
+      REDIS_PASSWORD: "test",
+      REDIS_TLS: "false",
+    });
+    for (const host of ["example.com", "203.0.113.10", "redis"]) {
+      configValues.REDIS_HOST = host;
+      assert.equal(new URL(backendUrl("REDIS_URL")).protocol, "redis:");
+    }
+    configValues.DATABASE_SSL_MODE = "verify-full";
+    assert.equal(
+      new URL(backendUrl("DATABASE_URL")).searchParams.get("sslmode"),
+      "verify-full",
+    );
+    configValues.REDIS_TLS = "true";
+    assert.equal(new URL(backendUrl("REDIS_URL")).protocol, "rediss:");
   } finally {
     process.env = old;
     for (const key of Object.keys(configValues)) delete configValues[key];
     Object.assign(configValues, saved);
   }
 });
-test("内网例外只匹配真实地址，公网域名不能伪装私网前缀绕过TLS", () => {
+test("探针内网识别只匹配真实地址，公网域名不能伪装私网前缀", () => {
   for (const host of [
     "127.attacker.test",
     "10.example.test",

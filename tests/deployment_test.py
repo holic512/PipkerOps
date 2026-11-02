@@ -155,6 +155,10 @@ class AgentCommandTest(unittest.TestCase):
                 archive.extractall(temporary, filter='data')
             deployment = Path(temporary) / 'pipkerops/deploy'
             self.assertTrue((deployment / 'internal/agent.py').is_file())
+            self.assertTrue((deployment / 'internal/mirrors.py').is_file())
+            self.assertTrue((deployment / 'script/install.py').is_file())
+            self.assertTrue((deployment / 'script/mirrors.py').is_file())
+            self.assertTrue((deployment / 'resources/mirrors.conf.example').is_file())
             result = subprocess.run([sys.executable, str(deployment / 'menu.py')], input='2\n0\n0\n', text=True, capture_output=True, cwd=temporary, check=True)
             self.assertIn('Agent 管理', result.stdout)
             subprocess.run([sys.executable, str(deployment / 'script/agent.py'), '--help'], capture_output=True, check=True, cwd=temporary)

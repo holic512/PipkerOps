@@ -2,7 +2,7 @@
  * @file config.ts
  * @project PipkerOps
  * @module configuration
- * @description 从文本文件读取业务配置，组装后端连接并校验公网 TLS 边界。
+ * @description 从文本文件读取业务配置，按显式 TLS 设置组装后端连接。
  * @logic 固定读取 config/app.conf；入口校验分项配置，内部编码凭据组装连接。
  * @dependencies Node.js filesystem, util.parseEnv, URL
  * @index_tags config, tls, secrets
@@ -25,7 +25,6 @@ function readConfiguration() {
     throw new Error("配置文件 config/app.conf 不可读");
   }
 }
-export const production = () => process.env.NODE_ENV === "production";
 export function required(name: string) {
   const value = configValues[name];
   if (!value) throw new Error(`缺少配置 ${name}`);
@@ -85,19 +84,6 @@ export function backendUrl(name: "DATABASE_URL" | "REDIS_URL") {
     const index = configValues.REDIS_DATABASE ?? "0";
     if (!/^\d+$/.test(index)) throw new Error("REDIS_DATABASE 数值无效");
     url.pathname = "/" + index;
-  }
-  const tls =
-    name === "REDIS_URL"
-      ? url.protocol === "rediss:"
-      : ["verify-full", "verify-ca", "require"].includes(
-          url.searchParams.get("sslmode") ?? "",
-        );
-  if (
-    !tls &&
-    !privateHost(url.hostname) &&
-    !(configValues.ALLOW_INSECURE_BACKENDS === "true" && !production())
-  ) {
-    throw new Error(`${name} 的公网连接必须启用 TLS`);
   }
   return url.toString();
 }
