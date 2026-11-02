@@ -163,7 +163,9 @@ write_config pko_a 1
 sync_config
 compose restart web gateway worker > "$fixture/operation.log" 2>&1
 attempt=0
-until curl -ksSf "$(web_url)/api/health" >/dev/null 2>&1; do attempt=$((attempt+1)); [ "$attempt" -lt 60 ] || exit 1; sleep 1; done
+until curl -ksSf "$(web_url)/api/health" >/dev/null 2>&1 && curl -ksSf --max-time 3 "$(gateway_url)/health" >/dev/null 2>&1; do
+  attempt=$((attempt+1)); [ "$attempt" -lt 60 ] || exit 1; sleep 1
+done
 assert_connections pko_a
 echo 'PASS direct container restart reads synchronized runtime configuration'
 stage=menu-status-stop-start
