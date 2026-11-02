@@ -266,7 +266,7 @@ test(
               GOARCH: architecture,
               CGO_ENABLED: "0",
               GOCACHE:
-                process.env.GOCACHE ?? join(tmpdir(), "pipkerops-go-cache"),
+                process.env.GOCACHE ?? join(fixture, "go-cache"),
             },
             stdio: "pipe",
             timeout: 90_000,
