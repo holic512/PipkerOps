@@ -2,7 +2,7 @@
  * @file contracts.ts
  * @project PipkerOps
  * @module business-contracts
- * @description Web/MCP 共享业务方法和输入校验，以及核心方法的JSON输出契约。
+ * @description Web/MCP 共享业务与节点分类方法的输入校验，以及核心方法的JSON输出契约。
  * @logic 方法参数只维护一份；Key限定已知scope，任务公开对应payload，实际执行仍重查权限与持久资源。
  * @dependencies Zod, task specifications
  * @index_tags api, mcp, validation, contracts
@@ -12,6 +12,7 @@ import { z } from "zod";
 import { taskInput, taskSpecs } from "./tasks";
 import { connectionBundle } from "../agent-connection";
 const label = z.string().trim().min(1).max(120);
+const nodeLabels = z.array(label).max(50);
 const id = z.string().min(1).max(100);
 const object = z.record(z.string(), z.unknown());
 const confirmation = z
@@ -38,6 +39,10 @@ export const METHODS = [
   "nodes.metrics",
   "nodes.history",
   "nodes.update",
+  "nodes.move",
+  "nodeFolders.list",
+  "nodeFolders.save",
+  "nodeFolders.delete",
   "applications.list",
   "applications.save",
   "applications.delete",
@@ -106,6 +111,8 @@ export const methodSchemas = {
   "nodes.import": z.object({
     id: id.optional(),
     name: label.optional(),
+    folderId: id.nullable().optional(),
+    labels: nodeLabels.optional(),
     connection: connectionBundle,
     confirmed: confirmation,
   }),
@@ -132,8 +139,20 @@ export const methodSchemas = {
   "nodes.update": z.object({
     id,
     name: label,
-    labels: z.array(label).max(50).default([]),
+    labels: nodeLabels.default([]),
+    folderId: id.nullable().optional(),
   }),
+  "nodes.move": z.object({
+    nodeIds: z.array(id).min(1).max(100),
+    folderId: id.nullable(),
+  }),
+  "nodeFolders.list": z.object({}),
+  "nodeFolders.save": z.object({
+    id: id.optional(),
+    name: label,
+    parentId: id.nullable().optional(),
+  }),
+  "nodeFolders.delete": z.object({ id, confirmed: confirmation }),
   "applications.list": z.object({}),
   "applications.save": z.object({
     id: id.optional(),
@@ -406,6 +425,8 @@ const wireNode = z
   .object({
     id,
     name: z.string(),
+    folderId: id.nullable(),
+    labels: z.array(z.string()),
     hostname: z.string().nullable(),
     status: z.enum(["PENDING", "APPROVED", "REJECTED", "REVOKED"]),
     connected: z.boolean(),
@@ -509,6 +530,17 @@ const wireDeviceHistory = z.object({
 /** Wire contracts after the shared business result's normal JSON serialization. */
 export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
   "nodes.list": z.object({ data: z.array(wireNode) }),
+  "nodeFolders.list": z.object({
+    data: z.array(
+      z.object({
+        id,
+        name: z.string(),
+        parentId: id.nullable(),
+        createdAt: wireDate,
+        updatedAt: wireDate,
+      }),
+    ),
+  }),
   "nodes.metrics": z.object({ data: wireMetricHistory }),
   "nodes.history": z.object({ data: wireDeviceHistory }),
   "applications.list": z.object({ data: z.array(wireApplication) }),

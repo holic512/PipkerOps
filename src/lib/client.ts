@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module client-api
  * @description 浏览器API边界与业务数据契约。
- * @logic RPC错误统一封装，任务携带可空计划关联，数值空态保留未知语义。
+ * @logic RPC错误统一封装，节点携带文件夹归属和标签，任务携带可空计划关联，数值空态保留未知语义。
  * @dependencies fetch, Intl
  * @index_tags api, identity, entry
  * @author holic512
@@ -62,7 +62,15 @@ export type NodeData = {
   lastSeenAt: string | null;
   createdAt: string;
   labels: string[];
+  folderId: string | null;
   metrics: Metric[];
+};
+export type NodeFolderData = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 export function probeHealth(probes: { enabled: boolean; status: string }[]) {
   const active = probes.filter((p) => p.enabled);

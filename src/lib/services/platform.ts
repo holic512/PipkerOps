@@ -2,7 +2,7 @@
  * @file platform.ts
  * @project PipkerOps
  * @module business-api
- * @description Web 与 MCP 共用的资源服务入口，路由业务方法、平台备份与输入契约。
+ * @description Web 与 MCP 共用的资源服务入口，路由节点分类、业务方法、平台备份与输入契约。
  * @logic 查询执行scope/节点过滤，总览在SQL限制逐节点最新采样；任务按计划筛选，远端操作统一持久化并审计。
  * @dependencies Prisma, authorization, node/task services, cron-parser
  * @index_tags api, apps, probes, topology, automation
@@ -14,6 +14,7 @@ import { db } from "../db";
 import { ApiError, authorize, confirm, nodeFilter, type Actor } from "../auth";
 import { randomToken, hashToken } from "../crypto";
 import * as nodes from "./nodes";
+import * as organization from "./node-organization";
 import * as backups from "./backups";
 import { listReleases, queueUpdate } from "./updates";
 import { metricDetails } from "./metric-details";
@@ -128,16 +129,19 @@ export async function execute(
         where: { id: actor.userId },
         select: { id: true, email: true, displayName: true, role: true },
       });
-    case "nodes.update": {
-      const data = methodSchemas["nodes.update"].parse(p);
-      authorize(actor, "nodes:write", data.id);
-      await db().node.update({
-        where: { id: data.id },
-        data: { name: data.name, labels: data.labels },
-      });
-      await audit(actor, method, "Node", data.id);
-      return { id: data.id };
-    }
+    case "nodes.update":
+      return organization.updateNode(actor, p as organization.UpdateNodeInput);
+    case "nodes.move":
+      return organization.moveNodes(actor, p as organization.MoveNodesInput);
+    case "nodeFolders.list":
+      return organization.listFolders(actor);
+    case "nodeFolders.save":
+      return organization.saveFolder(actor, p as organization.SaveFolderInput);
+    case "nodeFolders.delete":
+      return organization.deleteFolder(
+        actor,
+        p as organization.DeleteFolderInput,
+      );
     case "nodes.list":
       return nodes.listNodes(actor);
     case "nodes.test":

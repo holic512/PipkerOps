@@ -1,6 +1,6 @@
 {
   "name": "pipkerops",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "engines": {
@@ -20,6 +20,7 @@
     "check": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:integration": "tsx --test tests/platform.integration.ts",
+    "test:node-organization": "tsx --test tests/node-organization.integration.ts",
     "test:schedules": "tsx --test tests/schedules.integration.ts",
     "lint": "eslint .",
     "test:linux": "tsx --test tests/linux.integration.ts",

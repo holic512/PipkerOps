@@ -38,7 +38,8 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useQuery } from "./shared";
-import { Overview, Nodes, NodeDetail } from "./nodes";
+import { Overview, NodeDetail } from "./nodes";
+import { Nodes } from "./node-manager";
 import { Applications, Probes } from "./applications";
 import {
   Tasks,

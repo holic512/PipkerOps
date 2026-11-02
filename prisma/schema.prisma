@@ -1,7 +1,7 @@
 // @file schema.prisma
 // @project PipkerOps
 // @module persistence
-// @description 平台身份、节点、监控、应用、探针、持久化任务及运维资源的数据契约。
+// @description 平台身份、节点文件夹分类、监控、应用、探针、持久化任务及运维资源的数据契约。
 // @logic 管理端/Worker/Gateway 共用模型；原始指标按记录时间分区；任务默认仅执行一次。
 // @dependencies PostgreSQL, Prisma ORM 7
 // @index_tags database, auth, agent, metrics, tasks
@@ -116,12 +116,27 @@ model EnrollmentToken {
   @@index([expiresAt])
 }
 
+model NodeFolder {
+  id        String       @id @default(cuid())
+  name      String
+  parentId  String?
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  parent    NodeFolder?  @relation("NodeFolderTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children  NodeFolder[] @relation("NodeFolderTree")
+  nodes     Node[]
+
+  @@unique([parentId, name])
+}
+
 model Node {
   id                     String           @id @default(cuid())
   name                   String
   hostname               String?
   status                 NodeStatus       @default(PENDING)
   labels                 String[]         @default([])
+  folderId               String?
+  folder                 NodeFolder?      @relation(fields: [folderId], references: [id], onDelete: SetNull)
   os                     String?
   arch                   String?
   agentVersion           String?
@@ -160,6 +175,7 @@ model Node {
 
   @@index([status, lastSeenAt])
   @@index([enrollmentTokenId])
+  @@index([folderId])
 }
 
 model MetricSample {

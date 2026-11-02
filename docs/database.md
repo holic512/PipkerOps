@@ -8,6 +8,7 @@
 | -------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | 身份权限 | User、Session、ApiKey                              | 角色为 ADMIN/OPERATOR/VIEWER；会话与 Key 只保存摘要，Key 限定 scope、节点及高危操作 |
 | 节点接入 | Node（保留旧 EnrollmentToken 历史表） | Agent ID 唯一；保存 HTTPS 地址、公开 CA 和私有凭证文件引用；私钥留在 Agent |
+| 节点分类 | NodeFolder、Node.folderId、Node.labels | 文件夹多级嵌套，同级名称唯一；节点仅属一个文件夹，NULL表示根目录；标签为字符串数组 |
 | 指标     | MetricSample、MetricHourly、MetricDeviceHourly、MetricMaintenanceState | 原始采样按月分区；CPU/内存及设备小时聚合；持久维护水位                                    |
 | 应用拓扑 | Application、Deployment、Dependency                | 应用独立存在；同应用/节点/类型/目标不重复；依赖禁止自引用                           |
 | 探针     | Probe、ProbeResult                                 | 来源为空表示主控，否则为指定 Agent；保存 HTTP/TCP 配置、字段映射及执行身份          |
@@ -28,6 +29,14 @@
 - `idempotencyKey` 全局唯一；业务层将入口、动作、目标和调用者纳入去重身份。Worker/Gateway 在事务中用条件更新或 `FOR UPDATE SKIP LOCKED` 领取并更新租约。
 - `TaskLog(taskId,sequence)` 唯一约束支持重连日志去重。审计随任务创建写入事务，日志与审计不保存密码、令牌或完整环境变量。
 - `Task.scheduleId`记录准确计划来源，Worker与任务创建、调度游标在同一事务写入；`(scheduleId,createdAt DESC)`用于执行记录查询。删除计划将关联置空，保留任务、日志和CRON来源。迁移前任务保持NULL，不按时间/名称回填。
+
+## 节点分类
+
+`NodeFolder` 的 `parentId` 自关联使用 RESTRICT，节点 `folderId` 使用 SET NULL；业务删除在事务中将直属节点和子文件夹提升到原父级后删除文件夹，不删除节点或监控历史。子文件夹名称与目标位置冲突时返回409，分类和审计均不发生部分写入。业务层拒绝循环移动，数据库额外拒绝直接自引用。
+
+同级名称区分大小写，输入先去首尾空白；`(parentId,name)` 唯一索引覆盖非根目录，部分唯一索引覆盖根目录名称。标签复用 `Node.labels`，输入去首尾空白并去重，每节点最多50个、每个最多120字符。节点更新省略 `folderId` 保留现有归属；重新接入省略分类或标签时保留原值。
+
+分类为管理域共享元数据。ADMIN、OPERATOR可维护；受限Key只见授权节点所在文件夹及祖先，节点移动目标限于这些可见文件夹或根目录；结构修改要求Key具有全节点范围。所有修改复用 `nodes:write`，并与审计事务一同提交。
 
 ## 指标与历史
 
@@ -68,6 +77,7 @@ SELECT pipkerops_maintain_metrics(30, 365);
 - 生产区分迁移与运行角色，限制 Web/Gateway/Worker 总连接数。维护函数需要相应 DDL 权限，未使用 `SECURITY DEFINER` 提权。
 - 生产外部数据库连接使用 TLS 或受保护通道，实际凭据只存环境配置。
 - `202611020001_agent_pull` 只新增可空 Agent 身份、地址、CA、凭证引用和部署目录字段；不删除旧接入记录。已有节点需重新导入接入文件，迁移不自动创建凭证。
+- `202611020002_node_folders` 新增NodeFolder表和可空Node.folderId；已有节点初始位于根目录，现有标签、凭证、关联和历史保留。升级须先执行迁移，再生成客户端并重启Ops服务。
 - 备份包含表、枚举、分区、函数、数据及节点连接凭证；恢复到空目标后检查迁移、业务资源和 `UNKNOWN` 任务，见 [部署与恢复](DEPLOYMENT.md)。
 
 ## 验证范围

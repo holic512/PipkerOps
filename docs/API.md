@@ -25,9 +25,13 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | overview | 无 | nodes:read；节点/最新监控，任务计数另需tasks:read |
 | nodes.list / nodes.metrics | metrics需要nodeId,hours(1–8760) | nodes:read；<=48h按窗口聚合最多1440点（不返回payload），超过为小时历史+最新原始小时桶去重合并 |
 | nodes.history | nodeId,kind(disk/network/io),hours(1–8760),device? | nodes:read+目标节点；返回设备列表及选中设备；<=48小时原始详情，>48小时UTC小时摘要加原始尾部，每个方向约最多720个时间桶，磁盘为%，网络/IO为B/s；省略设备选字典序首个 |
-| nodes.update | id,name,labels? | nodes:write+目标节点；更新名称和标签 |
+| nodes.update | id,name,labels?,folderId? | nodes:write+目标节点；更新名称、标签和分类，省略folderId保留归属，null移至根目录 |
+| nodes.move | nodeIds:[id,...],folderId:id或null | nodes:write+每个目标节点；最多100个节点，整批原子移动，保留名称、标签与历史 |
+| nodeFolders.list | 无 | nodes:read；返回id,name,parentId,createdAt,updatedAt，受限Key仅见授权节点所在文件夹及祖先 |
+| nodeFolders.save | id?,name,parentId? | nodes:write；创建/重命名/移动，省略parentId时新建位于根目录、更新保留原父级；拒绝同级同名和移入自身/后代 |
+| nodeFolders.delete | id,confirmed:true | nodes:write；将直属节点与子文件夹提升到上一级再删除，提升后同名冲突返回409并完整回滚 |
 | nodes.test | connection:{format:1,protocolVersion:1,agentId,url,caPem,accessKey,deployRoot} | nodes:approve；验证受信HTTPS及远端身份，不存凭证 |
-| nodes.import | connection,id?,name?,confirmed:true | nodes:approve高危；id指定原节点则保留历史，否则新增；访问Key独立保存 |
+| nodes.import | connection,id?,name?,folderId?,labels?,confirmed:true | nodes:approve高危；id指定原节点则保留历史，省略分类/标签时保留原值；访问Key独立保存 |
 | nodes.revoke | id,confirmed:true | nodes:approve高危；停止连接和派发 |
 | nodes.deployment | nodeId,deployRoot,component(agent/ops/scripts),confirmed:true | nodes:approve高危；验证安装标记并登记绝对目录 |
 | updates.releases | 无 | nodes:approve；手动查询有新版更新清单的正式发布 |
@@ -55,6 +59,8 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | terminal.ticket | nodeId,containerId?,confirmed:true | terminal:write高危，容器另需docker:write；一次性60秒的同源WebSocket path |
 
 HTTP探针公网目标必须HTTPS；私网/回环允许HTTP用于内网健康检查。HTTP探针config支持 `method`、`headers`、`body`、`expectedStatus`，mapping形如 `{version:"data.version"}`。缺少映射字段会明确失败。TCP target为 `host:port`。主控和Agent HTTP均不跟随重定向（含同来源307/308），避免自动重放有副作用请求。GET/HEAD/OPTIONS及TCP可重试；其他HTTP方法作为非幂等处理，保存及手工执行均需高危许可和confirmed:true；自动执行保留保存时的授权身份，每次重授权。业务字段来自实际响应，不生成模拟值。
+
+节点文件夹是管理域内的共享分类，结构修改要求API Key具有全节点范围（`nodeIds:["*"]`）；受限Key的移动目标只能是其授权节点所在文件夹、这些文件夹的祖先或根目录。节点分类、标签和文件夹修改均保留审计，与数据在同一事务提交。标签沿用`labels`，输入去首尾空白并去重，最多50个、每个120字符。同级文件夹名称区分大小写，根目录也执行唯一约束；删除仅提升直属内容，不递归展开子树。
 
 ## 持久化任务
 

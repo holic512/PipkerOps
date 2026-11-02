@@ -65,6 +65,9 @@ python3 -m unittest discover -s tests -p '*_test.py'
 ```sh
 # 隔离 PostgreSQL 17：全部迁移、指标维护、任务并发
 npm run test:database
+# 隔离 PostgreSQL 17 + 临时真实 Agent：分类、批量移动、权限、删除提升与重新接入
+# 自动构建宿主机测试Agent，不连接现有业务库或节点
+npm run test:node-organization
 # 额外生成50节点30天摘要，非完整生产采集压力
 npm run test:history-capacity
 # 真实生产镜像、映射文件、外部后端与系统备份

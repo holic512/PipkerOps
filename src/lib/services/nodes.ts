@@ -2,7 +2,7 @@
  * @file nodes.ts
  * @project PipkerOps
  * @module nodes
- * @description Agent 接入文件导入、停用与指标查询的统一服务。
+ * @description Agent 接入文件导入、分类标签保留、停用与指标查询的统一服务。
  * @logic 节点按授权过滤，最新指标在数据库逐节点LIMIT 1；导入验证 Agent 身份并保存私有凭证，历史按时间桶聚合并合并原始尾部。
  * @dependencies Prisma, Agent HTTPS, authorization
  * @index_tags nodes, enrollment, metrics
@@ -19,6 +19,7 @@ import {
   readCredential,
 } from "../agent-connection";
 import { methodSchemas } from "./contracts";
+import { assertFolderTarget } from "./node-organization";
 import { Prisma, type MetricSample } from "@/generated/prisma/client";
 export async function listNodes(actor: Actor) {
   authorize(actor, "nodes:read");
@@ -82,6 +83,8 @@ export async function importNode(actor: Actor, input: unknown) {
   const data = methodSchemas["nodes.import"].parse(input);
   authorize(actor, "nodes:approve", data.id, true);
   confirm(data.confirmed);
+  if (data.folderId !== undefined)
+    await assertFolderTarget(actor, data.folderId, db());
   const info = await testAgent(data.connection);
   const existing = data.id
     ? await db().node.findUnique({ where: { id: data.id } })
@@ -97,6 +100,8 @@ export async function importNode(actor: Actor, input: unknown) {
   return db().$transaction(async (tx) => {
     const fields = {
       name: data.name ?? existing?.name ?? info.name,
+      folderId: data.folderId,
+      labels: data.labels === undefined ? undefined : [...new Set(data.labels)],
       hostname: info.hostname,
       os: info.os,
       arch: info.arch,
