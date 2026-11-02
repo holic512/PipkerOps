@@ -8,7 +8,7 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `pipker-agent-linux-amd64` / `pipker-agent-linux-arm64` | 原始静态 ELF，供手工替换或平台 `agent.upgrade` 使用 |
+| `pipker-agent-0.1.0-linux-amd64` / `pipker-agent-0.1.0-linux-arm64` | 原始静态 ELF，供手工替换或平台 `agent.upgrade` 使用 |
 | 同名 `.tar.gz` | 手工安装包，包含二进制、`install.sh`、systemd 单元、配置示例和本说明 |
 | `SHA256SUMS` | 两个架构的原始二进制与安装包校验和 |
 
@@ -16,8 +16,8 @@
 
 ```sh
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf pipker-agent-linux-amd64.tar.gz
-cd pipker-agent-linux-amd64
+tar -xzf pipker-agent-0.1.0-linux-amd64.tar.gz
+cd pipker-agent-0.1.0-linux-amd64
 sudo sh install.sh ./pipker-agent
 sudoedit /etc/pipkerops/agent.env
 # 通过可信渠道安装主控 CA 公钥证书 /etc/pipkerops/ca.pem。
@@ -43,7 +43,7 @@ sh scripts/package-agent.sh 0.1.0-dev arm64
 也可以将对应架构的已核验原始二进制及本目录的安装文件复制到 Linux 节点，然后执行：
 
 ```sh
-sudo sh agent/install.sh /path/to/pipker-agent-linux-amd64
+sudo sh agent/install.sh /path/to/pipker-agent-0.1.0-linux-amd64
 sudoedit /etc/pipkerops/agent.env
 # 通过可信渠道安装主控 CA 公钥证书 /etc/pipkerops/ca.pem。
 sudo systemctl enable --now pipkerops-agent
@@ -54,11 +54,9 @@ sudo journalctl -u pipkerops-agent -f
 
 ## CI 与版本发布
 
-[CI and release](../.github/workflows/ci.yml) 在 Pull Request、master 推送、`v*` tag 推送和手动触发时执行检查。Agent 在原生 Linux amd64/arm64 runner 上运行 `go test -race ./...`，随后构建安装包并验证版本输出与校验清单。普通构建的两架构产物保留在 Actions artifacts 中七天。
+[CI and release](../.github/workflows/ci.yml) 在 PR、master 推送和手动触发时运行检查；每次 master 推送在完整验收后发布 Release。Agent 版本来自 `agent/VERSION`，独立于 Ops 和 Skill 版本。两个 Linux 架构均执行原生测试、版本检查及真实安装验证。
 
-推送合法 SemVer tag（如 `v1.2.3` 或 `v1.2.3-rc.1`）后，只有源码检查、两个架构的镜像部署验收和 Agent 测试全部通过，才会发布 GHCR 镜像与 GitHub Release。Agent 版本输出不包含 tag 的 `v` 前缀；预发布标记为 prerelease，不成为 latest。Release 使用相同构建任务生成的产物，不二次编译。
-
-主应用镜像的 master 构建发布 `edge` 和 `sha-<完整提交 SHA>`。正式版本发布完整版本、major、minor、`latest`；预发布仅发布完整版本标签。SemVer build metadata 中的 `+` 在 Docker 标签中替换为 `_`。手动触发只有选择 master 才会发布 `edge`，其他分支只执行检查。发布只使用工作流的 `GITHUB_TOKEN`，无需填写数据库、注册令牌或其他部署 Secret。
+Release 中的原始 ELF 用于在线升级，安装包用于手工安装。版本和发布规则见[开发文档](../docs/DEVELOPMENT.md)。
 
 ## 配置参数
 

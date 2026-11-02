@@ -89,7 +89,7 @@ Compose部署先暂存并校验YAML，通过后保存配置再运行`up`。语�
 
 获取ticket后连接返回的wss URL，浏览器Origin必须匹配APP_ORIGIN。发送 `{type:"terminal.input",data}` 或 `{type:"terminal.resize",cols,rows}`；接收terminal.output(data)、terminal.exit、terminal.error。ticket一次消费；关闭、注销、会话过期、Key吊销或节点吊销会结束会话。终端内容可能含敏感信息，平台审计记录建立/结束，不把交互内容作为任务脚本自动重放。
 
-专项技能位于 `skills/pipkerops-{deploy,monitor,troubleshoot}/SKILL.md`，可复制到用户技能目录使用；不会自动安装或写入外部客户端配置。
+专项技能位于 `skills/pipkerops-skill/SKILL.md`，可复制到用户技能目录使用；不会自动安装或写入外部客户端配置。
 
 ## 应用实例运维入口
 

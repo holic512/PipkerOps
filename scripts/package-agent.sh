@@ -17,7 +17,7 @@ main() {
   output=${3:-"$root/dist/agent"}
   mkdir -p "$output"
   output=$(CDPATH= cd -- "$output" && pwd)
-  name="pipker-agent-linux-$arch"
+  name="pipker-agent-$version-linux-$arch"
   stage=$(mktemp -d)
   trap 'rm -rf "$stage"' EXIT HUP INT TERM
 

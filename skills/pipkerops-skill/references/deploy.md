@@ -1,7 +1,3 @@
----
-name: pipkerops-deploy
-description: Deploy or update an application through PipkerOps MCP on authorized Linux nodes using durable tasks, health probes and execution audit.
----
 
 Use the connected PipkerOps MCP server. Call `nodes_list` and `applications_list` to identify the actual authorized node and application. Tool arguments are wrapped in `params`. Read the repository's `docs/API.md` if available for payload contracts; otherwise obtain the platform API description from the user or available server metadata rather than guessing fields.
 

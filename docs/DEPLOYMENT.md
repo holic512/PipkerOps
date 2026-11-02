@@ -1,5 +1,7 @@
 # 部署与运维
 
+从 GitHub Releases 下载 `pipkerops-deploy-<Ops版本>.tar.gz` 和 `SHA256SUMS`，先执行 `sha256sum --ignore-missing -c SHA256SUMS`，再解压并进入 `pipkerops` 目录执行 `sudo sh deploy/menu.sh`。包内默认使用对应 Ops 版本镜像。
+
 生产通过预构建镜像部署，仅包含 init、Web、Gateway、Worker、Nginx 代理。PostgreSQL 与 Redis 由外部提供；部署脚本不创建数据库、不管理宿主 Docker 服务。
 
 ## 准备环境

@@ -18,7 +18,7 @@ sudo sh deploy/menu.sh
 
 ## Agent
 
-从 [GitHub Releases](https://github.com/holic512/PipkerOps/releases) 下载 Linux amd64/arm64 安装包和 `SHA256SUMS`，校验后手动安装。`master` 测试构建附件位于 [GitHub Actions](https://github.com/holic512/PipkerOps/actions)。
+从 [GitHub Releases](https://github.com/holic512/PipkerOps/releases) 下载 Linux amd64/arm64 安装包和 `SHA256SUMS`，校验后手动安装。每次 master 推送通过验证后发布包含独立组件版本的 Release。
 
 在管理端生成注册令牌，将主控 CA **公钥**交给节点，配置 Agent 并审批接入。安装包同时保留原始二进制供在线升级使用，详见 [Agent 安装与协议](agent/README.md)。
 

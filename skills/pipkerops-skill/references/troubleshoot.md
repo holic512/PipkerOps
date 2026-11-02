@@ -1,7 +1,3 @@
----
-name: pipkerops-troubleshoot
-description: Diagnose PipkerOps node, container, Nginx and task failures using scoped MCP evidence and safe task reconciliation.
----
 
 Start with the failing resource and time window. Read node connectivity/metrics, application dependencies, probe history and the original task with `tasks_get`. Distinguish controller/API failure, Gateway transport failure, Agent execution failure and target-service failure.
 

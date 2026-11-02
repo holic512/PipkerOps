@@ -118,14 +118,13 @@ npm run test:alerts
 
 ## CI 与发布
 
-工作流为 `.github/workflows/ci.yml`。PR、master 推送、v版本 tag 和手动触发均执行检查；发布必须等待 Node、Go 和两个架构的部署验收成功。
+工作流为 `.github/workflows/ci.yml`。每次 master 推送在检查及双架构验收成功后发布正式 Release；一次推送包含多个提交时发布目标提交。PR 和手动触发只执行检查。
 
-- master 发布 GHCR `edge` 与提交 SHA 标签，并保留 Actions Agent 附件。
-- 推送 SemVer `vX.Y.Z` 发布固定版本镜像与 GitHub Release，稳定版更新 `latest`；带预发布后缀的 tag 不更新稳定标签。
-- 手动触发在 master 上可更新 edge，其他 ref 只检查并保留产物，不覆盖正式版。
-- Linux amd64/arm64 各自构建、加载并实际验收镜像，上传该镜像；发布阶段加载同一产物并推送，最后合并 manifest，不在发布阶段重新构建。
-- Agent 安装包包含二进制、安装脚本、配置、systemd 单元和 README，并生成 SHA256SUMS。原生 Linux CI 还会真实安装两次，检查配置/状态保留与不自动启动。原始 ELF 用于在线升级；版本由构建参数注入。
-- 检查任务只读，GHCR 发布任务使用 `packages:write`，Release 任务使用 `contents:write`；PR 不发布。首次发布需实际核验仓库 Actions 权限和 GHCR 包访问设置。
+Ops 版本在 `package.json`，Agent 版本在 `agent/VERSION`，Skill 版本在 `skills/VERSION`。提交前递增受影响组件的版本；CI 比较推送前后的组件源码，版本未递增时失败。Release 标签 `release-<运行编号>-<提交短哈希>` 独立于组件版本，同一次运行重试复用标签。
+
+Release 包含带各自版本的双架构 Agent 二进制和安装包、部署包、PipkerOpsSkill 包及 `SHA256SUMS`。正文和附件标签记录提交信息；部署包默认拉取对应 Ops 版本镜像。GHCR 发布 Ops 版本、`edge`、`latest` 和提交 SHA 标签。双架构镜像经过原生验收后直接发布，不重新构建。
+
+发布需要仓库允许工作流写入内容和 GHCR 包。首次发布需核验 Actions 权限和 GHCR 包访问设置。
 
 本地打包示例：
 

@@ -2,7 +2,7 @@
 # @project PipkerOps
 # @module delivery/ci
 # @description 验证源码与双架构运行镜像，发布相同镜像和可手工安装的 Agent。
-# @logic 检查与原生验收通过后传递镜像制品；仅 master 或合法版本 tag 发布 GHCR/Release。
+# @logic 检查版本及原生验收通过后，为 master 提交发布镜像与完整 Release。
 # @dependencies GitHub Actions, Docker Buildx, Node.js 24, Go 1.26
 # @index_tags ci, ghcr, agent, release
 # @author holic512
@@ -12,14 +12,13 @@ on:
   pull_request:
   push:
     branches: [master]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: delivery-${{ github.workflow }}-${{ github.ref }}
+  group: delivery-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -31,43 +30,33 @@ jobs:
       tags: ${{ steps.metadata.outputs.tags }}
       publish: ${{ steps.metadata.outputs.publish }}
       release: ${{ steps.metadata.outputs.release }}
-      prerelease: ${{ steps.metadata.outputs.prerelease }}
+      agent_version: ${{ steps.metadata.outputs.agent_version }}
+      skill_version: ${{ steps.metadata.outputs.skill_version }}
     steps:
-      - name: Resolve publication policy
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve publication policy and component versions
         id: metadata
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           REPOSITORY: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          node scripts/check-component-versions.mjs "$BASE" > "$RUNNER_TEMP/versions.json"
           node <<'NODE'
           const fs = require('node:fs');
+          const versions = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/versions.json`, 'utf8'));
           const { EVENT_NAME: event, REF: ref, REPOSITORY: repository, COMMIT: commit } = process.env;
+          const publish = ref === 'refs/heads/master' && event === 'push';
           const image = `ghcr.io/${repository.toLowerCase()}`;
-          let version = `dev-${commit.slice(0, 12)}`;
-          let tags = [];
-          let release = false;
-          let prerelease = false;
-          if (event === 'push' && ref.startsWith('refs/tags/')) {
-            const tag = ref.slice('refs/tags/'.length);
-            const id = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
-            const pattern = new RegExp(`^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-${id}(?:\\.${id})*)?(\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`);
-            const match = pattern.exec(tag);
-            if (!match) throw new Error('Release tags must use vMAJOR.MINOR.PATCH with optional SemVer prerelease/build identifiers.');
-            version = tag.slice(1);
-            release = true;
-            prerelease = Boolean(match[4]);
-            const dockerVersion = version.replace('+', '_');
-            if (dockerVersion.length > 128) throw new Error('Version exceeds the Docker tag length limit.');
-            tags = [dockerVersion];
-            if (!prerelease) tags.push(`${match[1]}.${match[2]}`, match[1], 'latest');
-          } else if (ref === 'refs/heads/master' && ['push', 'workflow_dispatch'].includes(event)) {
-            tags = ['edge', `sha-${commit}`];
-          }
-          const outputs = { image, version, tags: JSON.stringify(tags), publish: tags.length > 0, release, prerelease };
+          const outputs = { image, version: versions.ops, agent_version: versions.agent, skill_version: versions.skill,
+            tags: JSON.stringify(publish ? [versions.ops, 'edge', 'latest', `sha-${commit}`] : []), publish, release: publish };
           fs.appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([key, value]) => `${key}=${value}\n`).join(''));
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Publication: ${tags.length ? tags.map(tag => `${image}:${tag}`).join(', ') : 'checks only'}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Ops ${versions.ops}; Agent ${versions.agent}; Skill ${versions.skill}\n`);
           NODE
 
   checks:
@@ -117,19 +106,19 @@ jobs:
         run: go test -race ./...
       - name: Package and check version
         env:
-          VERSION: ${{ needs.metadata.outputs.version }}
+          VERSION: ${{ needs.metadata.outputs.agent_version }}
           ARCH: ${{ matrix.arch }}
         run: |
           sh scripts/package-agent.sh "$VERSION" "$ARCH"
-          binary="dist/agent/pipker-agent-linux-$ARCH"
+          binary="dist/agent/pipker-agent-$VERSION-linux-$ARCH"
           test "$("$binary" --version)" = "$VERSION"
           cd dist/agent
           sha256sum -c "SHA256SUMS-linux-$ARCH"
       - name: Verify actual installation and configuration preservation
         env:
-          VERSION: ${{ needs.metadata.outputs.version }}
+          VERSION: ${{ needs.metadata.outputs.agent_version }}
           ARCH: ${{ matrix.arch }}
-        run: sudo sh tests/agent-install.integration.sh "dist/agent/pipker-agent-linux-$ARCH" "$VERSION"
+        run: sudo sh tests/agent-install.integration.sh "dist/agent/pipker-agent-$VERSION-linux-$ARCH" "$VERSION"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: agent-${{ matrix.arch }}
@@ -278,30 +267,38 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: agent-*
-          path: dist/agent
+          path: dist/release
           merge-multiple: true
-      - name: Verify and publish Agent assets
+      - name: Package, verify and publish release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-          PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+          OPS_VERSION: ${{ needs.metadata.outputs.version }}
+          AGENT_VERSION: ${{ needs.metadata.outputs.agent_version }}
+          SKILL_VERSION: ${{ needs.metadata.outputs.skill_version }}
         run: |
-          cd dist/agent
-          cat SHA256SUMS-linux-amd64 SHA256SUMS-linux-arm64 > SHA256SUMS
+          set -euo pipefail
+          sh scripts/package-release.sh "$OPS_VERSION" "$SKILL_VERSION" dist/release
+          cd dist/release
+          sha256sum -c SHA256SUMS-linux-amd64
+          sha256sum -c SHA256SUMS-linux-arm64
+          rm SHA256SUMS-linux-amd64 SHA256SUMS-linux-arm64
+          assets=("pipkerops-deploy-$OPS_VERSION.tar.gz" "pipker-agent-$AGENT_VERSION-linux-amd64.tar.gz" "pipker-agent-$AGENT_VERSION-linux-arm64.tar.gz" "pipker-agent-$AGENT_VERSION-linux-amd64" "pipker-agent-$AGENT_VERSION-linux-arm64" "pipkerops-skill-$SKILL_VERSION.tar.gz")
+          sha256sum "${assets[@]}" > SHA256SUMS
           sha256sum -c SHA256SUMS
-          assets=(pipker-agent-linux-amd64 pipker-agent-linux-arm64 pipker-agent-linux-amd64.tar.gz pipker-agent-linux-arm64.tar.gz SHA256SUMS)
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-          else
-            options=(--verify-tag --title "$RELEASE_TAG" --generate-notes)
-            if [ "$PRERELEASE" = true ]; then
-              options+=(--prerelease --latest=false)
-            else
-              options+=(--latest)
-            fi
-            gh release create "$RELEASE_TAG" "${assets[@]}" "${options[@]}"
+          tag="release-$GITHUB_RUN_NUMBER-${GITHUB_SHA:0:7}"
+          subject=$(git log -1 --format=%s "$GITHUB_SHA")
+          printf 'Commit: `%s`\n\n%s\n\nOps: `%s`  \nAgent: `%s`  \nSkill: `%s`\n' "$GITHUB_SHA" "$subject" "$OPS_VERSION" "$AGENT_VERSION" "$SKILL_VERSION" > "$RUNNER_TEMP/release-notes.md"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/release-notes.md" --generate-notes --latest
           fi
+          assets+=(SHA256SUMS)
+          for asset in "${assets[@]}"; do
+            gh release upload "$tag" "$asset#$subject (${GITHUB_SHA:0:7})" --clobber
+          done

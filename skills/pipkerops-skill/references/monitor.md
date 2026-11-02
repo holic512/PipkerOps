@@ -1,7 +1,3 @@
----
-name: pipkerops-monitor
-description: Inspect PipkerOps node metrics, application health, multi-source probes and topology through MCP without changing infrastructure.
----
 
 Use `nodes_list`, `applications_list`, `probes_list` and `topology` within the connected key's available scopes. Missing permission means the result is incomplete; an empty authorized list does not prove the entire cluster has no resources.
 
