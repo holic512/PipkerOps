@@ -10,14 +10,14 @@
  */
 import { createClient } from "redis";
 import { spawn } from "node:child_process";
-import { db } from "../src/lib/db";
-import { restoreBackup } from "../src/lib/backup-storage";
+import { db } from "../../src/lib/db";
+import { restoreBackup } from "../../src/lib/backup-storage";
 import { z } from "zod";
 import {
   backendUrl,
   validateRuntime,
   redisTlsOptions,
-} from "../src/lib/config";
+} from "../../src/lib/config";
 
 const role = process.argv[2] ?? "web";
 let stage = "配置校验";

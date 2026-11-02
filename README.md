@@ -38,20 +38,16 @@ Next.js 提供界面与 API，Gateway 维护 Agent 连接，Worker 负责调度�
 准备 Linux 服务器、Docker Compose v2、外部 PostgreSQL 17、独立 Redis 逻辑库及 Web HTTPS 证书。克隆仓库后，在项目目录执行：
 
 ```sh
-sudo sh deploy/menu.sh
+sudo python3 deploy/menu.py
 ```
 
-1. 选择“安装”，生成配置模板。
-2. 填写 `deploy/config/app.conf`，并将 `fullchain.pem` 和 `privkey.pem` 放入 `deploy/certs/web`。
-3. 再次选择“安装”，拉取镜像、初始化并启动。
-
-宿主机路径和版本配置位于 `deploy/compose.env`，应用凭据放在映射配置中。修改 `deploy/config/app.conf` 后，选择“重启并重读配置”。切换到空数据库时会执行迁移和管理员初始化；配置切换不会搬迁数据。
-
-完整步骤、权限、私有镜像登录和恢复说明见[部署指南](docs/DEPLOYMENT.md)。
+选择“主控管理 → 启动”生成配置模板，填写 `deploy/config/app.conf` 和 `deploy/config/compose.env`，并将 Web 证书放入 `deploy/certs/web`，再执行启动。启动、重启和更新时会同步配置到 `deploy/data/`。也可下载 Release 中的独立部署包使用同一菜单，完整步骤见[部署指南](docs/DEPLOYMENT.md)。
 
 ## 接入节点
 
-从 [GitHub Releases](https://github.com/holic512/PipkerOps/releases) 下载适用于 Linux amd64 或 arm64 的 Agent 安装包和 `SHA256SUMS`，校验后安装。在管理端生成注册令牌，通过可信渠道向节点提供主控 CA 公钥证书，配置 Agent 并审批接入。安装包同时保留原始二进制供在线升级使用。
+从同一条 [GitHub Release](https://github.com/holic512/PipkerOps/releases) 下载对应架构的 `pipker-agent-<版本>-linux-amd64.tar.gz` 或 `arm64.tar.gz` 和 `SHA256SUMS`，人工上传到目标 Linux 主机的同一目录。使用部署菜单中的“Agent 管理 → 安装／重新安装”，输入本地包路径；工具校验后安装，不自动下载或启动。
+
+仅安装 Agent 的节点需要 Python 3、Linux 和 systemd，无需 Docker 或主控配置。在管理端生成注册令牌，通过可信渠道提供主控 CA 公钥证书，填写 Agent 配置后选择“启动并设为开机自启”，并审批节点接入。菜单同时支持查看、停止和重启 Agent；原始二进制附件供在线升级使用。
 
 具体命令和配置见 [Agent 安装与协议](agent/README.md)。
 

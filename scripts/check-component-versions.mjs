@@ -20,7 +20,7 @@ const versions = Object.fromEntries(Object.entries(files).map(([name, path]) => 
 if (base && !/^0+$/.test(base)) {
   const changed = execFileSync('git', ['diff', '--name-only', '--no-renames', base, 'HEAD'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
   const affected = {
-    agent: changed.some(path => (path.startsWith('agent/') && path !== files.agent) || path === 'scripts/package-agent.sh'),
+    agent: changed.some(path => (path.startsWith('agent/') && path !== files.agent && !path.endsWith('.md')) || path === 'scripts/package-agent.sh'),
     skill: changed.some(path => path.startsWith('skills/') && path !== files.skill),
     ops: changed.some(path => /^(src|prisma|deploy|public|config|scripts)\//.test(path) || /^(compose\.yaml|package\.json|package-lock\.json|next\.config\.|Dockerfile)/.test(path)),
   };

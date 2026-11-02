@@ -74,6 +74,8 @@ jobs:
       - run: node scripts/check-secrets.mjs --all
       - name: Check shell syntax
         run: find deploy scripts agent tests -type f -name '*.sh' -print0 | xargs -0 -r -n 1 sh -n
+      - name: Verify deployment package validation and menus
+        run: python3 -m unittest discover -s tests -p '*_test.py'
       - run: npm ci
       - run: npm run db:validate
       - run: npm run db:generate
@@ -147,7 +149,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
-          file: deploy/Dockerfile
+          file: deploy/resources/Dockerfile
           platforms: linux/${{ matrix.arch }}
           load: true
           push: false
@@ -293,12 +295,25 @@ jobs:
           sha256sum "${assets[@]}" > SHA256SUMS
           sha256sum -c SHA256SUMS
           tag="release-$GITHUB_RUN_NUMBER-${GITHUB_SHA:0:7}"
+          title="Ops v$OPS_VERSION · Agent v$AGENT_VERSION · Skill v$SKILL_VERSION"
           subject=$(git log -1 --format=%s "$GITHUB_SHA")
           printf 'Commit: `%s`\n\n%s\n\nOps: `%s`  \nAgent: `%s`  \nSkill: `%s`\n' "$GITHUB_SHA" "$subject" "$OPS_VERSION" "$AGENT_VERSION" "$SKILL_VERSION" > "$RUNNER_TEMP/release-notes.md"
+          cat >> "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+
+          ## Assets
+
+          - `pipkerops-deploy-*.tar.gz`: standalone Python deployment menu for the control plane and Agent management.
+          - `pipker-agent-*-linux-amd64.tar.gz` / `*-arm64.tar.gz`: Agent installation packages. Download the matching architecture and `SHA256SUMS` from this release, upload both to the same directory on the target Linux host, then install through the Agent menu.
+          - `pipker-agent-*-linux-amd64` / `*-arm64`: raw ELF binaries for online Agent upgrades.
+          - `pipkerops-skill-*.tar.gz`: PipkerOpsSkill package.
+          - `SHA256SUMS`: SHA-256 checksums for the six release files above.
+          NOTES
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/release-notes.md" --generate-notes --latest
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md" --generate-notes --latest
+          else
+            gh release edit "$tag" --title "$title"
           fi
           assets+=(SHA256SUMS)
           for asset in "${assets[@]}"; do
-            gh release upload "$tag" "$asset#$subject (${GITHUB_SHA:0:7})" --clobber
+            gh release upload "$tag" "$asset" --clobber
           done

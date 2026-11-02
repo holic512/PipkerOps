@@ -1,0 +1,66 @@
+name: ${COMPOSE_PROJECT_NAME:-pipkerops}
+x-runtime: &runtime
+  image: ${PIPKEROPS_IMAGE:-ghcr.io/holic512/pipkerops}:${PIPKEROPS_VERSION:-latest}
+  restart: unless-stopped
+  environment:
+    NODE_ENV: production
+  volumes:
+    - type: bind
+      source: ${DEPLOY_CONFIG}
+      target: /app/config
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${DEPLOY_DATA}/pki
+      target: /app/.data/pki
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${DEPLOY_DATA}/backups
+      target: /app/.data/backups
+      bind: {create_host_path: false}
+services:
+  init:
+    <<: *runtime
+    restart: 'no'
+    command: [init]
+  web:
+    <<: *runtime
+    command: [web]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, node, -e, 'fetch("http://127.0.0.1:3000/api/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  gateway:
+    <<: *runtime
+    command: [gateway]
+    ports:
+      - '${GATEWAY_BIND:-0.0.0.0}:${GATEWAY_PORT:-9443}:9443'
+      - '${GATEWAY_BIND:-0.0.0.0}:${ENROLL_PORT:-9444}:9444'
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, node, --import, tsx, deploy/resources/health.ts, gateway]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  worker:
+    <<: *runtime
+    command: [worker]
+    depends_on:
+      init: {condition: service_completed_successfully}
+  proxy:
+    image: nginx:1.28-alpine-slim
+    restart: unless-stopped
+    ports: ['${WEB_BIND:-0.0.0.0}:${WEB_PORT:-443}:443']
+    volumes:
+      - ${DEPLOY_NGINX}:/etc/nginx/conf.d/default.conf:ro
+      - type: bind
+        source: ${DEPLOY_TLS}
+        target: /etc/nginx/tls
+        read_only: true
+        bind: {create_host_path: false}
+    depends_on:
+      web: {condition: service_healthy}

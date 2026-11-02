@@ -34,7 +34,7 @@ npm run dev
 | `src/server` | Gateway 长连接与 Worker 调度 |
 | `prisma` | 模型和只增迁移，生成客户端不手工修改 |
 | `agent` | Go 采集执行端、systemd 安装、协议说明 |
-| `deploy` | 镜像启动、生产配置模板、容器菜单；备份业务位于系统服务 |
+| `deploy` | 主控与 Agent 管理菜单、Python 部署模块、镜像运行资源和配置模板 |
 | `scripts` | 本地初始化、开发证书、凭据检查和 Agent 打包 |
 | `tests` | 单元、真实 SQL、平台与 Linux 集成测试 |
 | `.github/workflows` | 检查、双架构构建验收和发布 |
@@ -57,6 +57,8 @@ npm run build
 node scripts/check-secrets.mjs
 # 检查当前工作树的版本文件与未忽略新文件（CI 使用）
 node scripts/check-secrets.mjs --all
+# 本地安装包校验、菜单与部署包独立运行
+python3 -m unittest discover -s tests -p '*_test.py'
 ```
 
 新增核心入口维护项目文件索引；配置、私钥、备份、运行状态、生成客户端和构建产物不入库。具体数据库约束和容量测试见[数据库文档](database.md)。
@@ -70,11 +72,13 @@ npm run test:history-capacity
 # 不需要本地配置文件，不访问现有业务库
 # 本地构建使用原生架构；CI 两个原生架构各执行一次
 
-docker build --provenance=false -f deploy/Dockerfile -t pipkerops:test .
-IMAGE=pipkerops:test sh tests/deployment.integration.sh
+docker build --provenance=false -f deploy/resources/Dockerfile -t pipkerops:test .
+sudo env IMAGE=pipkerops:test sh tests/deployment.integration.sh
 ```
 
-部署集成测试创建随机 Compose 项目、临时 PostgreSQL/Redis/registry、配置与证书，只清理自身资源。Linux CI 用 sudo 验证安装权限；无免密 sudo 的桌面环境通过隔离容器准备目录权限，并继续验证实际启停和更新脚本。测试包含配置 A/B 切换、空库初始化、登录、三角色连接、错误配置、系统备份 API/Worker/持久文件、离线恢复和镜像无凭据检查。
+部署集成测试需要 root 权限以验证 UID 10001 的目录和文件权限。测试只将部署工具复制到临时目录，使用独立配置源和运行副本，创建随机 Compose 项目、临时 PostgreSQL/Redis/registry 和证书，只清理自身资源，不读取仓库中的部署私有配置。测试包含 Python 菜单与启停更新、配置 A/B 切换、空库初始化、登录、三角色连接、错误配置、系统备份 API/Worker/持久文件、离线恢复和镜像无凭据检查。
+
+Agent 双架构 CI 使用真实发布安装包和同目录校验文件，验证安装权限、重装保留配置状态、安装不自动启动、运行中拒绝重装，以及实际 systemd 启动、自启、重启、停止和状态菜单。测试拒绝已有 Agent 安装，使用本地测试证书和身份，不连接真实主控。
 
 ## 平台与 Linux 联调
 
@@ -120,9 +124,9 @@ npm run test:alerts
 
 工作流为 `.github/workflows/ci.yml`。每次 master 推送在检查及双架构验收成功后发布正式 Release；一次推送包含多个提交时发布目标提交。PR 和手动触发只执行检查。
 
-Ops 版本在 `package.json`，Agent 版本在 `agent/VERSION`，Skill 版本在 `skills/VERSION`。提交前递增受影响组件的版本；CI 比较推送前后的组件源码，版本未递增时失败。Release 标签 `release-<运行编号>-<提交短哈希>` 独立于组件版本，同一次运行重试复用标签。
+Ops 版本在 `package.json`，Agent 版本在 `agent/VERSION`，Skill 版本在 `skills/VERSION`。提交前递增受影响组件的版本；CI 比较推送前后的组件源码，版本未递增时失败。Agent Markdown 文档修改不要求 Agent 升版，源码、安装文件和打包脚本变化仍需升版。Release 标题使用 `Ops v<版本> · Agent v<版本> · Skill v<版本>`；标签 `release-<运行编号>-<提交短哈希>` 独立于组件版本，运行编号不是组件版本，同一次运行重试复用标签。
 
-Release 包含带各自版本的双架构 Agent 二进制和安装包、部署包、PipkerOpsSkill 包及 `SHA256SUMS`。正文和附件标签记录提交信息；部署包默认拉取对应 Ops 版本镜像。GHCR 发布 Ops 版本、`edge`、`latest` 和提交 SHA 标签。双架构镜像经过原生验收后直接发布，不重新构建。
+Release 包含带各自版本的双架构 Agent 二进制和安装包、部署包、PipkerOpsSkill 包及 `SHA256SUMS`。附件直接显示实际文件名，正文记录提交信息、组件版本和各附件用途。Agent 安装包和同一 Release 的校验文件需人工上传到目标节点，再通过统一菜单安装；部署包默认拉取对应 Ops 版本镜像。GHCR 发布 Ops 版本、`edge`、`latest` 和提交 SHA 标签。双架构镜像经过原生验收后直接发布，不重新构建。标题及附件展示调整仅应用于后续发布，历史 Release 保持原状。
 
 发布需要仓库允许工作流写入内容和 GHCR 包。首次发布需核验 Actions 权限和 GHCR 包访问设置。
 

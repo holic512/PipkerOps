@@ -1,7 +1,7 @@
-import { configValues } from "../src/lib/config";
+import { configValues } from "../../src/lib/config";
 import { request } from "node:https";
 import { readFileSync } from "node:fs";
-import { pkiFiles } from "../src/lib/pki";
+import { pkiFiles } from "../../src/lib/pki";
 const req = request(
   {
     host: "127.0.0.1",

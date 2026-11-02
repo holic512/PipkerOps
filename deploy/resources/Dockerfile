@@ -16,10 +16,10 @@ COPY --from=build --chown=10001:10001 /app/.next/static ./.next/static
 COPY --from=build --chown=10001:10001 /app/src ./src
 COPY --from=build --chown=10001:10001 /app/prisma ./prisma
 COPY --from=build --chown=10001:10001 /app/scripts ./scripts
-COPY --from=build --chown=10001:10001 /app/deploy/runtime.ts /app/deploy/health.ts /app/deploy/entrypoint.sh ./deploy/
+COPY --from=build --chown=10001:10001 /app/deploy/resources/runtime.ts /app/deploy/resources/health.ts /app/deploy/resources/entrypoint.sh ./deploy/resources/
 COPY --from=build --chown=10001:10001 /app/package.json /app/tsconfig.json /app/prisma.config.ts ./
 RUN mkdir -p /app/.data/pki /app/.data/backups && chown -R 10001:10001 /app/.data
 USER 10001:10001
 EXPOSE 3000 9443 9444
-ENTRYPOINT ["sh", "/app/deploy/entrypoint.sh"]
+ENTRYPOINT ["sh", "/app/deploy/resources/entrypoint.sh"]
 CMD ["web"]

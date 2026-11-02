@@ -12,7 +12,18 @@
 | 同名 `.tar.gz` | 手工安装包，包含二进制、`install.sh`、systemd 单元、配置示例和本说明 |
 | `SHA256SUMS` | 两个架构的原始二进制与安装包校验和 |
 
-下载适合节点架构的安装包及同一版本的 `SHA256SUMS`，在解压前检查对应文件：
+下载适合节点架构的安装包及同一 Release 的 `SHA256SUMS`，可以通过统一菜单或包内脚本安装。
+
+推荐使用统一部署菜单：将 `.tar.gz` 和 `SHA256SUMS` 人工上传到目标 Linux 主机的同一目录，使用独立部署包或源码中的 `deploy/menu.py`，选择“Agent 管理 → 安装／重新安装”并输入安装包路径。工具自动核验所选包的校验和、必要文件及架构，不要求其他 Release 附件同时存在。仅安装 Agent 需要 Python 3、Linux 和 systemd，无需 Docker 或主控配置。具体步骤见[部署指南](../docs/DEPLOYMENT.md)。
+
+```sh
+sudo python3 deploy/script/agent.py install /tmp/pipkerops-upload/pipker-agent-0.1.0-linux-amd64.tar.gz
+# 完成人工配置、令牌文件和可信 CA 准备后再启动。
+sudo python3 deploy/script/agent.py start
+python3 deploy/script/agent.py status
+```
+
+菜单中的启动会同时设置开机自启；安装本身不启动服务，运行中重装会提示先停止。已有配置和状态保留。也可以使用安装包内的脚本独立安装：
 
 ```sh
 sha256sum --ignore-missing -c SHA256SUMS
@@ -56,7 +67,7 @@ sudo journalctl -u pipkerops-agent -f
 
 [CI and release](../.github/workflows/ci.yml) 在 PR、master 推送和手动触发时运行检查；每次 master 推送在完整验收后发布 Release。Agent 版本来自 `agent/VERSION`，独立于 Ops 和 Skill 版本。两个 Linux 架构均执行原生测试、版本检查及真实安装验证。
 
-Release 中的原始 ELF 用于在线升级，安装包用于手工安装。版本和发布规则见[开发文档](../docs/DEVELOPMENT.md)。
+Release 标题分别显示 Ops、Agent、Skill 的版本，`release-<运行编号>-<提交短哈希>` 标签用于追溯发布批次。附件显示实际文件名，原始 ELF 用于在线升级，`.tar.gz` 安装包用于人工上传后通过菜单或安装脚本安装。版本和发布规则见[开发文档](../docs/DEVELOPMENT.md)。
 
 ## 配置参数
 

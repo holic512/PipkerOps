@@ -45,3 +45,7 @@ deploy/compose.env
 
 config/*
 !config/app.conf.example
+
+deploy/**/__pycache__/
+deploy/**/*.pyc
+tests/__pycache__/

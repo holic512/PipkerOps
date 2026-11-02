@@ -38,20 +38,16 @@ Next.js provides the UI and API, the Gateway maintains Agent connections, and th
 Prepare a Linux server, Docker Compose v2, an external PostgreSQL 17 instance, a dedicated Redis logical database, and a Web HTTPS certificate. Clone the repository and run from its root:
 
 ```sh
-sudo sh deploy/menu.sh
+sudo python3 deploy/menu.py
 ```
 
-1. Select “安装” (Install) to create the configuration template.
-2. Fill in `deploy/config/app.conf` and place `fullchain.pem` and `privkey.pem` in `deploy/certs/web`.
-3. Select “安装” again to pull images, initialize, and start the services.
-
-Host paths and versions are configured in `deploy/compose.env`; application credentials belong in the mapped configuration. After changing `deploy/config/app.conf`, select “重启并重读配置” (Restart and reload configuration). Switching to an empty database runs migrations and administrator initialization; switching configuration does not migrate data.
-
-See the [deployment guide](docs/DEPLOYMENT.md) for permissions, private image registry login, recovery, and full instructions.
+Select “主控管理 → 启动” (Control plane → Start) to create configuration templates. Fill in `deploy/config/app.conf` and `deploy/config/compose.env`, place `fullchain.pem` and `privkey.pem` in `deploy/certs/web`, then start again. Start, restart, and update synchronize configuration into `deploy/data/`. The standalone deployment archive in Releases includes the same menu. See the [deployment guide](docs/DEPLOYMENT.md).
 
 ## Connect a node
 
-Download the Linux amd64 or arm64 Agent package and `SHA256SUMS` from [GitHub Releases](https://github.com/holic512/PipkerOps/releases), verify the package, and install it. Create an enrollment token in the management interface, provide the control-plane CA public certificate to the node through a trusted channel, configure the Agent, and approve enrollment. Releases also include raw binaries for online upgrades.
+Download `pipker-agent-<version>-linux-amd64.tar.gz` or `arm64.tar.gz` and `SHA256SUMS` from the same [GitHub Release](https://github.com/holic512/PipkerOps/releases). Manually upload both to the same directory on the target Linux host. In the deployment menu, select “Agent 管理 → 安装／重新安装” (Agent → Install/reinstall) and enter the local archive path. The tool verifies and installs the package without downloading files or starting the service.
+
+An Agent-only host needs Python 3, Linux, and systemd; it does not need Docker or control-plane deployment configuration. Create an enrollment token in the management interface, provide the control-plane CA public certificate through a trusted channel, and configure the Agent. Select “启动并设为开机自启” (Start and enable at boot), then approve enrollment. The menu also provides status, stop, and restart operations. Releases include raw binaries for online upgrades.
 
 See [Agent installation and protocol](agent/README.md) for commands and configuration.
 
