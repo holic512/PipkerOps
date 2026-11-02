@@ -17,7 +17,6 @@ import {
   hashToken,
   hashPassword,
 } from "@/lib/crypto";
-import { production } from "@/lib/config";
 import { body, json, errorResponse } from "@/lib/http";
 import { z } from "zod";
 let dummy: Promise<string> | undefined;
@@ -61,7 +60,7 @@ export async function POST(request: Request) {
     });
     response.headers.set(
       "Set-Cookie",
-      `${sessionCookie}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production() ? "; Secure" : ""}`,
+      `${sessionCookie}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800; Secure`,
     );
     return response;
   } catch (e) {

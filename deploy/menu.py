@@ -41,15 +41,17 @@ def control_menu():
 
 
 def agent_menu():
-    options = {'1': 'install', '2': 'status', '3': 'start', '4': 'stop', '5': 'restart'}
+    options = {'1': 'install', '2': 'status', '3': 'start', '4': 'stop', '5': 'restart', '6': 'export', '7': 'reset-key'}
     while True:
-        choice = input('\nAgent 管理\n1. 安装／重新安装\n2. 查看详情\n3. 启动并设为开机自启\n4. 停止\n5. 重启\n0. 返回\n请选择：').strip()
+        choice = input('\nAgent 管理\n1. 安装／重新安装\n2. 查看详情\n3. 启动并设为开机自启\n4. 停止\n5. 重启\n6. 导出接入文件（含访问 Key）\n7. 重置访问 Key（先停止服务）\n0. 返回\n请选择：').strip()
         if choice == '0':
             return
         if choice not in options:
             print('请选择有效编号。')
             continue
         package = input('本地 Agent .tar.gz 安装包路径（同目录需有 SHA256SUMS）：').strip() if choice == '1' else None
+        if choice == '7' and input('旧接入文件将失效，输入 RESET 确认：').strip() != 'RESET':
+            continue
         agent_main(options[choice], package)
 
 

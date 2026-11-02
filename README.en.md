@@ -31,23 +31,23 @@ Web / MCP / Cron
  Go Agent on each Linux node
 ```
 
-Next.js provides the UI and API, the Gateway maintains Agent connections, and the Worker handles scheduling. See the [Agent documentation](agent/README.md) for installation, enrollment, and the task protocol.
+Next.js provides the UI and API, the Gateway maintains Agent connections, and the Worker handles scheduling. See the [Agent documentation](agent/README.md) for installation, connection, and the task protocol.
 
 ## Deploy
 
-Prepare a Linux server, Docker Compose v2, an external PostgreSQL 17 instance, a dedicated Redis logical database, and a Web HTTPS certificate. Clone the repository and run from its root:
+Prepare a Linux server, Docker Compose v2, an external PostgreSQL 17 instance, a dedicated Redis logical database. Clone the repository and run from its root:
 
 ```sh
 sudo python3 deploy/menu.py
 ```
 
-Select “主控管理 → 启动” (Control plane → Start) to create configuration templates. Fill in `deploy/config/app.conf` and `deploy/config/compose.env`, place `fullchain.pem` and `privkey.pem` in `deploy/certs/web`, then start again. Start, restart, and update synchronize configuration into `deploy/data/`. The standalone deployment archive in Releases includes the same menu. See the [deployment guide](docs/DEPLOYMENT.md).
+Select “主控管理 → 启动” (Control plane → Start) to create configuration templates. Fill in `deploy/config/ops/app.conf` and `deploy/config/ops/compose.env`, then start again. Ops exposes HTTP on `127.0.0.1:8080`; use your existing HTTPS reverse proxy before signing in. No domain or Web certificate is required in Ops configuration. Ops and Agent configuration and data are stored separately. The standalone deployment archive in Releases includes the same menu. See the [deployment guide](docs/DEPLOYMENT.md).
 
 ## Connect a node
 
 Download `pipker-agent-<version>-linux-amd64.tar.gz` or `arm64.tar.gz` and `SHA256SUMS` from the same [GitHub Release](https://github.com/holic512/PipkerOps/releases). Manually upload both to the same directory on the target Linux host. In the deployment menu, select “Agent 管理 → 安装／重新安装” (Agent → Install/reinstall) and enter the local archive path. The tool verifies and installs the package without downloading files or starting the service.
 
-An Agent-only host needs Python 3, Linux, and systemd; it does not need Docker or control-plane deployment configuration. Create an enrollment token in the management interface, provide the control-plane CA public certificate through a trusted channel, and configure the Agent. Select “启动并设为开机自启” (Start and enable at boot), then approve enrollment. The menu also provides status, stop, and restart operations. Releases include raw binaries for online upgrades.
+An Agent-only host needs Python 3, Linux, and systemd. Set its reachable HTTPS URL and start it; the Agent creates its own CA, server certificate, stable identity and access key. Export one connection file, import it in Ops, test and confirm. Managed updates are explicitly initiated from Ops, which downloads and verifies GitHub release artifacts before distribution. An Agent on the Ops host can perform Ops container updates.
 
 See [Agent installation and protocol](agent/README.md) for commands and configuration.
 

@@ -7,7 +7,7 @@
 | 模块     | 主要表                                             | 关键约束                                                                            |
 | -------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | 身份权限 | User、Session、ApiKey                              | 角色为 ADMIN/OPERATOR/VIEWER；会话与 Key 只保存摘要，Key 限定 scope、节点及高危操作 |
-| 节点接入 | EnrollmentToken、Node                              | 注册令牌限制有效期和次数；节点须审批；证书序列号/指纹唯一，私钥留在 Agent           |
+| 节点接入 | Node（保留旧 EnrollmentToken 历史表） | Agent ID 唯一；保存 HTTPS 地址、公开 CA 和私有凭证文件引用；私钥留在 Agent |
 | 指标     | MetricSample、MetricHourly、MetricDeviceHourly、MetricMaintenanceState | 原始采样按月分区；CPU/内存及设备小时聚合；持久维护水位                                    |
 | 应用拓扑 | Application、Deployment、Dependency                | 应用独立存在；同应用/节点/类型/目标不重复；依赖禁止自引用                           |
 | 探针     | Probe、ProbeResult                                 | 来源为空表示主控，否则为指定 Agent；保存 HTTP/TCP 配置、字段映射及执行身份          |
@@ -19,9 +19,9 @@
 
 ## 身份与任务
 
-- 会话、API Key 和注册令牌仅存摘要，创建时返回原文。普通响应只选择公开字段。
+- 会话和 API Key 仅存摘要，Key 创建时返回原文。Agent 访问 Key 保存在私有凭证目录，数据库仅保存引用；普通节点响应不返回 Key、私有引用或 CA。
 - Key 的 `nodeIds=[]` 表示无节点权限，`["*"]` 才表示全部节点；统一业务层校验角色、scope、节点范围和高危操作。
-- 注册在事务内校验令牌并增加使用次数、创建待审批节点；数据库 CHECK 限制使用量。获批节点须通过 mTLS 和当前授权检查，吊销后断开连接。
+- 导入接入文件时先校验 Agent HTTPS 证书、调用 Key、协议版本和身份，再保存节点。Ops 主动连接已启用的节点；停用后断开连接并停止分发。重新接入保留原节点 ID、历史与关联资源；旧注册令牌和证书字段仅保留历史，不再用于连接。
 - Task、Schedule、Probe 保留创建 Key 的身份 ID。物理删除 Key 不清空身份；调度/分发重新授权，失效任务取消、计划或探针停用，避免退化为用户全权限。
 - 任务正常状态为 `QUEUED → DISPATCHED → RUNNING → SUCCEEDED/FAILED`，另有 `CANCELLED` 和结果不明的 `UNKNOWN`。
 - 默认任务非幂等且最多尝试一次，数据库 CHECK 禁止非幂等任务多次尝试。非幂等任务失联后等待 Agent journal 对账。
@@ -67,7 +67,8 @@ SELECT pipkerops_maintain_metrics(30, 365);
 - `202610300001_schedule_task_history`仅新增可空计划关联、查询索引和SET NULL外键，不删除历史数据。升级先迁移，再生成Prisma Client并重启Web/Gateway/Worker；旧Worker在升级前创建的任务仍无关联。大规模Task表建索引的耗时与DDL锁等待需部署前评估，不由开发库结果推定。
 - 生产区分迁移与运行角色，限制 Web/Gateway/Worker 总连接数。维护函数需要相应 DDL 权限，未使用 `SECURITY DEFINER` 提权。
 - 生产外部数据库连接使用 TLS 或受保护通道，实际凭据只存环境配置。
-- 备份包含表、枚举、分区、函数、数据及 PKI；恢复到空目标后检查迁移、业务资源和 `UNKNOWN` 任务，见 [部署与恢复](DEPLOYMENT.md)。
+- `202611020001_agent_pull` 只新增可空 Agent 身份、地址、CA、凭证引用和部署目录字段；不删除旧接入记录。已有节点需重新导入接入文件，迁移不自动创建凭证。
+- 备份包含表、枚举、分区、函数、数据及节点连接凭证；恢复到空目标后检查迁移、业务资源和 `UNKNOWN` 任务，见 [部署与恢复](DEPLOYMENT.md)。
 
 ## 验证范围
 

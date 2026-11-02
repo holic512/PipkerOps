@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -131,6 +132,11 @@ func TestRestartDispatchFailureIsNotBlindlyRetried(t *testing.T) {
 }
 
 func TestUpgradeBinaryReplacementKeepsRollbackCopy(t *testing.T) {
+	config := fixtureConfig(t)
+	connectionBefore, err := ExportConnection(config)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "pipker-agent")
 	staged := filepath.Join(dir, "new-agent")
@@ -154,6 +160,11 @@ func TestUpgradeBinaryReplacementKeepsRollbackCopy(t *testing.T) {
 	if string(current) != "next-binary" || string(backup) != "previous-binary" {
 		t.Fatalf("binary/backup mismatch: %s / %s", current, backup)
 	}
+	connectionAfter, err := ExportConnection(config)
+	if err != nil || !reflect.DeepEqual(connectionBefore, connectionAfter) {
+		t.Fatal("successful binary replacement changed Agent credentials")
+	}
+
 	if err = replaceAgentBinary(filepath.Join(dir, "missing-new-artifact"), binary); err == nil {
 		t.Fatal("missing staged file accepted")
 	}
@@ -167,5 +178,37 @@ func TestRestartEnvironmentRejectsUnmanagedProcess(t *testing.T) {
 	t.Setenv("INVOCATION_ID", "")
 	if err := validateRestartEnvironment(context.Background()); err == nil || !(strings.Contains(err.Error(), "Linux") || strings.Contains(err.Error(), "systemd")) {
 		t.Fatalf("unmanaged process accepted for restart: %v", err)
+	}
+}
+
+func TestStartupResolvesAcknowledgedUpgradeWithoutMaintenanceDeadlock(t *testing.T) {
+	j, err := newJournal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := Task{ID: "startup-after-ack", Type: "agent.upgrade", Payload: json.RawMessage(`{"restart":true}`)}
+	if _, err = j.begin(task); err != nil {
+		t.Fatal(err)
+	}
+	ok := true
+	if err = j.finish(task, Message{Type: "task.result", TaskID: task.ID, Success: &ok}); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := j.pendingUpgradeRestart(); err != nil || !pending {
+		t.Fatal("unacknowledged upgrade did not reserve maintenance")
+	}
+	if err = j.ack(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newJournal(j.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := restarted.pendingUpgradeRestart(); err != nil || pending {
+		t.Fatal("already restarted process was left waiting for a previous ACK")
+	}
+	record, err := restarted.load(task.ID)
+	if err != nil || !record.RestartDispatched {
+		t.Fatal("startup completion marker was not persisted")
 	}
 }

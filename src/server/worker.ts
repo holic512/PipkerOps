@@ -10,6 +10,7 @@ import { configValues } from "../lib/config";
  * @author holic512
  */
 import { randomUUID } from "node:crypto";
+import { processUpdateQueue } from "../lib/services/updates";
 import { processBackupQueue } from "../lib/services/backups";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../lib/db";
@@ -21,6 +22,7 @@ import { withLatestMetrics } from "../lib/services/nodes";
 import { authorize, refreshActor } from "../lib/auth";
 import { hashToken } from "../lib/crypto";
 let stopping = false;
+let updateJob: Promise<void> | undefined;
 let backupJob: Promise<void> | undefined;
 function backups() {
   if (backupJob) return;
@@ -412,6 +414,12 @@ async function alerts() {
 }
 async function tick() {
   backups();
+  if (!updateJob)
+    updateJob = processUpdateQueue()
+      .catch(() => console.error("Update task processing failed"))
+      .finally(() => {
+        updateJob = undefined;
+      });
   await recover();
   await schedules();
   await probes();
@@ -436,6 +444,7 @@ async function main() {
   }
   await maintenanceJob;
   await backupJob;
+  await updateJob;
   await db().$disconnect();
   process.exit(0);
 }

@@ -125,6 +125,12 @@ model Node {
   os                     String?
   arch                   String?
   agentVersion           String?
+  agentId                String?          @unique
+  agentUrl               String?
+  agentCaPem             String?
+  agentCredentialRef     String?
+  deployRoot             String?
+  connectionError        String?
   ipAddress              String?
   certificateSerial      String?          @unique
   certificateFingerprint String?          @unique

@@ -1,15 +1,23 @@
+import { runtimeFixture } from "./helpers/runtime-fixture";
+import {
+  integrationOrigin,
+  proxyHeaders,
+  availablePort,
+  prepareHostAgent,
+  waitForAgent,
+} from "./helpers/agent-fixture";
 import { configValues } from "../src/lib/config";
 /** Starts only private test processes; never kills a process outside this test. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { db } from "../src/lib/db";
 import type { TaskData } from "../src/lib/client";
-const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = integrationOrigin;
 async function wait<T>(
   read: () => Promise<T>,
   accept: (v: T) => boolean,
@@ -48,9 +56,13 @@ test(
       "true",
       "Stop the development Worker you own before running this test; it launches its own Worker",
     );
+    assert.equal(
+      process.env.RECOVERY_GATEWAY_EXCLUSIVE,
+      "true",
+      "Stop the development Gateway you own before running this test; the connector must have a single owner",
+    );
     const run = "recovery-" + randomUUID().slice(0, 8);
-    let nodeId = "",
-      tokenId = "";
+    let nodeId = "";
     const probeIds: string[] = [],
       taskIds: string[] = [];
     let gateway: ChildProcess | undefined,
@@ -79,7 +91,7 @@ test(
     assert.ok(address && typeof address !== "string");
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
-      headers: { Origin: origin, "Content-Type": "application/json" },
+      headers: { ...proxyHeaders(origin), "Content-Type": "application/json" },
       body: JSON.stringify({
         email: configValues.BOOTSTRAP_EMAIL,
         password: configValues.BOOTSTRAP_PASSWORD,
@@ -94,7 +106,7 @@ test(
       const response = await fetch(origin + "/api/rpc", {
         method: "POST",
         headers: {
-          Origin: origin,
+          ...proxyHeaders(origin),
           "Content-Type": "application/json",
           Cookie: cookie,
         },
@@ -104,29 +116,9 @@ test(
       assert.equal(response.status, 200, `${method}: ${json.error ?? ""}`);
       return json.data as T;
     }
-    const startGateway = () =>
-      spawn(
-        process.execPath,
-        ["--env-file=.env", "--import", "tsx", "src/server/gateway.ts"],
-        {
-          env: {
-            ...process.env,
-            GATEWAY_HOST: "127.0.0.1",
-            GATEWAY_PORT: "9643",
-            ENROLL_PORT: "9644",
-          },
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
-    const startWorker = () =>
-      spawn(
-        process.execPath,
-        ["--env-file=.env", "--import", "tsx", "src/server/worker.ts"],
-        {
-          env: { ...process.env, WORKER_INTERVAL_MS: "500" },
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
+    const runtime = runtimeFixture(await availablePort());
+    const startGateway = () => runtime.start("gateway");
+    const startWorker = () => runtime.start("worker");
     try {
       gateway = startGateway();
       let ready = "";
@@ -134,47 +126,24 @@ test(
       gateway.stderr?.on("data", () => {});
       await wait(
         async () => ready,
-        (s) => s.includes("mTLS agent gateway ready"),
+        (s) => s.includes("Agent connector / terminal gateway ready"),
         "private Gateway startup",
       );
-      const token = await rpc<{ id: string; token: string }>("nodes.token", {
-        name: run,
-        hours: 1,
-        maxUses: 1,
-      });
-      tokenId = token.id;
       const state = resolve(".data", run);
-      const { mkdirSync, writeFileSync } = await import("node:fs");
-      mkdirSync(state, { mode: 0o700 });
-      writeFileSync(resolve(state, "token"), token.token, { mode: 0o600 });
-      agent = spawn(
-        resolve(process.env.AGENT_BINARY ?? "/tmp/pipker-agent-darwin-arm64"),
-        [
-          "--name",
-          run,
-          "--state-dir",
-          state,
-          "--ca",
-          resolve(".data/pki/ca.crt"),
-          "--token-file",
-          resolve(state, "token"),
-          "--gateway",
-          "wss://localhost:9643/agent",
-          "--enroll-url",
-          "https://localhost:9644",
-        ],
-        { stdio: ["ignore", "pipe", "pipe"] },
+      const fixture = await prepareHostAgent(
+        resolve(process.env.AGENT_BINARY ?? "agent/bin/pipker-agent"),
+        state,
+        run,
       );
+      agent = fixture.start();
       agent.stdout?.on("data", () => {});
       agent.stderr?.on("data", () => {});
-      const node = await wait(
-        () => db().node.findFirst({ where: { name: run } }),
-        Boolean,
-        "node enrollment",
-      );
-      assert.ok(node);
+      await waitForAgent(fixture.connection);
+      const node = await rpc<{ id: string }>("nodes.import", {
+        connection: fixture.connection,
+        confirmed: true,
+      });
       nodeId = node.id;
-      await rpc("nodes.approve", { id: nodeId, confirmed: true });
       await wait(
         () => db().metricSample.findFirst({ where: { nodeId } }),
         Boolean,
@@ -285,6 +254,7 @@ test(
       await stop(agent);
       await stop(gateway);
       await stop(worker);
+      runtime.cleanup();
       target.closeAllConnections();
       await new Promise<void>((r) => target.close(() => r()));
       if (taskIds.length)
@@ -295,8 +265,6 @@ test(
         await db().task.deleteMany({ where: { nodeId } });
         await db().node.deleteMany({ where: { id: nodeId } });
       }
-      if (tokenId)
-        await db().enrollmentToken.deleteMany({ where: { id: tokenId } });
       await db().$disconnect();
     }
   },

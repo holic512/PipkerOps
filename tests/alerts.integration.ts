@@ -1,3 +1,4 @@
+import { integrationOrigin, proxyHeaders } from "./helpers/agent-fixture";
 import { configValues } from "../src/lib/config";
 /** Real probe failures drive durable alerts, HTTPS webhooks, deduplication and recovery. */
 import { test } from "node:test";
@@ -9,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "../src/lib/db";
 import { redis } from "../src/lib/redis";
 import type { TaskData } from "../src/lib/client";
-const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = integrationOrigin;
 async function wait<T>(
   read: () => Promise<T>,
   accept: (v: T) => boolean,
@@ -67,7 +68,7 @@ test(
     );
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
-      headers: { Origin: origin, "Content-Type": "application/json" },
+      headers: { ...proxyHeaders(origin), "Content-Type": "application/json" },
       body: JSON.stringify({
         email: configValues.BOOTSTRAP_EMAIL,
         password: configValues.BOOTSTRAP_PASSWORD,
@@ -82,7 +83,7 @@ test(
       const response = await fetch(origin + "/api/rpc", {
         method: "POST",
         headers: {
-          Origin: origin,
+          ...proxyHeaders(origin),
           "Content-Type": "application/json",
           Cookie: cookie,
         },

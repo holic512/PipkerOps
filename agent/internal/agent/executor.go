@@ -12,15 +12,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,8 +32,9 @@ import (
 
 type logFunc func(stream, message string)
 type Executor struct {
-	StateDir string
-	configMu sync.Mutex
+	StateDir   string
+	DeployRoot string
+	configMu   sync.Mutex
 }
 
 type executionParams struct {
@@ -61,6 +59,9 @@ type executionParams struct {
 	Email          string `json:"email"`
 	Staging        bool   `json:"staging"`
 	Restart        bool   `json:"restart"`
+	ArtifactID     string `json:"artifactId"`
+	DeployRoot     string `json:"deployRoot"`
+	Version        string `json:"version"`
 }
 
 var objectName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -87,6 +88,9 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		return "", nil, err
 	}
 	timeout := 5 * time.Minute
+	if isUpdateTask(task.Type) {
+		timeout = 30 * time.Minute
+	}
 	if task.Type == "nginx.acme" {
 		timeout = 10 * time.Minute
 	}
@@ -214,7 +218,9 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 	case "agent.upgrade":
 		e.configMu.Lock()
 		defer e.configMu.Unlock()
-		return upgrade(ctx, p)
+		return e.upgrade(ctx, p)
+	case "ops.update", "deployment.update":
+		return e.updateDeployment(ctx, task.Type, p, log)
 	default:
 		return "", nil, fmt.Errorf("unsupported task type: %s", task.Type)
 	}
@@ -503,19 +509,18 @@ func (e *Executor) nginx(ctx context.Context, p executionParams, log logFunc) (s
 	return e.applyNginx(ctx, p, "/etc/nginx/conf.d", log)
 }
 
-func upgrade(ctx context.Context, p executionParams) (string, any, error) {
+func (e *Executor) upgrade(ctx context.Context, p executionParams) (string, any, error) {
 	if p.Restart {
 		if err := validateRestartEnvironment(ctx); err != nil {
 			return "", nil, err
 		}
 	}
-	u, err := url.Parse(p.URL)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
-		return "", nil, errors.New("upgrade URL must use HTTPS without userinfo")
+	if _, err := e.installationRoot(e.DeployRoot, "agent"); err != nil {
+		return "", nil, err
 	}
-	expected, err := hex.DecodeString(p.SHA256)
-	if err != nil || len(expected) != sha256.Size {
-		return "", nil, errors.New("a SHA-256 hex digest is required")
+	source, err := e.localArtifact(p)
+	if err != nil {
+		return "", nil, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -525,20 +530,15 @@ func upgrade(ctx context.Context, p executionParams) (string, any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	defer client.CloseIdleConnections()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
+	return replaceUpgradeArtifact(source, executable, p)
+}
+
+func replaceUpgradeArtifact(source, executable string, p executionParams) (string, any, error) {
+	input, err := os.Open(source)
 	if err != nil {
 		return "", nil, err
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", nil, fmt.Errorf("upgrade download HTTP %d", resp.StatusCode)
-	}
+	defer input.Close()
 	f, err := os.CreateTemp(filepath.Dir(executable), ".pipker-agent-upgrade-*")
 	if err != nil {
 		return "", nil, err
@@ -547,26 +547,25 @@ func upgrade(ctx context.Context, p executionParams) (string, any, error) {
 	defer os.Remove(temp)
 	defer f.Close()
 	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(resp.Body, (128<<20)+1))
+	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(input, maxArtifact+1))
 	if err != nil {
 		return "", nil, err
 	}
-	if n > 128<<20 {
+	if n > maxArtifact {
 		return "", nil, errors.New("upgrade binary exceeds 128 MiB")
 	}
-	if !bytes.Equal(hash.Sum(nil), expected) {
+	if hex.EncodeToString(hash.Sum(nil)) != p.SHA256 {
 		return "", nil, errors.New("upgrade SHA-256 mismatch")
 	}
-	if err = f.Chmod(0755); err != nil {
+	if err = f.Chmod(0755); err == nil {
+		err = f.Sync()
+	}
+	if err == nil {
+		err = f.Close()
+	}
+	if err != nil {
 		return "", nil, err
 	}
-	if err = f.Sync(); err != nil {
-		return "", nil, err
-	}
-	if err = f.Close(); err != nil {
-		return "", nil, err
-	}
-	// Reject a checksum-valid but non-ELF/wrong-platform file before replacement.
 	file, err := elf.Open(temp)
 	if err != nil {
 		return "", nil, err
@@ -580,7 +579,7 @@ func upgrade(ctx context.Context, p executionParams) (string, any, error) {
 	if err = replaceAgentBinary(temp, executable); err != nil {
 		return "", nil, err
 	}
-	return "upgrade downloaded and verified; restart the agent to activate", map[string]any{"sha256": strings.ToLower(p.SHA256), "requiresRestart": true, "restartRequested": p.Restart, "restartAfterAck": p.Restart, "rollbackPath": executable + ".previous"}, nil
+	return "upgrade verified and installed; restart after durable ACK", map[string]any{"sha256": p.SHA256, "requiresRestart": true, "restartRequested": p.Restart, "restartAfterAck": p.Restart, "rollbackPath": executable + ".previous"}, nil
 }
 
 func replaceAgentBinary(staged, executable string) error {

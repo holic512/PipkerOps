@@ -1,13 +1,18 @@
+import {
+  integrationOrigin,
+  proxyHeaders,
+  prepareContainerAgent,
+  waitForAgent,
+} from "./helpers/agent-fixture";
 import { configValues } from "../src/lib/config";
 /** Two real isolated Linux nodes exercise cross-node probes, fault paths and recovery. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { db } from "../src/lib/db";
 import type { ProbeData, TaskData } from "../src/lib/client";
-const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = integrationOrigin;
 const docker = (...args: string[]) =>
   execFileSync("docker", args, {
     encoding: "utf8",
@@ -42,12 +47,11 @@ test(
     const containers: string[] = [],
       nodeIds: string[] = [],
       probeIds: string[] = [],
-      appIds: string[] = [],
-      tokenIds: string[] = [];
+      appIds: string[] = [];
     let network = false;
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
-      headers: { Origin: origin, "Content-Type": "application/json" },
+      headers: { ...proxyHeaders(origin), "Content-Type": "application/json" },
       body: JSON.stringify({
         email: configValues.BOOTSTRAP_EMAIL,
         password: configValues.BOOTSTRAP_PASSWORD,
@@ -62,7 +66,7 @@ test(
       const response = await fetch(origin + "/api/rpc", {
         method: "POST",
         headers: {
-          Origin: origin,
+          ...proxyHeaders(origin),
           "Content-Type": "application/json",
           Cookie: cookie,
         },
@@ -95,6 +99,8 @@ test(
           "pipkerops.acceptance=true",
           "--network",
           run,
+          "-p",
+          "127.0.0.1::9443",
           "--entrypoint",
           "sleep",
           "pipkerops-agent-fixture:local",
@@ -121,43 +127,14 @@ test(
             `/tmp/pipker-agent-linux-${process.arch === "x64" ? "amd64" : "arm64"}`,
           container + ":/usr/local/bin/pipkerops-agent",
         );
-        write(container, "/tmp/ca.crt", readFileSync(".data/pki/ca.crt"));
-        const token = await rpc<{ id: string; token: string }>("nodes.token", {
-          name,
-          hours: 1,
-          maxUses: 1,
+        const fixture = await prepareContainerAgent(container, name);
+        fixture.start();
+        await waitForAgent(fixture.connection);
+        const node = await rpc<{ id: string }>("nodes.import", {
+          connection: fixture.connection,
+          confirmed: true,
         });
-        tokenIds.push(token.id);
-        write(container, "/tmp/token", token.token);
-        docker(
-          "exec",
-          "-d",
-          container,
-          "sh",
-          "-c",
-          'exec pipkerops-agent "$@" >/tmp/agent.log 2>&1',
-          "--",
-          "--gateway",
-          "wss://host.docker.internal:9543/agent",
-          "--enroll-url",
-          "https://host.docker.internal:9544",
-          "--ca",
-          "/tmp/ca.crt",
-          "--token-file",
-          "/tmp/token",
-          "--state-dir",
-          "/tmp/agent-state",
-          "--name",
-          name,
-        );
-        const node = await wait(
-          () => db().node.findFirst({ where: { name } }),
-          Boolean,
-          "node enrollment",
-        );
-        assert.ok(node);
         nodeIds.push(node.id);
-        await rpc("nodes.approve", { id: node.id, confirmed: true });
         await wait(
           () => db().metricSample.findFirst({ where: { nodeId: node.id } }),
           Boolean,
@@ -264,10 +241,6 @@ test(
         await db().task.deleteMany({ where: { nodeId: { in: nodeIds } } });
         await db().node.deleteMany({ where: { id: { in: nodeIds } } });
       }
-      if (tokenIds.length)
-        await db().enrollmentToken.deleteMany({
-          where: { id: { in: tokenIds } },
-        });
       await db().$disconnect();
     }
   },

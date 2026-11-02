@@ -1,57 +1,42 @@
-# 应用文本配置：键=值；支持引号，不执行脚本或变量替换。密码直接填写原文，无需 URL 编码。
+# PipkerOps 运行配置；键=值，不执行脚本或变量替换。
+# 修改后运行部署菜单中的“重启”。无需配置 Web 域名、Web 证书或注册网关。
 
-# =======================
-# 数据库
-# =======================
-DATABASE_HOST=localhost
+# ===== 必填：外部 PostgreSQL 17 =====
+# 地址填写 Ops 容器可访问的主机；同机数据库可用 host.docker.internal。
+DATABASE_HOST=host.docker.internal
 DATABASE_PORT=5432
-DATABASE_USERNAME="pipkerops"
+DATABASE_USERNAME=pipkerops
+# 密码直接填写原文，特殊字符用双引号包围，无需 URL 编码。
 DATABASE_PASSWORD="CHANGE_ME"
 DATABASE_NAME=pipkerops
-DATABASE_SSL_MODE=disable
-# DATABASE_CA_FILE=/app/config/database-ca.pem
 
-# =======================
-# 缓存 Redis
-# =======================
-REDIS_HOST=localhost
+# ===== 必填：外部 Redis =====
+# 使用独立逻辑库，不能与其他应用共用同一逻辑库。
+REDIS_HOST=host.docker.internal
 REDIS_PORT=6379
-REDIS_USERNAME=""
 REDIS_PASSWORD="CHANGE_ME"
 REDIS_DATABASE=0
-REDIS_TLS=false
-# REDIS_CA_FILE=/app/config/redis-ca.pem
 
-# =======================
-# 应用与安全
-# =======================
-APP_ORIGIN=https://ops.example.com
-ALLOW_INSECURE_BACKENDS=false
-
-# =======================
-# 初始管理员
-# =======================
+# ===== 必填：首次管理员 =====
+# 只在管理员不存在时初始化；后续重启不会重置账号。
 BOOTSTRAP_EMAIL=admin@example.com
 BOOTSTRAP_PASSWORD="CHANGE_ME_USE_AT_LEAST_16_RANDOM_CHARACTERS"
 BOOTSTRAP_NAME=管理员
 
-# =======================
-# 网关
-# =======================
-GATEWAY_HOST=0.0.0.0
-GATEWAY_PORT=9443
-ENROLL_PORT=9444
-GATEWAY_PUBLIC_URL=wss://ops.example.com:9443/agent
-ENROLL_PUBLIC_URL=https://ops.example.com:9444
+# ===== 可选：后端 TLS =====
+# 私网可不启用；公网数据库和 Redis 必须启用 TLS。
+# PostgreSQL 支持 disable/prefer/require/verify-ca/verify-full；默认 disable。
+DATABASE_SSL_MODE=disable
+# DATABASE_CA_FILE=/app/config/database-ca.pem
+# Redis ACL 用户名可留空；REDIS_TLS 默认 false。
+REDIS_USERNAME=""
+REDIS_TLS=false
+# REDIS_CA_FILE=/app/config/redis-ca.pem
 
-# =======================
-# 证书与持久目录
-# =======================
-PKI_DIR=./.data/pki
-BACKUP_DIR=./.data/backups
-PKI_HOSTS=localhost,127.0.0.1,ops.example.com
-
-# =======================
-# 后台任务
-# =======================
+# ===== 可选：后台 =====
+# Worker 调度间隔，默认 2000 毫秒；一般无需修改。
 WORKER_INTERVAL_MS=2000
+# 持久目录由部署挂载提供；一般无需修改。
+NODE_CREDENTIALS_DIR=./.data/credentials
+RELEASE_CACHE_DIR=./.data/releases
+BACKUP_DIR=./.data/backups

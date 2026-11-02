@@ -48,6 +48,7 @@ import {
 } from "./operations";
 import { Topology } from "./topology";
 import { Backups } from "./backups";
+import { Updates } from "./updates";
 const nav = [
   {
     group: "集群",
@@ -82,6 +83,7 @@ const nav = [
     group: "平台",
     items: [
       { path: "/mcp", name: "MCP 与密钥", icon: KeyRound },
+      { path: "/updates", name: "版本更新", icon: Archive },
       { path: "/backups", name: "系统备份", icon: Archive },
       { path: "/audit", name: "操作审计", icon: ScrollText },
     ],
@@ -126,6 +128,7 @@ export function Console() {
     if (path.startsWith("/tasks/"))
       return <TaskDetail id={path.split("/")[2]} />;
     if (path === "/tasks") return <Tasks />;
+    if (path === "/updates") return <Updates />;
     if (path === "/backups") return <Backups />;
     if (path === "/terminal") return null;
     if (["/docker", "/files", "/system"].includes(path))
@@ -275,7 +278,7 @@ export function Console() {
           )}
         </main>
         <footer className="console-footer">
-          PipkerOps<span>Agent 主动连接 · 操作全程留痕</span>
+          PipkerOps<span>HTTPS 节点连接 · 操作全程留痕</span>
         </footer>
       </div>
     </div>

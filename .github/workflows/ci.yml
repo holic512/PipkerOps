@@ -32,6 +32,7 @@ jobs:
       release: ${{ steps.metadata.outputs.release }}
       agent_version: ${{ steps.metadata.outputs.agent_version }}
       skill_version: ${{ steps.metadata.outputs.skill_version }}
+      scripts_version: ${{ steps.metadata.outputs.scripts_version }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -53,10 +54,10 @@ jobs:
           const { EVENT_NAME: event, REF: ref, REPOSITORY: repository, COMMIT: commit } = process.env;
           const publish = ref === 'refs/heads/master' && event === 'push';
           const image = `ghcr.io/${repository.toLowerCase()}`;
-          const outputs = { image, version: versions.ops, agent_version: versions.agent, skill_version: versions.skill,
+          const outputs = { image, version: versions.ops, agent_version: versions.agent, skill_version: versions.skill, scripts_version: versions.scripts,
             tags: JSON.stringify(publish ? [versions.ops, 'edge', 'latest', `sha-${commit}`] : []), publish, release: publish };
           fs.appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([key, value]) => `${key}=${value}\n`).join(''));
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Ops ${versions.ops}; Agent ${versions.agent}; Skill ${versions.skill}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Ops ${versions.ops}; Agent ${versions.agent}; Scripts ${versions.scripts}; Skill ${versions.skill}\n`);
           NODE
 
   checks:
@@ -128,6 +129,31 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  managed:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - run: npm ci
+      - run: npm run build
+      - name: Verify HTTPS onboarding and managed update distribution
+        run: sudo env PATH="$PATH" MANAGED_AGENT_IMAGE=python:3.12-slim node --import tsx --test tests/managed-deployment.integration.ts
+      - name: Prepare isolated systemd upgrade fixture
+        run: docker build -f tests/fixtures/Dockerfile.systemd -t pipkerops-systemd-fixture:local .
+      - name: Verify actual Agent upgrade after durable acknowledgement
+        run: node --import tsx --test tests/agent-upgrade.integration.ts
+
   images:
     needs: [metadata, checks]
     strategy:
@@ -183,7 +209,7 @@ jobs:
           retention-days: 3
 
   push-images:
-    needs: [metadata, checks, agent, images]
+    needs: [metadata, checks, agent, images, managed]
     if: needs.metadata.outputs.publish == 'true'
     permissions:
       contents: read
@@ -284,20 +310,23 @@ jobs:
           OPS_VERSION: ${{ needs.metadata.outputs.version }}
           AGENT_VERSION: ${{ needs.metadata.outputs.agent_version }}
           SKILL_VERSION: ${{ needs.metadata.outputs.skill_version }}
+          SCRIPTS_VERSION: ${{ needs.metadata.outputs.scripts_version }}
         run: |
           set -euo pipefail
           sh scripts/package-release.sh "$OPS_VERSION" "$SKILL_VERSION" dist/release
+          node scripts/package-release-manifest.mjs dist/release
           cd dist/release
           sha256sum -c SHA256SUMS-linux-amd64
           sha256sum -c SHA256SUMS-linux-arm64
           rm SHA256SUMS-linux-amd64 SHA256SUMS-linux-arm64
-          assets=("pipkerops-deploy-$OPS_VERSION.tar.gz" "pipker-agent-$AGENT_VERSION-linux-amd64.tar.gz" "pipker-agent-$AGENT_VERSION-linux-arm64.tar.gz" "pipker-agent-$AGENT_VERSION-linux-amd64" "pipker-agent-$AGENT_VERSION-linux-arm64" "pipkerops-skill-$SKILL_VERSION.tar.gz")
+          assets=("pipkerops-deploy-$SCRIPTS_VERSION.tar.gz" "pipker-agent-$AGENT_VERSION-linux-amd64.tar.gz" "pipker-agent-$AGENT_VERSION-linux-arm64.tar.gz" "pipker-agent-$AGENT_VERSION-linux-amd64" "pipker-agent-$AGENT_VERSION-linux-arm64" "pipkerops-skill-$SKILL_VERSION.tar.gz")
+          assets+=(release-manifest.json)
           sha256sum "${assets[@]}" > SHA256SUMS
           sha256sum -c SHA256SUMS
           tag="release-$GITHUB_RUN_NUMBER-${GITHUB_SHA:0:7}"
-          title="Ops v$OPS_VERSION · Agent v$AGENT_VERSION · Skill v$SKILL_VERSION"
+          title="Ops v$OPS_VERSION · Agent v$AGENT_VERSION · Scripts v$SCRIPTS_VERSION · Skill v$SKILL_VERSION"
           subject=$(git log -1 --format=%s "$GITHUB_SHA")
-          printf 'Commit: `%s`\n\n%s\n\nOps: `%s`  \nAgent: `%s`  \nSkill: `%s`\n' "$GITHUB_SHA" "$subject" "$OPS_VERSION" "$AGENT_VERSION" "$SKILL_VERSION" > "$RUNNER_TEMP/release-notes.md"
+          printf 'Commit: `%s`\n\n%s\n\nOps: `%s`  \nAgent: `%s`  \nScripts: `%s`  \nSkill: `%s`\n' "$GITHUB_SHA" "$subject" "$OPS_VERSION" "$AGENT_VERSION" "$SCRIPTS_VERSION" "$SKILL_VERSION" > "$RUNNER_TEMP/release-notes.md"
           cat >> "$RUNNER_TEMP/release-notes.md" <<'NOTES'
 
           ## Assets
@@ -306,7 +335,8 @@ jobs:
           - `pipker-agent-*-linux-amd64.tar.gz` / `*-arm64.tar.gz`: Agent installation packages. Download the matching architecture and `SHA256SUMS` from this release, upload both to the same directory on the target Linux host, then install through the Agent menu.
           - `pipker-agent-*-linux-amd64` / `*-arm64`: raw ELF binaries for online Agent upgrades.
           - `pipkerops-skill-*.tar.gz`: PipkerOpsSkill package.
-          - `SHA256SUMS`: SHA-256 checksums for the six release files above.
+          - `release-manifest.json`: independent component versions and verified update artifact hashes.
+          - `SHA256SUMS`: SHA-256 checksums for the release files and manifest.
           NOTES
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md" --generate-notes --latest

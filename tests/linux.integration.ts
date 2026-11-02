@@ -1,3 +1,9 @@
+import {
+  integrationOrigin,
+  proxyHeaders,
+  prepareContainerAgent,
+  waitForAgent,
+} from "./helpers/agent-fixture";
 import { configValues } from "../src/lib/config";
 /** Real operations in an isolated privileged Docker-in-Docker Linux node.
  * Never mounts the host Docker socket or host filesystem into the fixture.
@@ -5,12 +11,11 @@ import { configValues } from "../src/lib/config";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { db } from "../src/lib/db";
 import { topologyLinks } from "../src/lib/topology-links";
-const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = integrationOrigin;
 const docker = (...args: string[]) =>
   execFileSync("docker", args, {
     encoding: "utf8",
@@ -38,13 +43,12 @@ test(
     const run = "linux-" + randomUUID().slice(0, 8);
     let container = "";
     let nodeId = "";
-    let tokenId = "";
     let siteId = "";
     let applicationId = "";
     let probeId = "";
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
-      headers: { Origin: origin, "Content-Type": "application/json" },
+      headers: { ...proxyHeaders(origin), "Content-Type": "application/json" },
       body: JSON.stringify({
         email: configValues.BOOTSTRAP_EMAIL,
         password: configValues.BOOTSTRAP_PASSWORD,
@@ -59,7 +63,7 @@ test(
       const r = await fetch(origin + "/api/rpc", {
         method: "POST",
         headers: {
-          Origin: origin,
+          ...proxyHeaders(origin),
           "Content-Type": "application/json",
           Cookie: cookie,
         },
@@ -101,18 +105,16 @@ test(
       return result;
     }
     async function terminal(containerId?: string) {
-      const ticket = await rpc<{ url: string }>("terminal.ticket", {
+      const ticket = await rpc<{ path: string }>("terminal.ticket", {
         nodeId,
         containerId,
         confirmed: true,
       });
-      const url = new URL(ticket.url);
-      url.hostname = "localhost";
-      url.port = "9544";
-      const ws = new WebSocket(url, {
-        ca: readFileSync(".data/pki/ca.crt"),
-        origin,
-      });
+      const url = new URL(
+        ticket.path,
+        `ws://127.0.0.1:${configValues.GATEWAY_PORT ?? 9444}`,
+      );
+      const ws = new WebSocket(url, { headers: proxyHeaders(origin) });
       let output = "";
       ws.on("message", (raw) => {
         const p = JSON.parse(raw.toString());
@@ -152,6 +154,8 @@ test(
         run,
         "--label",
         "pipkerops.acceptance=true",
+        "-p",
+        "127.0.0.1::9443",
         "-e",
         "DOCKER_TLS_CERTDIR=",
         "pipkerops-agent-fixture:local",
@@ -180,65 +184,14 @@ test(
           `/tmp/pipker-agent-linux-${process.arch === "x64" ? "amd64" : "arm64"}`,
         container + ":/usr/local/bin/pipkerops-agent",
       );
-      execFileSync(
-        "docker",
-        [
-          "exec",
-          "-i",
-          container,
-          "sh",
-          "-c",
-          "cat > /tmp/pipkerops-ca.crt; chmod 644 /tmp/pipkerops-ca.crt",
-        ],
-        { input: readFileSync(".data/pki/ca.crt") },
-      );
-      const token = await rpc<{ id: string; token: string }>("nodes.token", {
-        name: run,
-        hours: 1,
-        maxUses: 1,
+      const fixture = await prepareContainerAgent(container, run);
+      fixture.start();
+      await waitForAgent(fixture.connection);
+      const node = await rpc<{ id: string }>("nodes.import", {
+        connection: fixture.connection,
+        confirmed: true,
       });
-      tokenId = token.id;
-      execFileSync(
-        "docker",
-        [
-          "exec",
-          "-i",
-          container,
-          "sh",
-          "-c",
-          "umask 077; cat > /tmp/enrollment-token",
-        ],
-        { input: token.token, stdio: ["pipe", "pipe", "pipe"] },
-      );
-      docker(
-        "exec",
-        "-d",
-        container,
-        "sh",
-        "-c",
-        'exec pipkerops-agent "$@" >/tmp/agent.log 2>&1',
-        "--",
-        "--gateway",
-        "wss://host.docker.internal:9543/agent",
-        "--enroll-url",
-        "https://host.docker.internal:9544",
-        "--ca",
-        "/tmp/pipkerops-ca.crt",
-        "--token-file",
-        "/tmp/enrollment-token",
-        "--state-dir",
-        "/var/lib/pipkerops-agent",
-        "--name",
-        run,
-      );
-      const node = await wait(
-        () => db().node.findFirst({ where: { name: run } }),
-        (n) => !!n,
-        "Linux enrollment",
-      );
-      assert.ok(node);
       nodeId = node.id;
-      await rpc("nodes.approve", { id: nodeId, confirmed: true });
       const telemetry = await wait(
         () => db().metricSample.findFirst({ where: { nodeId } }),
         Boolean,
@@ -521,16 +474,8 @@ test(
         "side effect before crash",
       );
       docker("exec", container, "sh", "-c", "kill -9 $(pidof pipkerops-agent)");
-      docker(
-        "exec",
-        "-d",
-        container,
-        "sh",
-        "-c",
-        "exec pipkerops-agent --gateway wss://host.docker.internal:9543/agent --enroll-url https://host.docker.internal:9544 --ca /tmp/pipkerops-ca.crt --state-dir /var/lib/pipkerops-agent --name " +
-          run +
-          " >/tmp/agent-restart.log 2>&1",
-      );
+      fixture.start();
+      await waitForAgent(fixture.connection);
       const reconciled = await wait(
         () =>
           rpc<{ status: string; attempts: number }>("tasks.get", {
@@ -569,8 +514,6 @@ test(
         await db().task.deleteMany({ where: { nodeId } });
         await db().node.deleteMany({ where: { id: nodeId } });
       }
-      if (tokenId)
-        await db().enrollmentToken.deleteMany({ where: { id: tokenId } });
       await db().$disconnect();
     }
   },

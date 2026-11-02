@@ -8,10 +8,11 @@
  * @index_tags mcp, tools, api-keys
  * @author holic512
  */
+import packageInfo from "../../../../package.json";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
-import { authenticate, ApiError } from "@/lib/auth";
+import { authenticate, ApiError, requireHttps } from "@/lib/auth";
 import { execute } from "@/lib/services/platform";
 import {
   METHODS,
@@ -26,14 +27,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
+    requireHttps(request);
     if (!request.headers.get("authorization")?.startsWith("Bearer "))
       throw new ApiError(401, "MCP 需要独立 API Key");
     const origin = request.headers.get("origin");
-    if (origin && origin !== appOrigin())
+    if (origin && origin !== appOrigin(request))
       throw new ApiError(403, "MCP 请求来源不匹配");
     const actor = await authenticate(request);
     if (!actor.apiKeyId) throw new ApiError(401, "MCP 不接受浏览器会话");
-    const server = new McpServer({ name: "pipkerops", version: "0.1.0" });
+    const server = new McpServer({
+      name: "pipkerops",
+      version: packageInfo.version,
+    });
     for (const method of METHODS) {
       server.registerTool(
         method.replaceAll(".", "_"),
@@ -96,12 +101,22 @@ export async function POST(request: Request) {
     return errorResponse(e);
   }
 }
-export function GET() {
+export function GET(request: Request) {
+  try {
+    requireHttps(request);
+  } catch (error) {
+    return errorResponse(error);
+  }
   return new Response("Stateless MCP: use POST", {
     status: 405,
     headers: { Allow: "POST" },
   });
 }
-export function DELETE() {
+export function DELETE(request: Request) {
+  try {
+    requireHttps(request);
+  } catch (error) {
+    return errorResponse(error);
+  }
   return new Response(null, { status: 405, headers: { Allow: "POST" } });
 }

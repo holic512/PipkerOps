@@ -1,4 +1,3 @@
-import { configValues } from "../config";
 /**
  * @file platform.ts
  * @project PipkerOps
@@ -16,6 +15,7 @@ import { ApiError, authorize, confirm, nodeFilter, type Actor } from "../auth";
 import { randomToken, hashToken } from "../crypto";
 import * as nodes from "./nodes";
 import * as backups from "./backups";
+import { listReleases, queueUpdate } from "./updates";
 import { metricDetails } from "./metric-details";
 import { createTask, validateTask, listTasks, getTask } from "./tasks";
 import { redis } from "../redis";
@@ -140,13 +140,19 @@ export async function execute(
     }
     case "nodes.list":
       return nodes.listNodes(actor);
-    case "nodes.token":
-      return nodes.enrollmentToken(actor, p);
-    case "nodes.approve":
-    case "nodes.reject":
+    case "nodes.test":
+      return nodes.testConnection(actor, p);
+    case "nodes.deployment":
+      return nodes.registerDeployment(actor, p);
+    case "nodes.import":
+      return nodes.importNode(actor, p);
+    case "updates.releases":
+      return listReleases(actor);
+    case "updates.create":
+      return queueUpdate(actor, p);
     case "nodes.revoke":
       confirm(p.confirmed);
-      return nodes.changeNode(actor, id.parse(p.id), method.split(".")[1]);
+      return nodes.changeNode(actor, id.parse(p.id));
     case "nodes.metrics":
       return nodes.metrics(
         actor,
@@ -172,6 +178,13 @@ export async function execute(
     case "tasks.cancel": {
       const t = await getTask(actor, id.parse(p.id));
       authorize(actor, "tasks:write", t.nodeId ?? undefined);
+      if (t.type === "platform.update")
+        authorize(
+          actor,
+          "nodes:approve",
+          String((t.payload as Record<string, unknown>).nodeId),
+          true,
+        );
       if (t.type === "platform.backup")
         authorize(actor, "admin:write", undefined, true);
       confirm(p.confirmed);
@@ -203,6 +216,8 @@ export async function execute(
             certificatePem: true,
             certificateFingerprint: true,
             previousCertificateFingerprint: true,
+            agentCredentialRef: true,
+            agentCaPem: true,
           },
           take: 50,
           orderBy: { createdAt: "desc" },
@@ -1012,13 +1027,7 @@ export async function execute(
         { EX: 60 },
       );
       await audit(actor, method, "Node", nodeId);
-      const url = new URL(
-        configValues.ENROLL_PUBLIC_URL ?? "https://localhost:9444",
-      );
-      url.protocol = "wss:";
-      url.pathname = "/terminal";
-      url.searchParams.set("ticket", ticket);
-      return { url: url.href };
+      return { path: `/api/terminal/ws?ticket=${ticket}` };
     }
     default:
       throw new ApiError(404, "未知业务方法");

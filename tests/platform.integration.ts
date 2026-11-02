@@ -1,3 +1,11 @@
+import {
+  integrationOrigin,
+  proxyHeaders,
+  prepareHostAgent,
+  waitForAgent,
+  agentRequest,
+  shortenAgentCertificate,
+} from "./helpers/agent-fixture";
 import { configValues } from "../src/lib/config";
 /** End-to-end acceptance against running Web/Gateway/Worker and a real Go Agent.
  * Uses uniquely named resources and cleans only IDs created by this test.
@@ -6,21 +14,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
-import {
-  request as tlsRequest,
-  createServer as createHttpsServer,
-} from "node:https";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { randomUUID, createHash } from "node:crypto";
-import forge from "node-forge";
+import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { db } from "../src/lib/db";
 import { hashPassword } from "../src/lib/crypto";
 import { createTaskSubmission } from "../src/lib/task-submission";
 import type { NodeData, TaskData, ProbeData } from "../src/lib/client";
-const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = integrationOrigin;
 async function waitFor<T>(
   read: () => Promise<T>,
   accept: (value: T) => boolean,
@@ -38,7 +42,7 @@ async function waitFor<T>(
 async function login(email: string, password: string) {
   const response = await fetch(origin + "/api/auth/login", {
     method: "POST",
-    headers: { Origin: origin, "Content-Type": "application/json" },
+    headers: { ...proxyHeaders(origin), "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
   assert.equal(response.status, 200);
@@ -53,7 +57,7 @@ async function call<T>(
   const r = await fetch(origin + "/api/rpc", {
     method: "POST",
     headers: {
-      Origin: origin,
+      ...proxyHeaders(origin),
       "Content-Type": "application/json",
       ...(cookie.startsWith("Bearer ")
         ? { Authorization: cookie }
@@ -66,7 +70,7 @@ async function call<T>(
   return result.data as T;
 }
 test(
-  "真实注册审批/mTLS采样/任务回传/探针/授权/MCP闭环",
+  "真实Agent导入/HTTPS采样/任务回传/探针/授权/MCP闭环",
   { timeout: 180000 },
   async () => {
     const run = "acceptance-" + randomUUID().slice(0, 8);
@@ -115,15 +119,30 @@ test(
     let scheduleId: string | undefined;
     let child: ChildProcess | undefined;
     let nodeId: string | undefined;
-    let enrollmentId: string | undefined;
     let viewerId: string | undefined;
     const probeIds: string[] = [];
     const keyIds: string[] = [];
     let appId: string | undefined;
     try {
+      const plaintext = await fetch(origin + "/api/rpc", {
+        method: "POST",
+        headers: {
+          Host: new URL(origin).host,
+          Origin: origin,
+          Cookie: cookie,
+          "X-Forwarded-Proto": "http",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ method: "nodes.list" }),
+      });
+      assert.equal(plaintext.status, 403);
+      assert.match((await plaintext.json()).error, /HTTPS/);
       const denied = await fetch(origin + "/api/rpc", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          ...proxyHeaders(origin),
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ method: "nodes.list" }),
       });
       assert.equal(denied.status, 401);
@@ -131,6 +150,7 @@ test(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...proxyHeaders(origin),
           Origin: "https://untrusted.example",
           Cookie: cookie,
         },
@@ -138,76 +158,56 @@ test(
       });
       assert.equal(csrf.status, 403);
       console.log("Verified unauthenticated and cross-origin denial");
-      const token = await call<{ id: string; token: string }>(
-        cookie,
-        "nodes.token",
-        { name: run, maxUses: 1, hours: 1 },
-      );
-      enrollmentId = token.id;
       const state = resolve(".data", run);
-      mkdirSync(state, { recursive: true, mode: 0o700 });
-      child = spawn(
-        binary,
-        [
-          "--gateway",
-          "wss://localhost:9443/agent",
-          "--enroll-url",
-          "https://localhost:9444",
-          "--ca",
-          resolve(".data/pki/ca.crt"),
-          "--state-dir",
-          state,
-          "--name",
-          run,
-        ],
+      const fixture = await prepareHostAgent(binary, state, run);
+      child = fixture.start();
+      child.stderr?.on("data", () => {});
+      await waitForAgent(fixture.connection);
+      assert.equal(
+        (await agentRequest({ ...fixture.connection, accessKey: "invalid" }))
+          .status,
+        401,
+      );
+      await call(
+        cookie,
+        "nodes.import",
         {
-          env: { ...process.env, PIPKEROPS_TOKEN: token.token },
-          stdio: ["ignore", "pipe", "pipe"],
+          connection: { ...fixture.connection, accessKey: "A".repeat(43) },
+          confirmed: true,
         },
+        403,
       );
-      let agentErrors = "";
-      child.stderr?.on("data", (chunk) => {
-        agentErrors += String(chunk).slice(0, 1000);
+      await call(
+        cookie,
+        "nodes.import",
+        {
+          connection: { ...fixture.connection, agentId: "wrong-agent-id" },
+          confirmed: true,
+        },
+        403,
+      );
+      assert.equal(
+        await db().node.findUnique({
+          where: { agentId: fixture.connection.agentId },
+        }),
+        null,
+      );
+      const node = await call<{ id: string }>(cookie, "nodes.import", {
+        connection: fixture.connection,
+        confirmed: true,
       });
-      const node = await waitFor(
-        () =>
-          db().node.findFirst({
-            where: { name: run, enrollmentTokenId: token.id },
-          }),
-        (n) => !!n,
-        "agent pending enrollment",
-      );
-      assert.ok(node, agentErrors);
       nodeId = node.id;
-      assert.equal(node.status, "PENDING");
-      // Unapproved requests cannot submit metrics; no client cert fails at TLS handshake.
-      const mtlsRefused = await new Promise<boolean>((resolve) => {
-        const r = tlsRequest(
-          "https://localhost:9443/agent",
-          { ca: readFileSync(".data/pki/ca.crt"), timeout: 3000 },
-          (res) => {
-            res.resume();
-            resolve(res.statusCode === 403);
-          },
-        );
-        r.on("error", () => resolve(true));
-        r.on("timeout", () => {
-          r.destroy();
-          resolve(false);
-        });
-        r.end();
-      });
-      assert.equal(mtlsRefused, true);
-      await call(cookie, "nodes.approve", { id: nodeId, confirmed: true });
       await waitFor(
         () => call<NodeData[]>(cookie, "nodes.list"),
         (nodes) =>
           nodes.some(
             (n) => n.id === nodeId && n.metrics.length > 0 && n.connected,
           ),
-        "approved mTLS metrics",
+        "imported HTTPS Agent metrics",
       );
-      console.log("Verified real Agent enrollment, approval, mTLS and metrics");
+      console.log(
+        "Verified real Agent identity/Key rejection, JSON import, trusted HTTPS and metrics",
+      );
       const diskHistory = await call<{
         device: string;
         series: { points: unknown[] }[];
@@ -235,55 +235,30 @@ test(
       console.log(
         "Verified queued task execution, persisted result and idempotency",
       );
-      // Shorten only this acceptance node's client certificate to exercise real renewal.
-      const args = child.spawnargs.slice(1);
-      child.kill("SIGTERM");
+      // Shorten only this owned Agent's leaf; keep its CA and access key unchanged.
+      const args = child!.spawnargs.slice(1);
+      child!.kill("SIGTERM");
       await new Promise<void>((resolve) =>
         child!.once("exit", () => resolve()),
       );
-      const current = await db().node.findUniqueOrThrow({
-        where: { id: nodeId },
-      });
-      const short = forge.pki.certificateFromPem(current.certificatePem!);
-      short.validity.notAfter = new Date(Date.now() + 7 * 86400000);
-      short.sign(
-        forge.pki.privateKeyFromPem(readFileSync(".data/pki/ca.key", "utf8")),
-        forge.md.sha256.create(),
-      );
-      const pem = forge.pki.certificateToPem(short);
-      const fingerprint = createHash("sha256")
-        .update(
-          Buffer.from(
-            forge.asn1.toDer(forge.pki.certificateToAsn1(short)).getBytes(),
-            "binary",
-          ),
-        )
-        .digest("hex");
-      const identityPath = resolve(state, "identity.json");
-      const identity = JSON.parse(readFileSync(identityPath, "utf8"));
-      identity.certificatePem = pem;
-      writeFileSync(identityPath, JSON.stringify(identity), { mode: 0o600 });
-      await db().node.update({
-        where: { id: nodeId },
-        data: { certificatePem: pem, certificateFingerprint: fingerprint },
-      });
+      const previousIdentity = shortenAgentCertificate(state);
       child = spawn(binary, args, {
         env: { ...process.env },
         stdio: ["ignore", "pipe", "pipe"],
       });
       child.stderr?.on("data", () => {});
-      await waitFor(
-        () => db().node.findUniqueOrThrow({ where: { id: nodeId } }),
-        (n) =>
-          n.previousCertificateFingerprint === fingerprint &&
-          n.certificateFingerprint !== fingerprint,
-        "automatic client certificate rotation",
+      await waitForAgent(fixture.connection);
+      const renewed = await waitFor(
+        async () => JSON.parse(readFileSync(previousIdentity.path, "utf8")),
+        (identity) => identity.certificatePem !== previousIdentity.pem,
+        "renewed HTTPS leaf persisted",
       );
-      await waitFor(
-        async () => JSON.parse(readFileSync(identityPath, "utf8")),
-        (i) => i.certificatePem !== pem,
-        "renewed identity persisted",
+      assert.equal(renewed.agentId, previousIdentity.agentId);
+      assert.ok(
+        renewed.accessKey === previousIdentity.accessKey,
+        "leaf renewal changed the access key",
       );
+      assert.equal(renewed.caPem, previousIdentity.caPem);
       const afterRotation = await call<TaskData>(cookie, "tasks.create", {
         type: "system.info",
         nodeId,
@@ -292,10 +267,10 @@ test(
       await waitFor(
         () => call<TaskData>(cookie, "tasks.get", { id: afterRotation.id }),
         (t) => t.status === "SUCCEEDED",
-        "renewed mTLS reconnect and task",
+        "renewed HTTPS reconnect and task",
       );
       console.log(
-        "Verified 7-day client certificate automatically renews, persists identity and reconnects with mTLS",
+        "Verified 7-day server leaf renews with unchanged CA/Key/Agent ID and Ops reconnects",
       );
 
       const app = await call<{ id: string }>(cookie, "applications.save", {
@@ -669,7 +644,14 @@ test(
       keyIds.push(key.id);
       const transport = new StreamableHTTPClientTransport(
         new URL(origin + "/api/mcp"),
-        { requestInit: { headers: { Authorization: `Bearer ${key.key}` } } },
+        {
+          requestInit: {
+            headers: {
+              ...proxyHeaders(origin),
+              Authorization: `Bearer ${key.key}`,
+            },
+          },
+        },
       );
       const mcp = new Client({
         name: "pipkerops-acceptance",
@@ -770,7 +752,10 @@ test(
       await workflow.connect(
         new StreamableHTTPClientTransport(new URL(origin + "/api/mcp"), {
           requestInit: {
-            headers: { Authorization: `Bearer ${executionKey.key}` },
+            headers: {
+              ...proxyHeaders(origin),
+              Authorization: `Bearer ${executionKey.key}`,
+            },
           },
         }),
       );
@@ -969,8 +954,6 @@ test(
         await db().task.deleteMany({ where: { nodeId } });
         await db().node.deleteMany({ where: { id: nodeId } });
       }
-      if (enrollmentId)
-        await db().enrollmentToken.deleteMany({ where: { id: enrollmentId } });
       if (keyIds.length)
         await db().apiKey.deleteMany({ where: { id: { in: keyIds } } });
       if (viewerId) await db().user.deleteMany({ where: { id: viewerId } });

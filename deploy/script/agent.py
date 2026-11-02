@@ -19,7 +19,7 @@ if __name__ == '__main__':
     commands = parser.add_subparsers(dest='action', required=True)
     installer = commands.add_parser('install', help='安装／重新安装；同目录需有 SHA256SUMS')
     installer.add_argument('package', help='pipker-agent-<版本>-linux-<架构>.tar.gz 路径')
-    for action in ('status', 'start', 'stop', 'restart'):
+    for action in ('status', 'start', 'stop', 'restart', 'export', 'reset-key'):
         commands.add_parser(action)
     arguments = parser.parse_args()
     sys.exit(main(arguments.action, getattr(arguments, 'package', None)))

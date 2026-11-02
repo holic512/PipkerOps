@@ -33,7 +33,12 @@ export function required(name: string) {
 }
 export function privateHost(host: string) {
   const name = host.toLowerCase().replace(/^\[|\]$/g, "");
-  if (["localhost", "::1", "postgres", "redis"].includes(name)) return true;
+  if (
+    ["localhost", "::1", "postgres", "redis", "host.docker.internal"].includes(
+      name,
+    )
+  )
+    return true;
   if (isIP(name) !== 4) return false;
   const [a, b] = name.split(".").map(Number);
   return (
@@ -96,29 +101,26 @@ export function backendUrl(name: "DATABASE_URL" | "REDIS_URL") {
   }
   return url.toString();
 }
-export function appOrigin() {
-  const url = configUrl("APP_ORIGIN", required("APP_ORIGIN"));
-  if (!["https:", "http:"].includes(url.protocol))
-    throw new Error("APP_ORIGIN 协议无效");
-  if (production() && url.protocol !== "https:")
-    throw new Error("生产 APP_ORIGIN 必须为 HTTPS");
-  return url.origin;
+// HTTP 后端仅交给可信反向代理；代理必须覆盖 Host 和协议头。
+export function appOrigin(request: Pick<Request, "headers" | "url">) {
+  const protocol =
+    request.headers.get("x-forwarded-proto") ??
+    new URL(request.url).protocol.slice(0, -1);
+  const host = request.headers.get("host") ?? new URL(request.url).host;
+  if (
+    !["http", "https"].includes(protocol) ||
+    !host ||
+    /[\s,/@?#\\]/.test(host)
+  )
+    throw new Error("代理请求头无效");
+  return new URL(`${protocol}://${host}`).origin;
 }
-export const pkiDir = () => configValues.PKI_DIR ?? "./.data/pki";
+export const credentialsDir = () =>
+  configValues.NODE_CREDENTIALS_DIR ?? "./.data/credentials";
 
 export function validateRuntime(initializing = false) {
   backendUrl("DATABASE_URL");
   backendUrl("REDIS_URL");
-  appOrigin();
-  for (const [name, protocol] of [
-    ["GATEWAY_PUBLIC_URL", "wss:"],
-    ["ENROLL_PUBLIC_URL", "https:"],
-  ]) {
-    const url = configUrl(name, required(name));
-    if (url.protocol !== protocol)
-      throw new Error(`${name} 必须使用 ${protocol}`);
-  }
-  required("PKI_HOSTS");
   if (initializing) {
     if (!/^[^\s@]+@[^\s@]+$/.test(required("BOOTSTRAP_EMAIL")))
       throw new Error("BOOTSTRAP_EMAIL 格式无效");
@@ -126,7 +128,7 @@ export function validateRuntime(initializing = false) {
     if (password.length < 16 || password.includes("CHANGE_ME"))
       throw new Error("BOOTSTRAP_PASSWORD 必须为至少16位随机密码");
   }
-  for (const name of ["GATEWAY_PORT", "ENROLL_PORT", "WORKER_INTERVAL_MS"]) {
+  for (const name of ["GATEWAY_PORT", "WORKER_INTERVAL_MS"]) {
     const value = configValues[name];
     if (
       value &&
@@ -153,7 +155,11 @@ export function redisTlsOptions() {
     ? {
         tls: true as const,
         ...(configValues.REDIS_CA_FILE
-          ? { ca: readFileSync(configValues.REDIS_CA_FILE) }
+          ? {
+              ca: readFileSync(
+                /* turbopackIgnore: true */ configValues.REDIS_CA_FILE,
+              ),
+            }
           : {}),
       }
     : {};

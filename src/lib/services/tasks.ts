@@ -206,12 +206,42 @@ export const taskSpecs: Record<
       ]),
     }),
   },
+  "platform.update": {
+    scope: "nodes:approve",
+    dangerous: true,
+    idempotent: false,
+    schema: z.object({
+      nodeId: z.string(),
+      component: z.enum(["agent", "ops", "scripts"]),
+      releaseTag: z.string().regex(/^[a-zA-Z0-9_.-]+$/),
+      deployRoot: z.string().startsWith("/").max(4096),
+    }),
+  },
+  "deployment.update": {
+    scope: "nodes:approve",
+    dangerous: true,
+    idempotent: false,
+    schema: z.object({
+      deployRoot: z.string().startsWith("/").max(4096),
+      artifactId: z.string().regex(/^[a-f0-9]{64}$/),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+  },
+  "ops.update": {
+    scope: "admin:write",
+    dangerous: true,
+    idempotent: false,
+    schema: z.object({
+      deployRoot: z.string().startsWith("/").max(4096),
+      version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    }),
+  },
   "agent.upgrade": {
     scope: "nodes:approve",
     dangerous: true,
     idempotent: false,
     schema: z.object({
-      url: z.url().refine((u) => u.startsWith("https://")),
+      artifactId: z.string().regex(/^[a-f0-9]{64}$/),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       restart: z.boolean().default(false),
     }),
@@ -352,17 +382,32 @@ export async function validateTask(
     };
   }
   if (
-    !["probe.run", "http.request", "platform.backup"].includes(data.type) &&
+    ![
+      "probe.run",
+      "http.request",
+      "platform.backup",
+      "platform.update",
+    ].includes(data.type) &&
     !data.nodeId
   )
     throw new ApiError(400, "请选择执行节点");
-  if (["http.request", "platform.backup"].includes(data.type) && data.nodeId)
+  if (
+    ["http.request", "platform.backup", "platform.update"].includes(
+      data.type,
+    ) &&
+    data.nodeId
+  )
     throw new ApiError(400, "此任务由主控执行，请勿选择执行节点");
+  if (data.type === "platform.update") {
+    authorize(actor, "nodes:approve", String(payload.nodeId), true);
+    if (payload.component === "ops")
+      authorize(actor, "admin:write", undefined, true);
+  }
   if (data.nodeId) {
     const client = transaction ?? db();
     const node = await client.node.findUnique({ where: { id: data.nodeId } });
     if (!node || node.status !== "APPROVED")
-      throw new ApiError(409, "节点尚未批准或已吊销");
+      throw new ApiError(409, "节点尚未接入或已停用");
     if (
       data.type === "agent.upgrade" &&
       payload.restart &&
@@ -420,7 +465,9 @@ export async function createTask(
   const persist = async (tx: Prisma.TransactionClient) => {
     const task = await tx.task.create({
       data: {
-        ...(data.type === "platform.backup" ? { id: randomUUID() } : {}),
+        ...(["platform.backup", "platform.update"].includes(data.type)
+          ? { id: randomUUID() }
+          : {}),
         type: data.type,
         nodeId: data.nodeId,
         payload: payload as never,

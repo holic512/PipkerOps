@@ -37,11 +37,11 @@ test("文件配置组装连接、编码原文密码并拒绝无效端口", () =>
       message: "DATABASE_PORT 数值无效",
     });
     configValues.DATABASE_PORT = "5432";
-    configValues.GATEWAY_PUBLIC_URL = "ws://ops.example.com/agent";
-    assert.throws(() => validateRuntime(), {
-      message: "GATEWAY_PUBLIC_URL 必须使用 wss:",
-    });
-    configValues.GATEWAY_PUBLIC_URL = "wss://ops.example.com/agent";
+    delete configValues.APP_ORIGIN;
+    delete configValues.GATEWAY_PUBLIC_URL;
+    delete configValues.ENROLL_PUBLIC_URL;
+    delete configValues.PKI_HOSTS;
+    validateRuntime();
     configValues.GATEWAY_PORT = "70000";
     assert.throws(() => validateRuntime(), {
       message: "GATEWAY_PORT 数值无效",

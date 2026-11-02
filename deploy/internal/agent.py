@@ -20,6 +20,7 @@ import tempfile
 
 UNIT = 'pipkerops-agent.service'
 BINARY = Path('/usr/local/bin/pipker-agent')
+DEPLOY_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_FILES = ('pipker-agent', 'install.sh', 'pipkerops-agent.service', 'agent.env.example')
 
 
@@ -32,12 +33,25 @@ def main(action, package=None):
         elif action == 'status':
             version = subprocess.check_output([str(BINARY), '--version'], text=True).strip() if BINARY.is_file() else '未安装'
             print(f'Agent 版本：{version}\n服务状态：{state.get("ActiveState", "unknown")}\n开机自启：{state.get("UnitFileState") or "未设置"}')
+        elif action in ('export', 'reset-key'):
+            environment = DEPLOY_ROOT / 'config' / 'agent' / 'agent.env'
+            if not environment.is_file():
+                raise RuntimeError('尚未创建 Agent 配置。')
+            # systemd 读取同一文件；显式命令不通过 shell 执行其内容。
+            values = {}
+            import shlex
+            for line in environment.read_text().splitlines():
+                if line.strip() and not line.lstrip().startswith('#'):
+                    key, value = line.split('=', 1)
+                    values[key] = shlex.split(value)[0] if shlex.split(value) else ''
+            argument = '--export-connection' if action == 'export' else '--reset-key'
+            subprocess.run([str(BINARY), argument], check=True, env={**os.environ, **values})
         else:
             if state['LoadState'] == 'not-found':
                 raise RuntimeError('尚未安装 Agent，请先上传安装包并执行安装。')
             commands = {'start': ['enable', '--now'], 'stop': ['stop'], 'restart': ['restart']}
             subprocess.run(['systemctl', *commands[action], UNIT], check=True)
-    except (RuntimeError, OSError, UnicodeError, subprocess.CalledProcessError, tarfile.TarError) as exc:
+    except (RuntimeError, OSError, ValueError, UnicodeError, subprocess.CalledProcessError, tarfile.TarError) as exc:
         print(f'Agent 操作失败：{exc}', file=sys.stderr)
         return 1
     return 0
@@ -46,7 +60,7 @@ def main(action, package=None):
 def require_host(action):
     if platform.system() != 'Linux':
         raise RuntimeError('Agent 安装及服务管理仅支持 Linux。')
-    if action not in ('install', 'status', 'start', 'stop', 'restart'):
+    if action not in ('install', 'status', 'start', 'stop', 'restart', 'export', 'reset-key'):
         raise RuntimeError('不支持的 Agent 操作。')
     if action != 'status' and os.geteuid() != 0:
         raise RuntimeError('请使用 sudo 或 root 执行此操作。')
@@ -82,8 +96,8 @@ def install(package, state):
                 with archive.extractfile(member) as source, (target / name).open('wb') as destination:
                     shutil.copyfileobj(source, destination)
         verify_binary(target / 'pipker-agent', arch)
-        subprocess.run(['sh', str(target / 'install.sh'), str(target / 'pipker-agent')], check=True)
-    print('安装完成，服务未自动启动。\n请填写 /etc/pipkerops/agent.env，准备权限为 0600 的 /etc/pipkerops/enrollment.token，\n并通过可信渠道放置主控 CA 公钥证书 /etc/pipkerops/ca.pem。已有配置和状态保持不变。\n准备完成后选择“启动并设为开机自启”，并在主控审批节点。')
+        subprocess.run(['sh', str(target / 'install.sh'), str(target / 'pipker-agent'), str(DEPLOY_ROOT)], check=True)
+    print(f'安装完成。请检查 {DEPLOY_ROOT}/config/agent/agent.env 中的可达 HTTPS 地址，然后启动服务。\n状态保存在 data/agent，与 Ops 分离；启动后通过“导出接入文件”添加到 Ops。')
 
 
 def verify_package(package):

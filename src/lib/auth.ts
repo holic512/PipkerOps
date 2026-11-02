@@ -30,6 +30,7 @@ export type Actor = {
 };
 export const sessionCookie = "pipkerops_session";
 export async function authenticate(request: Request): Promise<Actor> {
+  requireHttps(request);
   const authorization = request.headers.get("authorization");
   if (authorization?.startsWith("Bearer ")) {
     const key = await db().apiKey.findUnique({
@@ -102,9 +103,21 @@ export const nodeFilter = (actor: Actor) =>
     ? { id: { in: actor.nodeIds ?? [] } }
     : {};
 export function sameOrigin(request: Request) {
+  requireHttps(request);
   if (request.headers.get("authorization")?.startsWith("Bearer ")) return;
-  if (request.headers.get("origin") !== appOrigin())
+  if (request.headers.get("origin") !== appOrigin(request))
     throw new ApiError(403, "请求来源不匹配");
+}
+export function requireHttps(request: Pick<Request, "headers" | "url">) {
+  let origin: string;
+  try {
+    origin = appOrigin(request);
+  } catch {
+    throw new ApiError(400, "代理请求头无效");
+  }
+  if (!origin.startsWith("https://"))
+    throw new ApiError(403, "请以 HTTPS 访问");
+  return origin;
 }
 export function confirm(value: unknown) {
   if (value !== true) throw new ApiError(400, "此操作需要显式确认");

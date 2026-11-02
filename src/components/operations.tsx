@@ -500,21 +500,6 @@ const ops: Record<
         ],
       },
       {
-        type: "agent.upgrade",
-        label: "升级 Agent",
-        dangerous: true,
-        fields: [
-          { name: "url", label: "受信 HTTPS 二进制下载地址", required: true },
-          { name: "sha256", label: "SHA-256 摘要", required: true },
-          {
-            name: "restart",
-            label: "结果确认后自动重启 systemd Agent（先排空其他任务）",
-            type: "checkbox",
-            defaultValue: false,
-          },
-        ],
-      },
-      {
         type: "shell.exec",
         label: "执行脚本",
         dangerous: true,
@@ -601,7 +586,7 @@ function OperationsForm({
         empty={!q.data?.some((n) => n.status === "APPROVED")}
         retry={() => void q.mutate()}
         emptyTitle="暂无可访问的已批准节点"
-        emptyText="请检查节点审批状态与当前授权范围，再执行节点运维操作。"
+        emptyText="请检查节点接入状态与当前授权范围，再执行节点运维操作。"
       >
         <section className="panel">
           <div className="panel-header">
@@ -1718,7 +1703,7 @@ export function TerminalPage() {
                   "打开远程终端？",
                   `节点：${selectedNode?.name}，目标：${containerId || "节点 Shell"}。将以 Agent 系统用户启动交互式 Shell，会话建立和结束将被审计。`,
                   async () => {
-                    const ticket = await rpc<{ url: string }>(
+                    const ticket = await rpc<{ path: string }>(
                       "terminal.ticket",
                       {
                         nodeId: node,
@@ -1735,7 +1720,10 @@ export function TerminalPage() {
                         name:
                           (q.data?.find((n) => n.id === node)?.name ?? node) +
                           (containerId ? ` / ${containerId}` : ""),
-                        url: ticket.url,
+                        url: new URL(
+                          ticket.path,
+                          window.location.origin.replace(/^http/, "ws"),
+                        ).href,
                       },
                     ]);
                     setActive(id);
@@ -1802,7 +1790,7 @@ export function TerminalPage() {
           emptyText={
             hasApprovedNodes
               ? "选择已批准且在线的 Linux 节点，确认后打开远程 Shell。"
-              : "请检查节点审批状态与当前授权范围。"
+              : "请检查节点接入状态与当前授权范围。"
           }
         >
           {" "}
@@ -1881,7 +1869,7 @@ function TerminalSession({ url }: { url: string }) {
       };
       ws.onerror = () =>
         setError(
-          "终端连接失败。请检查节点在线状态，以及浏览器是否信任 Gateway TLS 证书。",
+          "终端连接失败。请检查节点在线状态，以及 HTTPS 反向代理是否支持 WebSocket。",
         );
       ws.onclose = () => {
         term.options.disableStdin = true;

@@ -3,10 +3,10 @@ import { configValues } from "./config";
  * @file backup-storage.ts
  * @project PipkerOps
  * @module system-backup/storage
- * @description 在 Docker 持久目录保存 PostgreSQL 与 PKI 备份，并向离线空目标恢复。
- * @logic 临时目录完成归档和摘要后原子发布；恢复先校验归档及空目标，再恢复数据库、任务、Redis 和 PKI。
+ * @description 在 Docker 持久目录保存 PostgreSQL 与节点凭证备份，并向离线空目标恢复。
+ * @logic 临时目录完成归档和摘要后原子发布；恢复先校验归档及空目标，再恢复数据库、任务、Redis 和节点凭证。
  * @dependencies Node.js filesystem/child_process, PostgreSQL client, tar, pg, redis
- * @index_tags backup, persistence, recovery, postgres, pki
+ * @index_tags backup, persistence, recovery, postgres, credentials
  * @author holic512
  */
 import { createHash } from "node:crypto";
@@ -35,7 +35,7 @@ import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { Pool } from "pg";
 import { createClient } from "redis";
-import { backendUrl, pkiDir, redisTlsOptions } from "./config";
+import { backendUrl, credentialsDir, redisTlsOptions } from "./config";
 
 export interface BackupRecord {
   id: string;
@@ -44,21 +44,10 @@ export interface BackupRecord {
   sha256: string;
 }
 
-const pkiNames = ["ca.crt", "ca.key", "server.crt", "server.key"] as const;
-const payloadNames = [
-  "postgres.dump",
-  ...pkiNames.map((name) => `pki/${name}`),
-];
-const archiveNames = [
-  "manifest.json",
-  "postgres.dump",
-  "pki/",
-  ...pkiNames.map((name) => `pki/${name}`),
-];
 const timeout = 20 * 60 * 1000;
 const execute = promisify(execFile);
 type Manifest = {
-  format: 1;
+  format: 2;
   id: string;
   createdAt: string;
   files: Record<string, string>;
@@ -77,7 +66,7 @@ export async function createBackup(id: string): Promise<BackupRecord> {
       join(/* turbopackIgnore: true */ backupDirectory(), ".creating-"),
     );
     const payload = join(/* turbopackIgnore: true */ temporary, "payload");
-    await mkdir(join(/* turbopackIgnore: true */ payload, "pki"), {
+    await mkdir(join(/* turbopackIgnore: true */ payload, "credentials"), {
       recursive: true,
       mode: 0o700,
     });
@@ -88,16 +77,21 @@ export async function createBackup(id: string): Promise<BackupRecord> {
       join(/* turbopackIgnore: true */ payload, "postgres.dump"),
       pgEnvironment(),
     );
-    stage = "复制证书";
-    for (const name of pkiNames) {
-      const destination = join(
-        /* turbopackIgnore: true */ payload,
-        "pki",
-        name,
-      );
+    stage = "复制节点凭证";
+    const credentialNames = (
+      await readdir(credentialsDir()).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      })
+    ).filter((name) => /^[a-f0-9-]{36}$/.test(name));
+    const payloadNames = [
+      "postgres.dump",
+      ...credentialNames.map((name) => `credentials/${name}`),
+    ];
+    for (const name of credentialNames) {
+      const destination = join(payload, "credentials", name);
       await copyFile(
-        /* turbopackIgnore: true */
-        join(/* turbopackIgnore: true */ pkiDir(), name),
+        join(credentialsDir(), name),
         destination,
         constants.COPYFILE_EXCL,
       );
@@ -110,7 +104,7 @@ export async function createBackup(id: string): Promise<BackupRecord> {
       files[name] = await digest(
         join(/* turbopackIgnore: true */ payload, name),
       );
-    const manifest: Manifest = { format: 1, id, createdAt, files };
+    const manifest: Manifest = { format: 2, id, createdAt, files };
     await writeFile(
       join(/* turbopackIgnore: true */ payload, "manifest.json"),
       JSON.stringify(manifest),
@@ -125,7 +119,15 @@ export async function createBackup(id: string): Promise<BackupRecord> {
     );
     await run(
       "tar",
-      ["-czf", "-", "-C", payload, "manifest.json", "postgres.dump", "pki"],
+      [
+        "-czf",
+        "-",
+        "-C",
+        payload,
+        "manifest.json",
+        "postgres.dump",
+        "credentials",
+      ],
       archive,
     );
     const record = {
@@ -151,7 +153,7 @@ export async function createBackup(id: string): Promise<BackupRecord> {
     return record;
   } catch {
     throw new Error(
-      `备份创建失败（${stage}），请检查 PostgreSQL、PKI 和持久目录权限。`,
+      `备份创建失败（${stage}），请检查 PostgreSQL、节点凭证和持久目录权限。`,
     );
   } finally {
     if (temporary)
@@ -243,13 +245,13 @@ export async function restoreBackup(id: string): Promise<void> {
       join(/* turbopackIgnore: true */ backupDirectory(), ".restoring-"),
     );
     await extractVerified(archive, temporary, record);
-    const existing = await readdir(/* turbopackIgnore: true */ pkiDir()).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return [];
-        throw error;
-      },
-    );
-    if (existing.length) throw new Error("PKI 目标非空");
+    const existing = await readdir(
+      /* turbopackIgnore: true */ credentialsDir(),
+    ).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    if (existing.length) throw new Error("节点凭证目标非空");
     pool = new Pool({
       connectionString: backendUrl("DATABASE_URL"),
       max: 1,
@@ -296,13 +298,12 @@ export async function restoreBackup(id: string): Promise<void> {
     })) {
       if (keys.length) await redis.unlink(keys);
     }
-    await mkdir(pkiDir(), { recursive: true, mode: 0o700 });
-    await chmod(pkiDir(), 0o700);
-    for (const name of pkiNames) {
-      const destination = join(/* turbopackIgnore: true */ pkiDir(), name);
+    await mkdir(credentialsDir(), { recursive: true, mode: 0o700 });
+    await chmod(credentialsDir(), 0o700);
+    for (const name of await readdir(join(temporary, "credentials"))) {
+      const destination = join(credentialsDir(), name);
       await copyFile(
-        /* turbopackIgnore: true */
-        join(/* turbopackIgnore: true */ temporary, "pki", name),
+        join(temporary, "credentials", name),
         destination,
         constants.COPYFILE_EXCL,
       );
@@ -310,7 +311,7 @@ export async function restoreBackup(id: string): Promise<void> {
     }
   } catch {
     throw new Error(
-      "备份恢复失败，请确认归档完整、目标数据库与 PKI 为空，并检查后端连接。",
+      "备份恢复失败，请确认归档完整、目标数据库与节点凭证为空，并检查后端连接。",
     );
   } finally {
     if (redis?.isOpen) redis.destroy();
@@ -371,41 +372,34 @@ async function extractVerified(
     maxBuffer: 64 * 1024,
   });
   const names = stdout.trim().split("\n").sort();
-  if (JSON.stringify(names) !== JSON.stringify([...archiveNames].sort()))
-    throw new Error("归档文件列表无效");
-  await mkdir(join(/* turbopackIgnore: true */ destination, "pki"), {
-    mode: 0o700,
-  });
-  // 只将固定成员写入指定常规文件，不让归档路径或链接决定解压位置。
-  for (const name of ["manifest.json", ...payloadNames])
-    await run(
-      "tar",
-      ["-xOzf", archive, name],
-      join(/* turbopackIgnore: true */ destination, name),
-    );
-  const manifest: Manifest = JSON.parse(
-    await readFile(
-      /* turbopackIgnore: true */ join(
-        /* turbopackIgnore: true */ destination,
-        "manifest.json",
-      ),
-      "utf8",
-    ),
-  );
+  const manifestPath = join(destination, "manifest.json");
+  await run("tar", ["-xOzf", archive, "manifest.json"], manifestPath);
+  const manifest: Manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   if (
-    manifest.format !== 1 ||
+    manifest.format !== 2 ||
     manifest.id !== record.id ||
     manifest.createdAt !== record.createdAt ||
-    !manifest.files ||
-    JSON.stringify(Object.keys(manifest.files).sort()) !==
-      JSON.stringify([...payloadNames].sort())
+    !manifest.files
   )
-    throw new Error("归档清单无效");
-  for (const name of payloadNames) {
-    if (
-      (await digest(join(/* turbopackIgnore: true */ destination, name))) !==
-      manifest.files[name]
+    throw new Error("归档清单格式无效，请使用对应版本恢复旧备份");
+  const payloadNames = Object.keys(manifest.files);
+  if (
+    !payloadNames.includes("postgres.dump") ||
+    payloadNames.some(
+      (name) =>
+        name !== "postgres.dump" && !/^credentials\/[a-f0-9-]{36}$/.test(name),
     )
+  )
+    throw new Error("归档凭证路径无效");
+  if (
+    JSON.stringify(names) !==
+    JSON.stringify(["manifest.json", "credentials/", ...payloadNames].sort())
+  )
+    throw new Error("归档文件列表无效");
+  await mkdir(join(destination, "credentials"), { mode: 0o700 });
+  for (const name of payloadNames) {
+    await run("tar", ["-xOzf", archive, name], join(destination, name));
+    if ((await digest(join(destination, name))) !== manifest.files[name])
       throw new Error("归档内部摘要不匹配");
   }
 }

@@ -1,8 +1,13 @@
 "use client";
-import { useState } from "react";
+import { useSyncExternalStore, useState } from "react";
 import { Network, ArrowRight, LockKeyhole } from "lucide-react";
 import { Button } from "@/components/ui/button";
 export default function Login() {
+  const secure = useSyncExternalStore(
+    () => () => {},
+    () => window.location.protocol === "https:",
+    () => false,
+  );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   return (
@@ -20,6 +25,10 @@ export default function Login() {
         <form
           onSubmit={async (e) => {
             e.preventDefault();
+            if (!secure) {
+              setError("请以 HTTPS 访问");
+              return;
+            }
             const form = new FormData(e.currentTarget);
             setBusy(true);
             setError("");
@@ -43,10 +52,16 @@ export default function Login() {
             }
           }}
         >
+          {!secure && (
+            <p role="alert" className="error-text">
+              请以 HTTPS 访问。配置外部 HTTPS 反向代理后，使用对应地址登录。
+            </p>
+          )}
           <label>
             邮箱
             <input
               name="email"
+              disabled={!secure}
               type="email"
               autoComplete="username"
               required
@@ -57,6 +72,7 @@ export default function Login() {
             密码
             <input
               name="password"
+              disabled={!secure}
               type="password"
               autoComplete="current-password"
               required
@@ -68,7 +84,7 @@ export default function Login() {
               {error}
             </p>
           )}
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy || !secure}>
             {busy ? "正在登录…" : "进入工作台"}
             <ArrowRight size={16} />
           </Button>

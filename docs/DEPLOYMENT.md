@@ -1,47 +1,75 @@
-# 独立部署
+# 安装与更新
 
-从 GitHub Release 下载 `pipkerops-deploy-<Ops版本>.tar.gz` 和同一 Release 的 `SHA256SUMS`，校验后解压。包内的 `pipkerops/deploy` 目录可以复制到任意位置；从源码使用时则是仓库的 `deploy` 目录。以下命令在该目录中执行，脚本也支持通过绝对路径从其他目录调用。
+首次安装由用户手工上传发布包。安装并纳管后，可从 Ops 页面手动选择版本下载和分发更新。Ops、Agent 和部署脚本各自维护版本。
 
-```sh
-sudo python3 menu.py
-```
+## 先安装 Ops
 
-一级菜单选择“主控管理”或“Agent 管理”。主控部署需要 Python 3、Docker、Docker Compose v2、外部 PostgreSQL 17、独立 Redis 逻辑库和 Web HTTPS 证书；仅管理 Agent 则需要 Python 3、Linux 和 systemd，无需 Docker，也不会生成主控配置。
-
-## 主控管理
-
-首次选择“主控管理 → 启动”会创建 `config/app.conf` 和 `config/compose.env` 模板及 `certs/web` 目录，并提示先完成配置。填写数据库、Redis、域名及管理员配置，将 Web 证书 `fullchain.pem` 和 `privkey.pem` 放入 `certs/web`，然后再次执行启动。数据库和 Redis 必须预先可用。私有镜像仓库请事先使用执行部署命令的同一账户完成 `docker login ghcr.io`。
-
-`config/` 和 `certs/` 是用户维护的配置来源。启动、重启、更新时脚本比较 SHA-256 并同步到 `data/` 下的运行副本；PKI 和备份也保存在 `data/`。不要直接修改运行副本。更改配置后执行重启。切换数据库不会迁移原有数据。本部署方式只面向全新部署，不自动迁移旧版数据。
+准备 Linux、Python 3、Docker Compose v2、外部 PostgreSQL 17 和独立 Redis 逻辑库。从同一 GitHub Release 下载 `pipkerops-deploy-<脚本版本>.tar.gz` 和 `SHA256SUMS`，核对相应文件的 SHA-256 后解压。包内 `pipkerops/deploy` 可以放到任意固定目录；以下以 `/opt/pipkerops/deploy` 为例。
 
 ```sh
-sudo python3 script/status.py   # 查看服务和镜像
-sudo python3 script/start.py    # 初始化并启动
-sudo python3 script/stop.py     # 停止
-sudo python3 script/restart.py  # 同步配置并重启
-sudo python3 script/update.py 0.1.2  # 拉取指定版本并更新
+sudo python3 /opt/pipkerops/deploy/menu.py
 ```
 
-更新会先拉取镜像，成功后才停止服务并执行初始化；初始化失败时不会自动回滚数据库。请自行维护数据库和 `data/` 的备份。日志可使用 Docker Compose 或 Docker 命令查看。
+选择“主控管理 → 启动”，按提示填写 `config/ops/app.conf` 和 `config/ops/compose.env`，再启动。配置示例逐项解释默认值和修改方式。脚本不处理 Web TLS，不要求提供域名或证书。私有镜像需要先由执行部署命令的账户完成 `docker login ghcr.io`。
 
-## Agent 管理
+默认 HTTP 入口为 `127.0.0.1:8080`。HTTP 页面可以打开，但登录页面禁用密码提交，业务 API 返回 `403` 和“请以 HTTPS 访问”。健康检查允许 HTTP。
 
-1. 根据目标节点架构，从同一 GitHub Release 下载 Agent `.tar.gz` 安装包和 `SHA256SUMS`。`uname -m` 为 `x86_64` 时选择 amd64，为 `aarch64` 或 `arm64` 时选择 arm64。Release 标题分别显示 Ops、Agent、Skill 版本，下载 Agent 包时使用其中的 Agent 版本。
-2. 人工将这两个文件上传到目标 Linux 主机的同一目录，保留原文件名。例如 `/tmp/pipkerops-upload/pipker-agent-0.1.0-linux-amd64.tar.gz` 和 `/tmp/pipkerops-upload/SHA256SUMS`。只需上传对应架构的安装包，不需要下载其他附件。
-3. 在该主机运行菜单，选择“Agent 管理 → 安装／重新安装”，输入本地安装包路径。工具检查 SHA-256、包内必要文件和 ELF 架构，再调用包内安装脚本。正在运行的 Agent 必须先停止才能重装。
-4. 填写 `/etc/pipkerops/agent.env`，保留 0600 权限；通过安全编辑器准备权限为 0600 的 `/etc/pipkerops/enrollment.token`，并通过可信渠道提供主控 CA 公钥证书 `/etc/pipkerops/ca.pem`。配置细节见源码仓库的 `agent/README.md`。
-5. 选择“启动并设为开机自启”，然后在主控审批节点。可用 `sudo journalctl -u pipkerops-agent -f` 查看注册和连接日志。
+用现有 Nginx、Caddy 或 1Panel 将 HTTPS 站点反向代理到此入口，保留 Host（含端口），覆盖 `X-Forwarded-Proto`，支持 WebSocket。Nginx 示例见 `resources/reverse-proxy.conf.example`。随后使用 HTTPS 地址登录，无需再填写 APP_ORIGIN 或公网网关地址。浏览器终端也经同一个站点访问，无需安装内部 CA。
 
-安装不会自动启动服务，重装保留已有配置和 `/var/lib/pipkerops-agent` 状态。菜单提供查看版本、服务状态、开机自启状态，以及停止和重启操作。“停止”保留开机自启设置；如需取消，可手工执行 `sudo systemctl disable pipkerops-agent`。
+后端默认只监听本机。跨容器/跨主机代理时必须限制后端入口只可由可信代理访问，再调整 WEB_BIND；不能把后端公开后依赖客户端声明的转发头判断 TLS。
 
-对应的独立命令为：
+## 再安装 Agent
+
+1. 把对应架构的 `pipker-agent-<Agent版本>-linux-amd64.tar.gz` 或 `arm64.tar.gz` 和同一 Release 的 `SHA256SUMS` 上传到目标主机。
+2. 在该主机的部署菜单选择“Agent 管理 → 安装／重新安装”，提供本地归档路径。脚本核对归档和 ELF 架构，安装 systemd 服务；不自动启动。仅安装 Agent 不需要 Docker、数据库或 Redis。
+3. 检查 `config/agent/agent.env`，将 `PIPKEROPS_URL` 设置为 Ops 可访问的 HTTPS 地址，例如 `https://10.0.0.12:9443`。监听地址默认 `0.0.0.0:9443`，按网络需要限制防火墙。然后选择“启动并设为开机自启”。
+4. Agent 自动在 `data/agent/identity/identity.json` 中生成并保存自己的 CA、证书、私钥、稳定 ID 和访问 Key。无需向 Ops 请求注册令牌或等待证书审批。
+5. 选择“导出接入文件”，把输出保存为权限 0600 的 JSON，在 Ops“节点管理”中上传或粘贴，测试连接成功后确认添加。文件含访问 Key，不要放入 Git、聊天或公开目录。
+
+同机 Docker 中的 Ops 不能通过自己的 `127.0.0.1` 访问宿主 Agent。Compose 已提供 `host.docker.internal`，Agent 证书包含此名称；可将接入文件中的 URL 改为 `https://host.docker.internal:9443` 后导入，或使用容器可达的宿主 IP。TLS 始终校验地址和 CA。
 
 ```sh
-sudo python3 script/agent.py install /tmp/pipkerops-upload/pipker-agent-0.1.0-linux-amd64.tar.gz
-python3 script/agent.py status
-sudo python3 script/agent.py start    # 启动并设为开机自启
-sudo python3 script/agent.py stop
-sudo python3 script/agent.py restart
+sudo python3 /opt/pipkerops/deploy/script/agent.py install /tmp/upload/pipker-agent-0.1.1-linux-amd64.tar.gz
+sudo python3 /opt/pipkerops/deploy/script/agent.py start
+sudo sh -c 'umask 077; python3 /opt/pipkerops/deploy/script/agent.py export > /root/agent-connection.json'
+sudo python3 /opt/pipkerops/deploy/script/agent.py status
+sudo journalctl -u pipkerops-agent -f
 ```
 
-主控和 Agent 可以位于不同主机。目标节点需要部署目录中的菜单及 Python 模块，也可以继续使用 Agent 安装包自带的 `install.sh` 手工安装。原始 ELF 附件用于平台在线升级，不是此菜单接收的 `.tar.gz` 安装包。
+重装前停止服务；重装保留已有配置和 data。Key 泄露后先停止 Agent，在菜单明确执行“重置访问 Key”，再启动并重新导入。证书自动续期沿用 CA 和私钥，普通程序升级不会改变身份或 Key。
+
+## 同机目录与保留规则
+
+| 路径（相对于原部署目录） | 用途 |
+| --- | --- |
+| `config/ops/` | 人工维护的 Ops 业务和 Compose 配置 |
+| `config/agent/` | Agent 配置 |
+| `data/ops/config/` | Ops 启动时同步的运行副本，不直接编辑 |
+| `data/ops/credentials/` | Ops 保存的节点访问 Key，普通查询不返回 |
+| `data/ops/releases/` | 已校验的发布缓存 |
+| `data/ops/backups/` | 数据库和节点连接凭证备份 |
+| `data/agent/` | Agent 身份、任务 journal、制品及脚本更新回滚副本 |
+| `.pipkerops-installation.json` | 原部署目录和已安装组件标记 |
+| `managed-files.json`、`VERSION` | 发布程序清单和部署脚本版本 |
+
+脚本根据自己的绝对路径定位配置，从其他工作目录调用也使用同一套数据。原 `config/app.conf`、`config/compose.env` 存在时，只在新配置不存在时复制，原文件保留；新副本去掉旧注册/网关/PKI 参数，HTTP 入口改为 `127.0.0.1:8080`。旧镜像版本不会被悄悄修改，首次迁移时请通过本地 `script/update.py 0.1.3` 切换到支持新流程的 Ops，并调整自己的外部 HTTPS 代理。旧 data 和旧 Agent 身份不删除。旧节点在 Ops 中选择“关联已有节点”导入新接入文件，保留其 ID、历史和关联资源。
+
+## 页面更新与本地恢复
+
+管理员进入“版本更新”，选择 Agent 程序、部署脚本或 Ops 应用，再选择节点并验证登记原部署目录。Ops 应用更新必须选择安装在 Ops 宿主上的 Agent。检查正式发布后选择版本，明确确认才执行，不自动升级。
+
+Ops 从 GitHub 获取 `release-manifest.json` 和对应制品，校验 SHA-256 和架构，再通过受信 HTTPS 上传到 Agent。Agent 不需要访问 GitHub。没有新版发布清单的历史 Release 不出现在可更新列表中。
+
+- Agent 升级只替换二进制并保留 `.previous`，结果持久化且 Ops ACK 后才重启。Ops 等待新版本重新上报后再确认整个更新完成；已经是目标版本时直接提示无需更新，不替换或重启。
+- 部署脚本只替换 `managed-files.json` 中的程序文件。实际 config、data 和额外文件保留；发现本地程序修改或删除会拒绝更新并列出冲突。旧文件备份保存在 `data/agent/updates/`。源码目录没有正式发布清单时会在登记阶段明确拒绝，请先使用正式部署包。
+- Ops 自更新由 Compose 外的同机 Agent 执行，先保存系统备份，再拉取目标镜像；拉取失败不会停止应用。重启 Ops 时 Agent 任务继续执行，恢复连接后重放结果。
+- 更新不自动回滚数据库迁移。失败时保留实际日志和 UNKNOWN 状态，先检查原任务，再使用本地菜单恢复，不能盲目重复提交。
+
+```sh
+sudo python3 /opt/pipkerops/deploy/script/status.py
+sudo python3 /opt/pipkerops/deploy/script/restart.py
+sudo python3 /opt/pipkerops/deploy/script/update.py 0.1.3
+sudo python3 /opt/pipkerops/deploy/script/update_scripts.py /tmp/upload/pipkerops-deploy-0.1.0.tar.gz <SHA256>
+```
+
+系统备份包含数据库和节点连接凭证，属于私密文件。新归档格式为 2；旧格式备份请用对应旧版本恢复后再迁移。离线恢复仅接受空数据库和空凭证目录，恢复中的在途任务标记 UNKNOWN，保留对账。

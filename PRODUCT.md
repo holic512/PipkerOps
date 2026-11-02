@@ -20,7 +20,7 @@ web
 
 ## Operating Context
 
-浏览器管理、Agent 主动建立 TLS 连接、systemd 托管；Web/MCP/Cron 共享业务授权与任务机制。部署在自有 Linux 服务器。
+浏览器管理、Ops 主动连接独立 HTTPS Agent、systemd 托管；Web/MCP/Cron 共享业务授权与任务机制。部署在自有 Linux 服务器。
 
 ## Capabilities and Constraints
 
@@ -36,4 +36,4 @@ web
 
 ## Open Decisions
 
-推定首版为单管理域、角色式授权；多租户不在用户要求内。生产域名、证书与部署节点等待实际部署时提供，不影响本地开发。
+推定首版为单管理域、角色式授权；多租户不在用户要求内。Web HTTPS 由用户的外部反向代理提供；Agent 自动维护自身证书。

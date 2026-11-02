@@ -12,6 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'deploy'))
 from internal import agent
+from internal import core
 import menu
 
 
@@ -150,7 +151,7 @@ class AgentCommandTest(unittest.TestCase):
     def test_release_deployment_archive_runs_without_repository(self):
         with tempfile.TemporaryDirectory() as temporary:
             subprocess.run(['sh', str(ROOT / 'scripts/package-release.sh'), '0.1.2', '0.1.0', temporary], check=True)
-            with tarfile.open(Path(temporary) / 'pipkerops-deploy-0.1.2.tar.gz') as archive:
+            with tarfile.open(Path(temporary) / f'pipkerops-deploy-{(ROOT / "deploy/VERSION").read_text().strip()}.tar.gz') as archive:
                 archive.extractall(temporary, filter='data')
             deployment = Path(temporary) / 'pipkerops/deploy'
             self.assertTrue((deployment / 'internal/agent.py').is_file())
@@ -160,6 +161,30 @@ class AgentCommandTest(unittest.TestCase):
             self.assertFalse((deployment / 'config').exists())
             self.assertFalse((deployment / 'data').exists())
             self.assertIn('PIPKEROPS_VERSION=0.1.2', (deployment / 'resources/compose.env.example').read_text())
+
+
+class LegacyDeploymentTest(unittest.TestCase):
+    def test_legacy_copy_removes_old_gateway_and_tls_ports_without_changing_original(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'config').mkdir()
+            (root / 'VERSION').write_text('0.1.0\n')
+            app = 'DATABASE_HOST=postgres\nDATABASE_PASSWORD="fixture-preserved"\nGATEWAY_PORT=9443\nENROLL_PORT=9444\nAPP_ORIGIN=https://old.example\nPKI_DIR=./.data/pki\n'
+            compose = 'PIPKEROPS_IMAGE=custom/pipkerops\nPIPKEROPS_VERSION=0.1.2\nWEB_BIND=0.0.0.0\nWEB_PORT=443\nGATEWAY_PORT=9443\n'
+            (root / 'config/app.conf').write_text(app)
+            (root / 'config/compose.env').write_text(compose)
+            with patch.object(core, 'ROOT', root), patch.object(core, 'CONFIG', root / 'config/ops'), patch.object(core, 'DATA', root / 'data/ops'):
+                core.prepare()
+            self.assertEqual((root / 'config/app.conf').read_text(), app)
+            self.assertEqual((root / 'config/compose.env').read_text(), compose)
+            migrated = (root / 'config/ops/app.conf').read_text()
+            self.assertIn('DATABASE_PASSWORD="fixture-preserved"', migrated)
+            self.assertNotIn('GATEWAY_PORT=', migrated)
+            self.assertNotIn('PKI_DIR=', migrated)
+            migrated = (root / 'config/ops/compose.env').read_text()
+            self.assertIn('WEB_BIND=127.0.0.1\nWEB_PORT=8080', migrated)
+            self.assertIn('PIPKEROPS_VERSION=0.1.2', migrated)
+            self.assertNotIn('GATEWAY_PORT=', migrated)
 
 
 class ComponentVersionTest(unittest.TestCase):
@@ -174,7 +199,7 @@ class ComponentVersionTest(unittest.TestCase):
                 git('add', '.')
                 git('commit', '-qm', 'version fixture')
 
-            for name in ('agent', 'skills'):
+            for name in ('agent', 'skills', 'deploy'):
                 (directory / name).mkdir()
                 (directory / name / 'VERSION').write_text('0.1.0\n')
             (directory / 'package.json').write_text('{"version":"0.1.2"}')

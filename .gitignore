@@ -49,3 +49,5 @@ config/*
 deploy/**/__pycache__/
 deploy/**/*.pyc
 tests/__pycache__/
+
+deploy/.pipkerops-installation.json

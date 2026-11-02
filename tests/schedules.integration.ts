@@ -1,3 +1,4 @@
+import { integrationOrigin, proxyHeaders } from "./helpers/agent-fixture";
 import { configValues } from "../src/lib/config";
 /** Real schedule acceptance against an explicitly selected disposable node. */
 import { test } from "node:test";
@@ -17,10 +18,10 @@ test(
       nodeId,
       "Set SCHEDULE_TEST_NODE_ID to an authorized disposable node",
     );
-    const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
+    const origin = integrationOrigin;
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
-      headers: { Origin: origin, "Content-Type": "application/json" },
+      headers: { ...proxyHeaders(origin), "Content-Type": "application/json" },
       body: JSON.stringify({
         email: configValues.BOOTSTRAP_EMAIL,
         password: configValues.BOOTSTRAP_PASSWORD,
@@ -36,7 +37,7 @@ test(
       const response = await fetch(origin + "/api/rpc", {
         method: "POST",
         headers: {
-          Origin: origin,
+          ...proxyHeaders(origin),
           "Content-Type": "application/json",
           ...(key ? { Authorization: `Bearer ${key}` } : { Cookie: cookie }),
         },
@@ -112,7 +113,10 @@ test(
       await client.connect(
         new StreamableHTTPClientTransport(new URL(origin + "/api/mcp"), {
           requestInit: {
-            headers: { Authorization: `Bearer ${restricted.key}` },
+            headers: {
+              ...proxyHeaders(origin),
+              Authorization: `Bearer ${restricted.key}`,
+            },
           },
         }),
       );
@@ -139,7 +143,12 @@ test(
       });
       await client.connect(
         new StreamableHTTPClientTransport(new URL(origin + "/api/mcp"), {
-          requestInit: { headers: { Authorization: `Bearer ${key.key}` } },
+          requestInit: {
+            headers: {
+              ...proxyHeaders(origin),
+              Authorization: `Bearer ${key.key}`,
+            },
+          },
         }),
       );
       const authorized = await client.callTool({

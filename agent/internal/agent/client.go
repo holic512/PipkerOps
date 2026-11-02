@@ -1,8 +1,8 @@
 // @file client.go
 // @project PipkerOps
 // @module agent/connection
-// @description Agent 主动 mTLS 长连接、证书轮换、心跳及执行调度。
-// @logic 单连接串行写；最多四任务并行；证书持久化后重连，升级结果确认后才可重启。
+// @description 独立 HTTPS Agent 的 WebSocket 会话、心跳和任务调度。
+// @logic 单管理连接串行写；最多四任务并行，更新独占；任务不随断线取消，升级结果确认后重启。
 // @dependencies gorilla/websocket, agent journal, collector, executor
 // @index_tags agent, gateway, websocket, reconnect
 // @author holic512
@@ -10,15 +10,9 @@ package agent
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/tls"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -29,38 +23,48 @@ import (
 )
 
 type Client struct {
-	config              Config
-	journal             *journal
-	executor            *Executor
-	mu                  sync.Mutex
-	conn                *websocket.Conn
-	slots               chan struct{}
-	wg                  sync.WaitGroup
-	rotationMu          sync.Mutex
-	identity            *identity
-	tlsConfig           *tls.Config
-	rotationLastAttempt time.Time
-	rotationRequestedAt time.Time
-	rotationRequestID   string
+	config         Config
+	journal        *journal
+	executor       *Executor
+	mu             sync.Mutex
+	conn           *websocket.Conn
+	sessions       sync.WaitGroup
+	closing        bool
+	slots          chan struct{}
+	wg             sync.WaitGroup
+	taskMu         sync.Mutex
+	updating       bool
+	pendingRestart bool
+}
+
+func lockState(dir string) (*os.File, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, "agent.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		return nil, errors.New("another agent uses this state directory; stop it before resetting the access key")
+	}
+	return lock, nil
 }
 
 func Run(ctx context.Context, c Config) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(c.StateDir, 0700); err != nil {
-		return err
-	}
-	lock, err := os.OpenFile(filepath.Join(c.StateDir, "agent.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	lock, err := lockState(c.StateDir)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return errors.New("another agent is already using this state-dir")
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	id, tlsConfig, err := enroll(ctx, c)
+	identity, err := loadIdentity(c)
 	if err != nil {
 		return err
 	}
@@ -68,38 +72,12 @@ func Run(ctx context.Context, c Config) error {
 	if err != nil {
 		return err
 	}
-	client := &Client{config: c, journal: j, executor: &Executor{StateDir: c.StateDir}, slots: make(chan struct{}, 4), identity: id, tlsConfig: tlsConfig}
-	delay := time.Second
-	for ctx.Err() == nil {
-		started := time.Now()
-		err = client.connect(ctx, id.ID, client.currentTLS())
-		if ctx.Err() != nil {
-			break
-		}
-		if errors.Is(err, errIdentityRotated) {
-			delay = time.Second
-			continue
-		}
-		slog.Warn("gateway disconnected", "error", err, "retryAfter", delay)
-		if time.Since(started) > time.Minute {
-			delay = time.Second
-		}
-		var entropy [2]byte
-		_, _ = rand.Read(entropy[:])
-		jitter := time.Duration(binary.BigEndian.Uint16(entropy[:])) * time.Millisecond / 64
-		select {
-		case <-ctx.Done():
-		case <-time.After(delay + jitter):
-		}
-		if delay < 30*time.Second {
-			delay *= 2
-		}
-		if delay > 30*time.Second {
-			delay = 30 * time.Second
-		}
+	client := &Client{config: c, journal: j, executor: &Executor{StateDir: c.StateDir, DeployRoot: c.DeployRoot}, slots: make(chan struct{}, 4)}
+	client.pendingRestart, err = j.pendingUpgradeRestart()
+	if err != nil {
+		return err
 	}
-	client.wg.Wait()
-	return ctx.Err()
+	return client.serve(ctx, identity)
 }
 
 func (c *Client) send(message Message) error {
@@ -121,24 +99,19 @@ func (c *Client) send(message Message) error {
 	return c.conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func (c *Client) connect(ctx context.Context, nodeID string, tlsConfig *tls.Config) error {
-	u, _ := url.Parse(c.config.Gateway)
-	q := u.Query()
-	q.Set("nodeId", nodeID)
-	u.RawQuery = q.Encode()
-	dialer := websocket.Dialer{TLSClientConfig: tlsConfig, HandshakeTimeout: 15 * time.Second, Proxy: http.ProxyFromEnvironment}
-	conn, resp, err := dialer.DialContext(ctx, u.String(), nil)
-	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return err
-	}
+func (c *Client) acceptConnection(ctx context.Context, conn *websocket.Conn, agentID string) {
 	defer conn.Close()
 	conn.SetReadLimit(maxFrame)
 	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(60 * time.Second)) })
 	c.mu.Lock()
+	if c.closing {
+		c.mu.Unlock()
+		return
+	}
+	if c.conn != nil {
+		c.conn.Close()
+	}
 	c.conn = conn
 	c.mu.Unlock()
 	defer func() {
@@ -153,40 +126,56 @@ func (c *Client) connect(ctx context.Context, nodeID string, tlsConfig *tls.Conf
 	terminal := newTerminals(c.send)
 	defer terminal.closeAll()
 	go func() { <-connCtx.Done(); conn.Close() }()
-	if err = c.journal.replay(c.send); err != nil {
-		return fmt.Errorf("replay: %w", err)
+	if err := c.send(Message{Type: "connected", AgentID: agentID}); err != nil {
+		return
+	}
+	if err := c.journal.replay(c.send); err != nil {
+		slog.Error("replay task journal failed", "error", err)
+		return
 	}
 	go c.monitor(connCtx)
 	for {
 		var message Message
-		if err = conn.ReadJSON(&message); err != nil {
-			return err
+		if err := conn.ReadJSON(&message); err != nil {
+			return
 		}
 		switch message.Type {
 		case "task":
 			if message.Task == nil {
 				continue
 			}
-			select {
-			case c.slots <- struct{}{}:
+			c.taskMu.Lock()
+			update := isUpdateTask(message.Task.Type)
+			busy := c.updating || c.pendingRestart || (update && len(c.slots) > 0) || len(c.slots) == cap(c.slots)
+			if !busy {
+				c.slots <- struct{}{}
+				if update {
+					c.updating = true
+				}
 				c.wg.Add(1)
-				go func(task Task) { defer c.wg.Done(); defer func() { <-c.slots }(); c.execute(ctx, task) }(*message.Task)
-			default:
-				// Report busy without reserving or executing the task; Gateway retains it.
-				_ = c.send(Message{Type: "task.busy", TaskID: message.Task.ID, Error: "agent execution capacity reached"})
 			}
+			c.taskMu.Unlock()
+			if busy {
+				_ = c.send(Message{Type: "task.busy", TaskID: message.Task.ID, Error: "agent execution capacity reached or maintenance in progress"})
+				continue
+			}
+			go func(task Task) {
+				defer c.wg.Done()
+				defer func() {
+					c.taskMu.Lock()
+					<-c.slots
+					if isUpdateTask(task.Type) {
+						c.updating = false
+					}
+					c.taskMu.Unlock()
+				}()
+				c.execute(ctx, task)
+			}(*message.Task)
 		case "task.ack":
-			if err = c.journal.ack(message.TaskID); err != nil {
+			if err := c.journal.ack(message.TaskID); err != nil {
 				slog.Error("task acknowledgement was not persisted", "taskId", message.TaskID, "error", err)
 			} else {
 				c.maybeRestartAfterAck(ctx, message.TaskID)
-			}
-		case "cert.renewed", "cert.renew.error":
-			if renewalErr := c.acceptRenewedIdentity(message, time.Now()); renewalErr != nil {
-				slog.Warn("client certificate renewal failed; keeping current identity", "error", renewalErr)
-			} else {
-				slog.Info("client certificate renewed; reconnecting")
-				return errIdentityRotated
 			}
 		case "terminal.open", "terminal.input", "terminal.resize", "terminal.close":
 			terminal.handle(connCtx, message)
@@ -194,6 +183,10 @@ func (c *Client) connect(ctx context.Context, nodeID string, tlsConfig *tls.Conf
 			_ = c.send(Message{Type: "pong"})
 		}
 	}
+}
+
+func isUpdateTask(kind string) bool {
+	return kind == "agent.upgrade" || kind == "ops.update" || kind == "deployment.update"
 }
 
 func (c *Client) monitor(ctx context.Context) {
@@ -209,7 +202,7 @@ func (c *Client) monitor(ctx context.Context) {
 		}
 		c.mu.Unlock()
 		_ = c.send(Message{Type: "heartbeat", Payload: map[string]any{"timestamp": time.Now().UTC().Format(time.RFC3339Nano), "agentVersion": Version}})
-		c.maybeRenewCertificate()
+
 		collectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		metrics := Collect(collectCtx)
 		cancel()
@@ -276,6 +269,14 @@ func (c *Client) execute(ctx context.Context, task Task) {
 		// UNKNOWN rather than rerunning a possibly completed side effect.
 		slog.Error("persist task result failed", "taskId", task.ID, "error", err)
 		return
+	}
+	if task.Type == "agent.upgrade" && ok {
+		var p executionParams
+		if json.Unmarshal(task.Payload, &p) == nil && p.Restart {
+			c.taskMu.Lock()
+			c.pendingRestart = true
+			c.taskMu.Unlock()
+		}
 	}
 	_ = c.send(response)
 }

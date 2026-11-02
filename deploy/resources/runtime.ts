@@ -35,7 +35,6 @@ try {
         ["node_modules/prisma/build/index.js", "migrate", "deploy"],
       ],
       ["管理员初始化", ["--import", "tsx", "scripts/bootstrap.ts"]],
-      ["PKI 初始化", ["--import", "tsx", "scripts/pki.ts"]],
     ] as const) {
       stage = label;
       await run(process.execPath, [...args], false);

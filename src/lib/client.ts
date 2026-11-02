@@ -55,6 +55,10 @@ export type NodeData = {
   os: string | null;
   arch: string | null;
   agentVersion: string | null;
+  agentId?: string | null;
+  agentUrl?: string | null;
+  deployRoot?: string | null;
+  connectionError?: string | null;
   lastSeenAt: string | null;
   createdAt: string;
   labels: string[];

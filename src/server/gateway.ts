@@ -1,162 +1,180 @@
-import { configValues } from "../lib/config";
 /**
  * @file gateway.ts
  * @project PipkerOps
  * @module agent-gateway
- * @description TLS 注册审批入口、mTLS Agent 长连接、指标入库、任务分发和 Web PTY 转发。
- * @logic 证书链与节点指纹状态双重验证；任务先持久化分发状态再发送；终端票据一次性消费。
- * @dependencies HTTPS, WebSocket, Prisma, Redis, shared services
- * @index_tags gateway, agent, mtls, pty, metrics
+ * @description 主动连接已导入的 HTTPS Agent，持久任务分发及同源 Web 终端转发。
+ * @logic CA 与 Agent 身份校验；连接凭证变更即重连；结果入库后 ACK；终端票据一次性消费。
+ * @dependencies HTTP, WebSocket, Prisma, Redis, agent transport
+ * @index_tags gateway, agent, pty, metrics
  * @author holic512
  */
-import { createServer } from "node:https";
-import { readFileSync } from "node:fs";
-import type { TLSSocket } from "node:tls";
-import { createHash, randomUUID } from "node:crypto";
+import { configValues, appOrigin } from "../lib/config";
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { z } from "zod";
 import { db } from "../lib/db";
 import { redis } from "../lib/redis";
 import { hashToken } from "../lib/crypto";
-import { pkiFiles } from "../lib/pki";
-import {
-  enroll,
-  enrollmentStatus,
-  renewCertificate,
-  acceptsFingerprint,
-} from "../lib/services/nodes";
+import { readCredential, testAgent, agentError } from "../lib/agent-connection";
 import { finishTask } from "../lib/services/results";
-import { ApiError, authorize, refreshActor, type Actor } from "../lib/auth";
+import { authorize, requireHttps, refreshActor, type Actor } from "../lib/auth";
 import { taskSpecs } from "../lib/services/tasks";
-import { appOrigin } from "../lib/config";
-const files = pkiFiles();
-const tls = {
-  key: readFileSync(files.key),
-  cert: readFileSync(files.cert),
-  ca: readFileSync(files.ca),
-  minVersion: "TLSv1.2" as const,
-};
 const connections = new Map<string, WebSocket>();
-const connectionFingerprints = new WeakMap<WebSocket, string>();
+const identifiedConnections = new WeakSet<WebSocket>();
+const connectionCredentials = new WeakMap<WebSocket, string>();
 const terminals = new Map<
   string,
   { socket: WebSocket; nodeId: string; actor: Actor; containerId?: string }
 >();
-const agentWss = new WebSocketServer({
-  noServer: true,
-  maxPayload: 2 * 1024 * 1024,
-});
 const terminalWss = new WebSocketServer({
   noServer: true,
   maxPayload: 128 * 1024,
 });
-const enrollment = createServer(tls, async (req, res) => {
-  res.setHeader("Content-Type", "application/json");
+const enrollment = createServer((req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  if (req.method === "GET" && req.url === "/health") {
-    res.end(JSON.stringify({ status: "ok" }));
-    return;
-  }
-  if (
-    req.method !== "POST" ||
-    !["/enroll", "/enroll/status"].includes(req.url ?? "")
-  ) {
-    res.writeHead(404).end(JSON.stringify({ error: "Not found" }));
-    return;
-  }
-  try {
-    // 全局及来源限流不记录原始 token，注册只能通过 TLS。
-    const r = await redis();
-    const key = `pko:enroll-limit:${hashToken(req.socket.remoteAddress ?? "unknown")}`;
-    const attempts = await r.incr(key);
-    if (attempts === 1) await r.expire(key, 60);
-    if (attempts > 120) throw new ApiError(429, "注册请求过多");
-    let raw = "";
-    for await (const chunk of req) {
-      raw += chunk.toString();
-      if (raw.length > 20000) throw new ApiError(413, "请求过大");
-    }
-    const data =
-      req.url === "/enroll"
-        ? await enroll(JSON.parse(raw))
-        : await enrollmentStatus(JSON.parse(raw));
-    res.end(JSON.stringify(data));
-  } catch (e) {
-    res.writeHead(e instanceof ApiError ? e.status : 400).end(
-      JSON.stringify({
-        error: e instanceof ApiError ? e.message : "注册请求无效",
-      }),
-    );
-  }
+  res.writeHead(req.url === "/health" ? 200 : 404, {
+    "Content-Type": "application/json",
+  });
+  res.end(
+    JSON.stringify({ status: req.url === "/health" ? "ok" : "not found" }),
+  );
 });
-const agents = createServer(
-  { ...tls, requestCert: true, rejectUnauthorized: true },
-  (_, res) => res.writeHead(404).end(),
-);
-agents.on("upgrade", async (req, socket, head) => {
+let syncing = false;
+let stopping = false;
+async function connectNodes() {
+  if (syncing || stopping) return;
+  syncing = true;
   try {
-    const url = new URL(req.url ?? "/", "https://gateway");
-    if (url.pathname !== "/agent") throw new Error("path");
-    const id = url.searchParams.get("nodeId");
-    if (!id) throw new Error("id");
-    const peer = (req.socket as TLSSocket).getPeerCertificate();
-    if (!(req.socket as TLSSocket).authorized || !peer.raw)
-      throw new Error("certificate");
-    const node = await db().node.findUnique({ where: { id } });
-    const fingerprint = createHash("sha256").update(peer.raw).digest("hex");
-    if (
-      !node ||
-      node.status !== "APPROVED" ||
-      !acceptsFingerprint(node, fingerprint) ||
-      peer.subject.CN !== id
-    )
-      throw new Error("node");
-    agentWss.handleUpgrade(req, socket, head, (ws) => {
-      connections.get(id)?.close(4001, "replaced");
-      connections.set(id, ws);
-      connectionFingerprints.set(ws, fingerprint);
-      void db()
-        .node.update({
-          where: { id },
-          data: { lastSeenAt: new Date(), ipAddress: req.socket.remoteAddress },
-        })
-        .catch(() => {});
-      let messages = Promise.resolve();
-      let pending = 0;
-      ws.on("message", (raw) => {
-        if (++pending > 512) {
-          ws.close(4008, "message rate exceeded");
-          return;
-        }
-        messages = messages
-          .then(() => receive(id, ws, raw.toString()))
-          .catch(() => {
-            ws.close(4002, "invalid message");
-          })
-          .finally(() => {
-            pending--;
-          });
-      });
-      ws.on("error", () => {});
-      ws.on("close", () => {
-        if (connections.get(id) === ws) connections.delete(id);
-        for (const [session, t] of terminals)
-          if (t.nodeId === id) {
-            t.socket.close(4003, "agent disconnected");
-            terminals.delete(session);
-          }
-      });
-      ws.send(JSON.stringify({ type: "connected", nodeId: id }));
+    const nodes = await db().node.findMany({
+      where: {
+        status: "APPROVED",
+        agentId: { not: null },
+        agentUrl: { not: null },
+        agentCredentialRef: { not: null },
+      },
     });
-  } catch {
-    socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
-    socket.destroy();
+    await Promise.allSettled(
+      nodes
+        .filter((node) => !connections.has(node.id))
+        .map(async (node) => {
+          try {
+            const accessKey = await readCredential(node.agentCredentialRef!);
+            const bundle = {
+              url: node.agentUrl!,
+              caPem: node.agentCaPem!,
+              accessKey,
+              agentId: node.agentId!,
+              format: 1 as const,
+              protocolVersion: 1 as const,
+              deployRoot: node.deployRoot ?? "",
+            };
+            await testAgent(bundle);
+            if (stopping) return;
+            const url = new URL("/v1/connect", bundle.url);
+            url.protocol = "wss:";
+            const ws = new WebSocket(url, {
+              ca: bundle.caPem,
+              minVersion: "TLSv1.2",
+              headers: { Authorization: `Bearer ${accessKey}` },
+              handshakeTimeout: 10000,
+              maxPayload: 2 * 1024 * 1024,
+            });
+            connections.set(node.id, ws);
+            connectionCredentials.set(ws, node.agentCredentialRef!);
+            let messages = Promise.resolve();
+            let pending = 0;
+            let identified = false;
+            ws.on("message", (raw) => {
+              if (++pending > 512) {
+                ws.close(4008, "message rate exceeded");
+                return;
+              }
+              messages = messages
+                .then(async () => {
+                  if (!identified) {
+                    const hello = z
+                      .object({
+                        type: z.literal("connected"),
+                        agentId: z.literal(node.agentId!),
+                      })
+                      .parse(JSON.parse(raw.toString()));
+                    identified = !!hello;
+                    identifiedConnections.add(ws);
+                    await db().node.update({
+                      where: { id: node.id },
+                      data: { lastSeenAt: new Date(), connectionError: null },
+                    });
+                    return;
+                  }
+                  await receive(node.id, ws, raw.toString());
+                })
+                .catch(() => ws.close(4002, "invalid message"))
+                .finally(() => {
+                  pending--;
+                });
+            });
+            ws.on("ping", () => {});
+            ws.on("error", () => {
+              void db()
+                .node.update({
+                  where: { id: node.id },
+                  data: {
+                    connectionError:
+                      "Agent 连接中断，请检查地址、凭证和服务状态",
+                  },
+                })
+                .catch(() => {});
+            });
+            ws.on("close", () => {
+              if (connections.get(node.id) === ws) {
+                connections.delete(node.id);
+                void db()
+                  .node.update({
+                    where: { id: node.id },
+                    data: { lastSeenAt: null },
+                  })
+                  .catch(() => {});
+              }
+              for (const [session, t] of terminals)
+                if (t.nodeId === node.id) {
+                  t.socket.close(4003, "agent disconnected");
+                  terminals.delete(session);
+                }
+            });
+          } catch (error) {
+            await db().node.update({
+              where: { id: node.id },
+              data: {
+                connectionError: agentError(error).message,
+                lastSeenAt: null,
+              },
+            });
+          }
+        }),
+    );
+  } finally {
+    syncing = false;
   }
-});
+}
 enrollment.on("upgrade", async (req, socket, head) => {
   try {
-    const url = new URL(req.url ?? "/", "https://gateway");
-    if (url.pathname !== "/terminal" || req.headers.origin !== appOrigin())
+    const request = new Request(
+      `http://${req.headers.host ?? "gateway"}${req.url ?? "/"}`,
+      {
+        headers: Object.fromEntries(
+          Object.entries(req.headers).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        ),
+      },
+    );
+    requireHttps(request);
+    const url = new URL(request.url);
+    if (
+      url.pathname !== "/api/terminal/ws" ||
+      req.headers.origin !== appOrigin(request)
+    )
       throw new Error("origin");
     const ticket = url.searchParams.get("ticket");
     if (!ticket) throw new Error("ticket");
@@ -266,36 +284,10 @@ async function receive(id: string, ws: WebSocket, raw: string) {
   if (
     node?.status !== "APPROVED" ||
     connections.get(id) !== ws ||
-    !acceptsFingerprint(node, connectionFingerprints.get(ws) ?? "")
+    node.agentCredentialRef !== connectionCredentials.get(ws)
   ) {
     ws.close(4003, "revoked");
     return;
-  }
-  if (p.type === "cert.renew") {
-    const request = z
-      .object({
-        requestId: z.string().min(1).max(100),
-        csrPem: z.string().max(10000),
-      })
-      .parse(p);
-    try {
-      const issued = await renewCertificate(id, request.csrPem);
-      ws.send(
-        JSON.stringify({
-          type: "cert.renewed",
-          requestId: request.requestId,
-          ...issued,
-        }),
-      );
-    } catch {
-      ws.send(
-        JSON.stringify({
-          type: "cert.renew.error",
-          requestId: request.requestId,
-          error: "证书续期被拒绝，请检查节点身份",
-        }),
-      );
-    }
   }
   if (p.type === "heartbeat" || p.type === "metrics")
     await db().node.update({ where: { id }, data: { lastSeenAt: new Date() } });
@@ -354,7 +346,10 @@ async function receive(id: string, ws: WebSocket, raw: string) {
       const payload = task.payload as Record<string, unknown>;
       const seconds = Math.min(
         3600,
-        Math.max(600, Number(payload.timeoutSeconds ?? 0) + 60),
+        Math.max(
+          ["ops.update", "deployment.update"].includes(task.type) ? 1800 : 600,
+          Number(payload.timeoutSeconds ?? 0) + 60,
+        ),
       );
       await db().task.updateMany({
         where: { id: task.id, status: "DISPATCHED" },
@@ -429,12 +424,13 @@ async function dispatch() {
       });
       if (
         node?.status !== "APPROVED" ||
-        !acceptsFingerprint(node, connectionFingerprints.get(ws) ?? "")
+        node.agentCredentialRef !== connectionCredentials.get(ws)
       ) {
         ws.close(4003, "revoked");
         continue;
       }
-      if (ws.readyState !== WebSocket.OPEN) continue;
+      if (ws.readyState !== WebSocket.OPEN || !identifiedConnections.has(ws))
+        continue;
       const count = await db().task.count({
         where: { nodeId, status: { in: ["DISPATCHED", "RUNNING"] } },
       });
@@ -442,7 +438,7 @@ async function dispatch() {
       const upgrading = await db().task.count({
         where: {
           nodeId,
-          type: "agent.upgrade",
+          type: { in: ["agent.upgrade", "deployment.update", "ops.update"] },
           status: { in: ["DISPATCHED", "RUNNING"] },
         },
       });
@@ -471,8 +467,18 @@ async function dispatch() {
         });
         if (
           upgradeDispatched ||
-          (task.type === "agent.upgrade" &&
-            (count > 0 || tasks.some((t) => t.type !== "agent.upgrade")))
+          (["agent.upgrade", "deployment.update", "ops.update"].includes(
+            task.type,
+          ) &&
+            (count > 0 ||
+              tasks.some(
+                (t) =>
+                  ![
+                    "agent.upgrade",
+                    "deployment.update",
+                    "ops.update",
+                  ].includes(t.type),
+              )))
         ) {
           await db().task.updateMany({
             where: { id: task.id, status: "DISPATCHED" },
@@ -528,7 +534,12 @@ async function dispatch() {
         }
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "task", task }));
-          if (task.type === "agent.upgrade") upgradeDispatched = true;
+          if (
+            ["agent.upgrade", "deployment.update", "ops.update"].includes(
+              task.type,
+            )
+          )
+            upgradeDispatched = true;
         }
       }
     }
@@ -561,24 +572,24 @@ async function dispatch() {
   }
 }
 const timer = setInterval(() => void dispatch(), 1000);
-enrollment.listen(
-  Number(configValues.ENROLL_PORT ?? 9444),
-  configValues.GATEWAY_HOST ?? "0.0.0.0",
-  () => console.log("TLS enrollment/terminal gateway ready"),
+const connector = setInterval(
+  () =>
+    void connectNodes().catch(() =>
+      console.error("Agent connection scan failed"),
+    ),
+  5000,
 );
-agents.listen(
-  Number(configValues.GATEWAY_PORT ?? 9443),
-  configValues.GATEWAY_HOST ?? "0.0.0.0",
-  () => console.log("mTLS agent gateway ready"),
+void connectNodes().catch(() => console.error("Agent connection scan failed"));
+enrollment.listen(Number(configValues.GATEWAY_PORT ?? 9444), "0.0.0.0", () =>
+  console.log("Agent connector / terminal gateway ready"),
 );
 async function shutdown() {
+  stopping = true;
   clearInterval(timer);
-  for (const ws of connections.values()) ws.close(1001, "shutdown");
+  clearInterval(connector);
+  for (const ws of connections.values()) ws.terminate();
   for (const t of terminals.values()) t.socket.close(1001, "shutdown");
-  await Promise.all([
-    new Promise<void>((r) => agents.close(() => r())),
-    new Promise<void>((r) => enrollment.close(() => r())),
-  ]);
+  await new Promise<void>((resolve) => enrollment.close(() => resolve()));
   await db().$disconnect();
   process.exit(0);
 }

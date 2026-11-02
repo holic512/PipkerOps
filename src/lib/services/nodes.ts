@@ -1,21 +1,23 @@
-import { configValues } from "../config";
 /**
  * @file nodes.ts
  * @project PipkerOps
  * @module nodes
- * @description 节点注册、审批、吊销、指标查询的统一服务。
- * @logic 节点按授权过滤，最新指标在数据库逐节点LIMIT 1；注册绑定证书，历史按时间桶聚合并合并原始尾部。
- * @dependencies Prisma, PKI, authorization
+ * @description Agent 接入文件导入、停用与指标查询的统一服务。
+ * @logic 节点按授权过滤，最新指标在数据库逐节点LIMIT 1；导入验证 Agent 身份并保存私有凭证，历史按时间桶聚合并合并原始尾部。
+ * @dependencies Prisma, Agent HTTPS, authorization
  * @index_tags nodes, enrollment, metrics
  * @author holic512
  */
 import { z } from "zod";
 import { db } from "../db";
-import { ApiError, authorize, nodeFilter, type Actor } from "../auth";
-import { randomToken, hashToken } from "../crypto";
-import { issueCertificate, validateCsr, pkiFiles } from "../pki";
-import { readFileSync } from "node:fs";
-import { X509Certificate } from "node:crypto";
+import { ApiError, authorize, confirm, nodeFilter, type Actor } from "../auth";
+import { randomUUID } from "node:crypto";
+import {
+  saveCredential,
+  testAgent,
+  agentRequest,
+  readCredential,
+} from "../agent-connection";
 import { methodSchemas } from "./contracts";
 import { Prisma, type MetricSample } from "@/generated/prisma/client";
 export async function listNodes(actor: Actor) {
@@ -28,6 +30,8 @@ export async function listNodes(actor: Actor) {
       certificatePem: true,
       certificateFingerprint: true,
       previousCertificateFingerprint: true,
+      agentCredentialRef: true,
+      agentCaPem: true,
     },
     orderBy: { createdAt: "desc" },
   });
@@ -36,6 +40,7 @@ export async function listNodes(actor: Actor) {
     ...n,
     connected:
       n.status === "APPROVED" &&
+      !!n.agentId &&
       !!n.lastSeenAt &&
       now - n.lastSeenAt.getTime() < 60000,
   }));
@@ -68,164 +73,131 @@ export function latestMetricQuery(nodeIds: string[]) {
     ) latest
   `;
 }
-export async function enrollmentToken(actor: Actor, input: unknown) {
+export async function testConnection(actor: Actor, input: unknown) {
   authorize(actor, "nodes:approve");
-  const data = methodSchemas["nodes.token"].parse(input);
-  const token = randomToken();
-  const result = await db().$transaction(async (tx) => {
-    const t = await tx.enrollmentToken.create({
-      data: {
-        name: data.name,
-        maxUses: data.maxUses,
-        expiresAt: new Date(Date.now() + data.hours * 3600000),
-        tokenHash: hashToken(token),
-        createdById: actor.userId,
-      },
-    });
+  const { connection } = methodSchemas["nodes.test"].parse(input);
+  return testAgent(connection);
+}
+export async function importNode(actor: Actor, input: unknown) {
+  const data = methodSchemas["nodes.import"].parse(input);
+  authorize(actor, "nodes:approve", data.id, true);
+  confirm(data.confirmed);
+  const info = await testAgent(data.connection);
+  const existing = data.id
+    ? await db().node.findUnique({ where: { id: data.id } })
+    : null;
+  if (data.id && !existing) throw new ApiError(404, "节点不存在");
+  const duplicate = await db().node.findUnique({
+    where: { agentId: info.agentId },
+  });
+  if (duplicate && duplicate.id !== data.id)
+    throw new ApiError(409, "此 Agent 已接入，请选择原节点重新接入");
+  const ref = randomUUID();
+  await saveCredential(ref, data.connection.accessKey);
+  return db().$transaction(async (tx) => {
+    const fields = {
+      name: data.name ?? existing?.name ?? info.name,
+      hostname: info.hostname,
+      os: info.os,
+      arch: info.arch,
+      agentVersion: info.agentVersion,
+      agentId: info.agentId,
+      agentUrl: new URL(data.connection.url).origin,
+      agentCaPem: data.connection.caPem,
+      agentCredentialRef: ref,
+      deployRoot: info.deployRoot,
+      status: "APPROVED" as const,
+      connectionError: null,
+      lastSeenAt: null,
+      approvedById: actor.userId,
+      approvedAt: new Date(),
+    };
+    const node = existing
+      ? await tx.node.update({ where: { id: existing.id }, data: fields })
+      : await tx.node.create({ data: fields });
     await tx.auditEvent.create({
       data: {
         actorId: actor.userId,
         apiKeyId: actor.apiKeyId,
-        action: "nodes.enrollment-token",
-        resourceType: "EnrollmentToken",
-        resourceId: t.id,
-      },
-    });
-    return t;
-  });
-  return {
-    id: result.id,
-    token,
-    expiresAt: result.expiresAt,
-    gateway: configValues.GATEWAY_PUBLIC_URL,
-    enrollUrl: configValues.ENROLL_PUBLIC_URL,
-  };
-}
-export async function enroll(input: unknown) {
-  const data = z
-    .object({
-      token: z.string().min(20).max(256),
-      name: z.string().min(1).max(120),
-      hostname: z.string().max(255),
-      os: z.string().max(80),
-      arch: z.string().max(32),
-      agentVersion: z.string().max(64),
-      csrPem: z.string().max(10000),
-    })
-    .parse(input);
-  try {
-    validateCsr(data.csrPem);
-  } catch {
-    throw new ApiError(400, "无效的节点 CSR");
-  }
-  return db().$transaction(async (tx) => {
-    const token = await tx.enrollmentToken.findUnique({
-      where: { tokenHash: hashToken(data.token) },
-    });
-    if (!token || token.expiresAt < new Date())
-      throw new ApiError(403, "注册令牌无效或过期");
-    const existing = await tx.node.findFirst({
-      where: { enrollmentTokenId: token.id, csrPem: data.csrPem },
-    });
-    if (existing) return { id: existing.id, status: existing.status };
-    const consumed = await tx.enrollmentToken.updateMany({
-      where: {
-        id: token.id,
-        usedCount: { lt: token.maxUses },
-        expiresAt: { gt: new Date() },
-      },
-      data: { usedCount: { increment: 1 } },
-    });
-    if (!consumed.count) throw new ApiError(403, "注册令牌使用次数已耗尽");
-    const node = await tx.node.create({
-      data: {
-        name: data.name,
-        hostname: data.hostname,
-        os: data.os,
-        arch: data.arch,
-        agentVersion: data.agentVersion,
-        csrPem: data.csrPem,
-        enrollmentTokenId: token.id,
-      },
-    });
-    await tx.auditEvent.create({
-      data: {
-        action: "nodes.enroll",
+        action: "nodes.import",
         resourceType: "Node",
         resourceId: node.id,
         nodeId: node.id,
       },
     });
-    return { id: node.id, status: node.status };
+    return { id: node.id, name: node.name };
   });
 }
-export async function enrollmentStatus(input: unknown) {
-  const data = z
-    .object({
-      token: z.string().max(256),
-      nodeId: z.string().max(100),
-      csrPem: z.string().max(10000),
-    })
-    .parse(input);
-  const node = await db().node.findUnique({
+export async function registerDeployment(actor: Actor, input: unknown) {
+  const data = methodSchemas["nodes.deployment"].parse(input);
+  authorize(actor, "nodes:approve", data.nodeId, true);
+  confirm(data.confirmed);
+  const node = await db().node.findUniqueOrThrow({
     where: { id: data.nodeId },
-    include: { enrollmentToken: true },
   });
+  if (!node.agentUrl || !node.agentCaPem || !node.agentCredentialRef)
+    throw new ApiError(409, "节点尚未接入");
+  const installation = z
+    .object({
+      root: z.literal(data.deployRoot),
+      components: z.array(z.string()),
+      scriptsVersion: z.string(),
+      managedFiles: z.boolean().default(false),
+    })
+    .parse(
+      await agentRequest(
+        {
+          url: node.agentUrl,
+          caPem: node.agentCaPem,
+          accessKey: await readCredential(node.agentCredentialRef),
+        },
+        `/v1/installation?root=${encodeURIComponent(data.deployRoot)}`,
+      ),
+    );
+  if (data.component === "scripts" && !installation.managedFiles)
+    throw new ApiError(
+      400,
+      "此目录缺少正式发布程序清单，请先使用部署包安装脚本",
+    );
   if (
-    !node ||
-    node.csrPem !== data.csrPem ||
-    node.enrollmentToken?.tokenHash !== hashToken(data.token)
+    data.component !== "scripts" &&
+    !installation.components.includes(data.component)
   )
-    throw new ApiError(403, "节点注册身份不匹配");
-  return {
-    id: node.id,
-    status: node.status,
-    certificatePem:
-      node.status === "APPROVED" ? node.certificatePem : undefined,
-    caPem:
-      node.status === "APPROVED"
-        ? readFileSync(/* turbopackIgnore: true */ pkiFiles().ca, "utf8")
-        : undefined,
-  };
+    throw new ApiError(400, "指定目录未安装所选组件");
+  await db().node.update({
+    where: { id: node.id },
+    data: { deployRoot: data.deployRoot },
+  });
+  await db().auditEvent.create({
+    data: {
+      actorId: actor.userId,
+      action: "nodes.deployment",
+      resourceType: "Node",
+      resourceId: node.id,
+      nodeId: node.id,
+      detail: { deployRoot: data.deployRoot },
+    },
+  });
+  return installation;
 }
-export async function changeNode(actor: Actor, id: string, action: string) {
+export async function changeNode(actor: Actor, id: string) {
   authorize(actor, "nodes:approve", id, true);
-  const node = await db().node.findUnique({ where: { id } });
-  if (!node) throw new ApiError(404, "节点不存在");
-  let certificate = {};
-  if (action === "approve") {
-    if (node.status !== "PENDING" || !node.csrPem)
-      throw new ApiError(409, "节点当前不能审批");
-    certificate = issueCertificate(id, node.csrPem);
-  } else if (!["reject", "revoke"].includes(action))
-    throw new ApiError(400, "未知的审批操作");
   return db().$transaction(async (tx) => {
-    const updated = await tx.node.updateMany({
-      where: { id, status: node.status },
-      data: {
-        ...certificate,
-        status:
-          action === "approve"
-            ? "APPROVED"
-            : action === "reject"
-              ? "REJECTED"
-              : "REVOKED",
-        approvedById: actor.userId,
-        approvedAt: new Date(),
-      },
+    await tx.node.update({
+      where: { id },
+      data: { status: "REVOKED", lastSeenAt: null },
     });
-    if (!updated.count) throw new ApiError(409, "节点状态已经变更");
     await tx.auditEvent.create({
       data: {
         actorId: actor.userId,
         apiKeyId: actor.apiKeyId,
-        action: `nodes.${action}`,
+        action: "nodes.revoke",
         resourceType: "Node",
         resourceId: id,
         nodeId: id,
       },
     });
-    return { id, status: action };
+    return { id, status: "REVOKED" };
   });
 }
 export async function metrics(actor: Actor, nodeId: string, hours = 24) {
@@ -304,58 +276,4 @@ export function metricHistoryQuery(
       GROUP BY 1
       ORDER BY "recordedAt" ASC`,
   };
-}
-
-/** Only authenticated mTLS connections call this; same-key renewal has a 24-hour delivery grace. */
-export async function renewCertificate(nodeId: string, csrPem: string) {
-  validateCsr(csrPem);
-  return db().$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Node" WHERE id=${nodeId} FOR UPDATE`;
-    const node = await tx.node.findUniqueOrThrow({ where: { id: nodeId } });
-    if (
-      node.status !== "APPROVED" ||
-      node.csrPem !== csrPem ||
-      !node.certificatePem
-    )
-      throw new ApiError(403, "证书轮换身份不匹配");
-    const expires = new Date(
-      new X509Certificate(node.certificatePem).validTo,
-    ).getTime();
-    // A lost reply is retried with the old certificate; return the already committed replacement.
-    if (expires - Date.now() > 14 * 86400000)
-      return { certificatePem: node.certificatePem };
-    const issued = issueCertificate(nodeId, csrPem);
-    await tx.node.update({
-      where: { id: nodeId },
-      data: {
-        ...issued,
-        previousCertificateFingerprint: node.certificateFingerprint,
-        certificateRotatedAt: new Date(),
-      },
-    });
-    await tx.auditEvent.create({
-      data: {
-        action: "nodes.certificate-renewed",
-        resourceType: "Node",
-        resourceId: nodeId,
-        nodeId,
-      },
-    });
-    return { certificatePem: issued.certificatePem };
-  });
-}
-export function acceptsFingerprint(
-  node: {
-    certificateFingerprint: string | null;
-    previousCertificateFingerprint: string | null;
-    certificateRotatedAt: Date | null;
-  },
-  fingerprint: string,
-) {
-  return (
-    node.certificateFingerprint === fingerprint ||
-    (node.previousCertificateFingerprint === fingerprint &&
-      !!node.certificateRotatedAt &&
-      Date.now() - node.certificateRotatedAt.getTime() < 86400000)
-  );
 }

@@ -68,7 +68,7 @@ export function Backups() {
             setCreationKey(key);
             operation.ask(
               "创建系统备份",
-              "将备份当前业务数据库与 Agent PKI。备份包含敏感业务和私钥，请仅向可信管理员交付。备份在后台执行，可继续使用页面。",
+              "将备份当前业务数据库与 节点接入凭证。备份包含敏感业务和私钥，请仅向可信管理员交付。备份在后台执行，可继续使用页面。",
               async () => {
                 const task = await rpc<{ id: string }>("backups.create", {
                   confirmed: true,
@@ -195,7 +195,8 @@ export function Backups() {
         <section className="panel form-panel detail-panel">
           <h2>恢复说明</h2>
           <p>
-            恢复需要维护窗口。停止应用后，使用选定备份恢复到空数据库和空 PKI
+            恢复需要维护窗口。停止应用后，使用选定备份恢复到空数据库和空
+            节点接入凭证
             目录，再核对任务状态后启动。现有业务数据不会被直接覆盖。
           </p>
           <p>完整步骤见项目部署文档的“系统备份与恢复”。</p>

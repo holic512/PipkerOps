@@ -10,6 +10,7 @@
  */
 import { z } from "zod";
 import { taskInput, taskSpecs } from "./tasks";
+import { connectionBundle } from "../agent-connection";
 const label = z.string().trim().min(1).max(120);
 const id = z.string().min(1).max(100);
 const object = z.record(z.string(), z.unknown());
@@ -28,9 +29,11 @@ export const httpProbeConfig = z.object({
 export const METHODS = [
   "overview",
   "nodes.list",
-  "nodes.token",
-  "nodes.approve",
-  "nodes.reject",
+  "nodes.test",
+  "nodes.import",
+  "nodes.deployment",
+  "updates.releases",
+  "updates.create",
   "nodes.revoke",
   "nodes.metrics",
   "nodes.history",
@@ -93,13 +96,28 @@ export const mutation = (method: string) =>
 export const methodSchemas = {
   overview: z.object({}),
   "nodes.list": z.object({}),
-  "nodes.token": z.object({
-    name: label,
-    maxUses: z.number().int().min(1).max(50).default(1),
-    hours: z.number().min(1).max(168).default(24),
+  "nodes.deployment": z.object({
+    nodeId: id,
+    deployRoot: z.string().startsWith("/").max(4096),
+    component: z.enum(["agent", "ops", "scripts"]),
+    confirmed: confirmation,
   }),
-  "nodes.approve": z.object({ id, confirmed: confirmation }),
-  "nodes.reject": z.object({ id, confirmed: confirmation }),
+  "nodes.test": z.object({ connection: connectionBundle }),
+  "nodes.import": z.object({
+    id: id.optional(),
+    name: label.optional(),
+    connection: connectionBundle,
+    confirmed: confirmation,
+  }),
+  "updates.releases": z.object({}),
+  "updates.create": z.object({
+    nodeId: id,
+    component: z.enum(["agent", "ops", "scripts"]),
+    releaseTag: z.string().regex(/^[a-zA-Z0-9_.-]+$/),
+    deployRoot: z.string().startsWith("/").max(4096),
+    confirmed: confirmation,
+    idempotencyKey: z.string().min(8).max(200),
+  }),
   "nodes.revoke": z.object({ id, confirmed: confirmation }),
   "nodes.metrics": z.object({
     nodeId: id,

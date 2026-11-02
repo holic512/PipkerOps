@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,27 +31,24 @@ type Task struct {
 }
 
 type Message struct {
-	Type             string `json:"type"`
-	Task             *Task  `json:"task,omitempty"`
-	TaskID           string `json:"taskId,omitempty"`
-	Payload          any    `json:"payload,omitempty"`
-	Sequence         int    `json:"sequence,omitempty"`
-	Stream           string `json:"stream,omitempty"`
-	Message          string `json:"message,omitempty"`
-	Success          *bool  `json:"success,omitempty"`
-	Output           string `json:"output,omitempty"`
-	Error            string `json:"error,omitempty"`
-	Result           any    `json:"result,omitempty"`
-	SessionID        string `json:"sessionId,omitempty"`
-	ContainerID      string `json:"containerId,omitempty"`
-	Data             string `json:"data,omitempty"`
-	Cols             uint16 `json:"cols,omitempty"`
-	Rows             uint16 `json:"rows,omitempty"`
-	ExitCode         *int   `json:"exitCode,omitempty"`
-	RequestID        string `json:"requestId,omitempty"`
-	CSRPEM           string `json:"csrPem,omitempty"`
-	CertificatePEM   string `json:"certificatePem,omitempty"`
-	CACertificatePEM string `json:"caCertificatePem,omitempty"`
+	Type        string `json:"type"`
+	AgentID     string `json:"agentId,omitempty"`
+	Task        *Task  `json:"task,omitempty"`
+	TaskID      string `json:"taskId,omitempty"`
+	Payload     any    `json:"payload,omitempty"`
+	Sequence    int    `json:"sequence,omitempty"`
+	Stream      string `json:"stream,omitempty"`
+	Message     string `json:"message,omitempty"`
+	Success     *bool  `json:"success,omitempty"`
+	Output      string `json:"output,omitempty"`
+	Error       string `json:"error,omitempty"`
+	Result      any    `json:"result,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
+	ContainerID string `json:"containerId,omitempty"`
+	Data        string `json:"data,omitempty"`
+	Cols        uint16 `json:"cols,omitempty"`
+	Rows        uint16 `json:"rows,omitempty"`
+	ExitCode    *int   `json:"exitCode,omitempty"`
 }
 
 type journalRecord struct {
@@ -289,4 +287,34 @@ func (j *journal) replay(send func(Message) error) error {
 		}
 	}
 	return nil
+}
+
+// An acknowledged but not yet dispatched restart still owns maintenance until
+// systemd replaces the process, even when Ops reconnects during that window.
+func (j *journal) pendingUpgradeRestart() (bool, error) {
+	entries, err := os.ReadDir(j.dir)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		r, err := j.load(strings.TrimSuffix(entry.Name(), ".json"))
+		if err != nil {
+			return false, err
+		}
+		if r.Type == "agent.upgrade" && r.State == "DONE" && r.RestartRequested && !r.RestartDispatched && r.Response.Success != nil && *r.Response.Success {
+			if r.Acknowledged {
+				// Startup itself has activated the executable installed before the ACK.
+				// Do not leave the new process waiting for an ACK that Ops already sent.
+				if _, err = j.claimUpgradeRestart(r.TaskID); err != nil {
+					return false, err
+				}
+				continue
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }

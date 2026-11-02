@@ -1,14 +1,19 @@
 import { configValues } from "../src/lib/config";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { authorize, ApiError, type Actor } from "../src/lib/auth";
+import {
+  authorize,
+  requireHttps,
+  sameOrigin,
+  ApiError,
+  type Actor,
+} from "../src/lib/auth";
 import {
   hashPassword,
   verifyPassword,
   hashToken,
   randomToken,
 } from "../src/lib/crypto";
-import { acceptsFingerprint } from "../src/lib/services/nodes";
 import { canonicalJson } from "../src/lib/crypto";
 import { mapFields, runProbe } from "../src/lib/probe";
 import { createServer } from "node:http";
@@ -82,6 +87,7 @@ test("内网例外只匹配真实地址，公网域名不能伪装私网前缀�
     "192.168.1.1",
     "172.31.1.2",
     "[::1]",
+    "host.docker.internal",
   ])
     assert.equal(privateHost(host), true);
   assert.throws(
@@ -108,22 +114,7 @@ test("停用或未确认探针不会使应用伪报健康", () => {
   );
 });
 
-test("旧证书指纹宽限仅24小时，规范JSON不依赖键顺序", () => {
-  const node = {
-    certificateFingerprint: "new",
-    previousCertificateFingerprint: "old",
-    certificateRotatedAt: new Date(),
-  };
-  assert.equal(acceptsFingerprint(node, "old"), true);
-  assert.equal(acceptsFingerprint(node, "new"), true);
-  assert.equal(
-    acceptsFingerprint(
-      { ...node, certificateRotatedAt: new Date(Date.now() - 86400001) },
-      "old",
-    ),
-    false,
-  );
-  assert.equal(acceptsFingerprint(node, "foreign"), false);
+test("规范JSON不依赖键顺序", () => {
   assert.equal(
     canonicalJson({ a: { y: 1, x: 2 }, b: 3 }),
     canonicalJson({ b: 3, a: { x: 2, y: 1 } }),
@@ -165,4 +156,32 @@ test("HTTP探针限制响应体，并保留实际POST方法及映射结果", asy
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));
   }
+});
+
+test("HTTP业务请求拒绝，代理HTTPS按当前Host与端口判断来源", () => {
+  const direct = new Request("http://localhost:8080/api/rpc", {
+    headers: { host: "localhost:8080", origin: "http://localhost:8080" },
+  });
+  assert.throws(() => requireHttps(direct), { message: "请以 HTTPS 访问" });
+  const proxied = new Request("http://web:3000/api/rpc", {
+    headers: {
+      host: "ops.example.test:8443",
+      "x-forwarded-proto": "https",
+      origin: "https://ops.example.test:8443",
+    },
+  });
+  assert.equal(requireHttps(proxied), "https://ops.example.test:8443");
+  sameOrigin(proxied);
+  const wrong = new Request(proxied, {
+    headers: {
+      host: "ops.example.test:8443",
+      "x-forwarded-proto": "https",
+      origin: "https://attacker.test",
+    },
+  });
+  assert.throws(() => sameOrigin(wrong), { message: "请求来源不匹配" });
+  const malformed = new Request(proxied, {
+    headers: { host: "ops.example.test", "x-forwarded-proto": "https,http" },
+  });
+  assert.throws(() => requireHttps(malformed), { message: "代理请求头无效" });
 });

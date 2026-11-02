@@ -1,10 +1,17 @@
+import {
+  integrationOrigin,
+  proxyHeaders,
+  prepareContainerAgent,
+  waitForAgent,
+  uploadArtifact,
+  agentRequest,
+} from "./helpers/agent-fixture";
 import { configValues } from "../src/lib/config";
 /** Full systemd/ufw/software/verified upgrade acceptance in a disposable Linux container. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { createServer } from "node:https";
 import { randomUUID, createHash } from "node:crypto";
 import { db } from "../src/lib/db";
 import { topologyLinks } from "../src/lib/topology-links";
@@ -14,7 +21,7 @@ const docker = (...args: string[]) =>
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 120000,
   });
-const origin = configValues.APP_ORIGIN ?? "http://127.0.0.1:3000";
+const origin = integrationOrigin;
 async function wait<T>(
   read: () => Promise<T>,
   accept: (v: T) => boolean,
@@ -35,35 +42,15 @@ test(
   async (t) => {
     const run = "systemd-" + randomUUID().slice(0, 8);
     let container = "",
-      nodeId = "",
-      tokenId = "";
+      nodeId = "";
     let applicationId = "";
     const binary = readFileSync(
       process.env.LINUX_AGENT_BINARY ??
         `/tmp/pipker-agent-linux-${process.arch === "x64" ? "amd64" : "arm64"}`,
     );
-    const upgradeServer = createServer(
-      {
-        key: readFileSync(".data/pki/server-linux.key"),
-        cert: readFileSync(".data/pki/server-linux.crt"),
-      },
-      (req, res) => {
-        if (req.url !== "/agent") {
-          res.writeHead(404).end();
-          return;
-        }
-        res.setHeader("Content-Type", "application/octet-stream");
-        res.end(binary);
-      },
-    );
-    await new Promise<void>((resolve) =>
-      upgradeServer.listen(0, "0.0.0.0", resolve),
-    );
-    const address = upgradeServer.address();
-    assert.ok(address && typeof address !== "string");
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
-      headers: { Origin: origin, "Content-Type": "application/json" },
+      headers: { ...proxyHeaders(origin), "Content-Type": "application/json" },
       body: JSON.stringify({
         email: configValues.BOOTSTRAP_EMAIL,
         password: configValues.BOOTSTRAP_PASSWORD,
@@ -78,7 +65,7 @@ test(
       const response = await fetch(origin + "/api/rpc", {
         method: "POST",
         headers: {
-          Origin: origin,
+          ...proxyHeaders(origin),
           "Content-Type": "application/json",
           Cookie: cookie,
         },
@@ -102,6 +89,7 @@ test(
       const result = await wait(
         () =>
           rpc<{
+            id: string;
             status: string;
             error?: string;
             output: string;
@@ -145,6 +133,8 @@ test(
         run,
         "--label",
         "pipkerops.acceptance=true",
+        "-p",
+        "127.0.0.1::9443",
         "pipkerops-systemd-fixture:local",
       ).trim();
       await wait(
@@ -164,47 +154,37 @@ test(
         "systemd PID1",
       );
       write("/usr/local/bin/pipker-agent", binary, "755");
-      docker(
-        "exec",
+      const fixture = await prepareContainerAgent(
         container,
-        "mkdir",
-        "-p",
-        "/etc/pipkerops",
-        "/var/lib/pipkerops-agent",
+        run,
+        "/usr/local/bin/pipker-agent",
       );
-      write("/etc/pipkerops/ca.crt", readFileSync(".data/pki/ca.crt"), "644");
-      write(
-        "/usr/local/share/ca-certificates/pipkerops-test.crt",
-        readFileSync(".data/pki/ca.crt"),
-        "644",
-      );
-      docker("exec", container, "update-ca-certificates");
+      const configDirectory = `${fixture.root}/config/agent`;
+      docker("exec", container, "mkdir", "-p", configDirectory);
       write(
         "/etc/systemd/system/pipkerops-agent.service",
         readFileSync("agent/pipkerops-agent.service"),
         "644",
       );
-      const token = await rpc<{ id: string; token: string }>("nodes.token", {
-        name: run,
-        hours: 1,
-        maxUses: 1,
-      });
-      tokenId = token.id;
-      write("/etc/pipkerops/token", token.token);
       write(
-        "/etc/pipkerops/agent.env",
-        `PIPKEROPS_GATEWAY=wss://host.docker.internal:9543/agent\nPIPKEROPS_ENROLL_URL=https://host.docker.internal:9544\nPIPKEROPS_CA=/etc/pipkerops/ca.crt\nPIPKEROPS_TOKEN_FILE=/etc/pipkerops/token\nPIPKEROPS_NAME=${run}\nPIPKEROPS_STATE_DIR=/var/lib/pipkerops-agent\n`,
+        `${configDirectory}/agent.env`,
+        [
+          "PIPKEROPS_LISTEN=0.0.0.0:9443",
+          `PIPKEROPS_URL=${fixture.connection.url}`,
+          `PIPKEROPS_NAME=${run}`,
+          `PIPKEROPS_STATE_DIR=${fixture.state}`,
+          `PIPKEROPS_DEPLOY_ROOT=${fixture.root}`,
+          "",
+        ].join("\n"),
       );
       docker("exec", container, "systemctl", "daemon-reload");
       docker("exec", container, "systemctl", "start", "pipkerops-agent");
-      const node = await wait(
-        () => db().node.findFirst({ where: { name: run } }),
-        Boolean,
-        "systemd Agent enrollment",
-      );
-      assert.ok(node);
+      await waitForAgent(fixture.connection);
+      const node = await rpc<{ id: string }>("nodes.import", {
+        connection: fixture.connection,
+        confirmed: true,
+      });
       nodeId = node.id;
-      await rpc("nodes.approve", { id: nodeId, confirmed: true });
       await wait(
         () => db().metricSample.findFirst({ where: { nodeId } }),
         Boolean,
@@ -302,13 +282,20 @@ test(
       ).trim();
       assert.notEqual(pidBefore, "0");
       const digest = createHash("sha256").update(binary).digest("hex");
+      assert.equal(
+        (
+          await agentRequest(
+            fixture.connection,
+            `/v1/artifacts/${"0".repeat(64)}`,
+            binary,
+          )
+        ).status,
+        400,
+      );
+      assert.equal(await uploadArtifact(fixture.connection, binary), digest);
       await task(
         "agent.upgrade",
-        {
-          url: `https://host.docker.internal:${address.port}/agent`,
-          sha256: "0".repeat(64),
-          restart: false,
-        },
+        { artifactId: digest, sha256: "0".repeat(64), restart: false },
         false,
       );
       assert.equal(
@@ -320,8 +307,8 @@ test(
         ).split(" ")[0],
         digest,
       );
-      await task("agent.upgrade", {
-        url: `https://host.docker.internal:${address.port}/agent`,
+      const upgraded = await task("agent.upgrade", {
+        artifactId: digest,
         sha256: digest,
         restart: true,
       });
@@ -349,9 +336,36 @@ test(
         ).split(" ")[0],
         digest,
       );
+      await waitForAgent(fixture.connection);
+      const retained = JSON.parse(
+        docker(
+          "exec",
+          container,
+          "/usr/local/bin/pipker-agent",
+          ...fixture.args,
+          "--export-connection",
+        ),
+      );
+      assert.equal(
+        createHash("sha256").update(JSON.stringify(retained)).digest("hex"),
+        createHash("sha256")
+          .update(JSON.stringify(fixture.connection))
+          .digest("hex"),
+        "Agent upgrade must preserve the full connection package",
+      );
+      const journal = JSON.parse(
+        docker(
+          "exec",
+          container,
+          "cat",
+          `${fixture.state}/tasks/${upgraded.id}.json`,
+        ),
+      );
+      assert.equal(journal.acknowledged, true);
+      assert.equal(journal.restartDispatched, true);
       await task("system.info");
       console.log(
-        "Verified HTTPS upgrade hash rejection, .previous backup and real systemd Agent restart after successful result ACK",
+        "Verified artifact hash rejection, .previous backup, durable ACK before systemd restart and unchanged Agent credentials",
       );
     } catch (error) {
       if (container) {
@@ -372,7 +386,6 @@ test(
       }
       throw error;
     } finally {
-      upgradeServer.close();
       if (container) docker("rm", "-fv", container);
       if (applicationId)
         await db().application.deleteMany({ where: { id: applicationId } });
@@ -384,8 +397,6 @@ test(
         await db().task.deleteMany({ where: { nodeId: n.id } });
         await db().node.deleteMany({ where: { id: n.id } });
       }
-      if (tokenId)
-        await db().enrollmentToken.deleteMany({ where: { id: tokenId } });
       await db().$disconnect();
     }
   },

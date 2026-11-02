@@ -31,23 +31,23 @@ Web / MCP / Cron
   Linux 节点上的 Go Agent
 ```
 
-Next.js 提供界面与 API，Gateway 维护 Agent 连接，Worker 负责调度。Agent 的安装、注册和任务协议详见 [Agent 文档](agent/README.md)。
+Next.js 提供界面与 API，Gateway 维护 Agent 连接，Worker 负责调度。Agent 的安装、接入和任务协议详见 [Agent 文档](agent/README.md)。
 
 ## 开始部署
 
-准备 Linux 服务器、Docker Compose v2、外部 PostgreSQL 17、独立 Redis 逻辑库及 Web HTTPS 证书。克隆仓库后，在项目目录执行：
+准备 Linux 服务器、Docker Compose v2、外部 PostgreSQL 17、独立 Redis 逻辑库。克隆仓库后，在项目目录执行：
 
 ```sh
 sudo python3 deploy/menu.py
 ```
 
-选择“主控管理 → 启动”生成配置模板，填写 `deploy/config/app.conf` 和 `deploy/config/compose.env`，并将 Web 证书放入 `deploy/certs/web`，再执行启动。启动、重启和更新时会同步配置到 `deploy/data/`。也可下载 Release 中的独立部署包使用同一菜单，完整步骤见[部署指南](docs/DEPLOYMENT.md)。
+选择“主控管理 → 启动”生成配置模板，填写 `deploy/config/ops/app.conf` 和 `deploy/config/ops/compose.env`，再执行启动。默认提供 `127.0.0.1:8080` HTTP 入口，由自己的反向代理提供 HTTPS 后登录，无需在 Ops 配置域名或 Web 证书。Ops 与 Agent 的 config/data 分目录保存。也可下载 Release 中的独立部署包使用同一菜单，完整步骤见[部署指南](docs/DEPLOYMENT.md)。
 
 ## 接入节点
 
 从同一条 [GitHub Release](https://github.com/holic512/PipkerOps/releases) 下载对应架构的 `pipker-agent-<版本>-linux-amd64.tar.gz` 或 `arm64.tar.gz` 和 `SHA256SUMS`，人工上传到目标 Linux 主机的同一目录。使用部署菜单中的“Agent 管理 → 安装／重新安装”，输入本地包路径；工具校验后安装，不自动下载或启动。
 
-仅安装 Agent 的节点需要 Python 3、Linux 和 systemd，无需 Docker 或主控配置。在管理端生成注册令牌，通过可信渠道提供主控 CA 公钥证书，填写 Agent 配置后选择“启动并设为开机自启”，并审批节点接入。菜单同时支持查看、停止和重启 Agent；原始二进制附件供在线升级使用。
+仅安装 Agent 的节点需要 Python 3、Linux 和 systemd。设置 Ops 可达的 Agent 地址并启动后，Agent 自动生成自己的证书与访问 Key；从脚本导出一份接入文件，在 Ops 上传、测试并添加节点。纳管后通过“版本更新”手动选择正式版本，Ops 下载校验后分发 Agent 程序或部署脚本；同机 Agent 可执行 Ops 自更新。
 
 具体命令和配置见 [Agent 安装与协议](agent/README.md)。
 

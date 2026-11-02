@@ -2,8 +2,8 @@
  * @file nodes.tsx
  * @project PipkerOps
  * @module node-monitoring-ui
- * @description 集群概览、注册审批与节点实际指标历史。
- * @logic 统一查询真实 API，未采样显示空态，审批/吊销需确认。
+ * @description 集群概览、Agent 接入文件导入与节点实际指标历史。
+ * @logic 统一查询真实 API，未采样显示空态，导入或停用节点需确认。
  * @dependencies React, SWR, node services
  * @index_tags nodes, overview, metrics, ui
  * @author holic512
@@ -83,10 +83,10 @@ export function Overview() {
               detail: "最近 60 秒收到心跳",
             },
             {
-              label: "待审批",
+              label: "待接入",
               value: o?.pending,
               icon: ShieldCheck,
-              detail: "等待管理员审核接入",
+              detail: "等待导入接入文件",
             },
             {
               label: "离线 / 吊销",
@@ -140,8 +140,8 @@ export function Overview() {
               <Link href="/nodes">节点管理</Link>
             </div>
             <ol className="steps">
-              <li>生成一次性注册令牌，安装 Linux Agent</li>
-              <li>审核节点身份，签发 mTLS 客户端证书</li>
+              <li>安装并启动 Linux Agent，导出接入文件</li>
+              <li>上传接入文件，测试连接后确认添加节点</li>
               <li>接收真实采样，统一管理应用和运维任务</li>
             </ol>
           </section>
@@ -158,7 +158,7 @@ function NodeTable({ nodes }: { nodes: NodeData[] }) {
       retry={() => {}}
       empty={!nodes.length}
       emptyTitle="集群还没有节点"
-      emptyText="在节点管理中生成注册令牌，将第一台 Linux 节点加入集群。"
+      emptyText="通过部署脚本安装并启动 Agent，然后导入接入文件。"
     >
       <DataTable
         headers={[
@@ -180,15 +180,23 @@ function NodeTable({ nodes }: { nodes: NodeData[] }) {
               <small>{n.hostname ?? n.id}</small>
             </td>
             <td>
-              <Status
-                value={
-                  n.status === "APPROVED"
-                    ? online(n)
-                      ? "online"
-                      : "offline"
-                    : n.status
-                }
-              />
+              {!n.agentId ? (
+                <span>待重新接入</span>
+              ) : (
+                <Status
+                  value={
+                    n.status === "APPROVED"
+                      ? online(n)
+                        ? "online"
+                        : "offline"
+                      : n.status
+                  }
+                />
+              )}
+              {n.agentUrl && <small>HTTPS · 已校验证书</small>}
+              {n.connectionError && (
+                <small className="error-text">{n.connectionError}</small>
+              )}
             </td>
             <td>
               <MetricBar value={n.metrics[0]?.cpuPercent} />
@@ -234,18 +242,21 @@ export function Nodes() {
   const q = useQuery<NodeData[]>("nodes.list");
   const op = useOperation(() => void q.mutate());
   const [show, setShow] = useState(false);
-  const [token, setToken] = useState<{
-    token: string;
-    expiresAt: string;
-    enrollUrl: string;
-    gateway: string;
+  const [raw, setRaw] = useState("");
+  const [name, setName] = useState("");
+  const [existing, setExisting] = useState("");
+  const [checked, setChecked] = useState<{
+    agentId: string;
+    hostname: string;
+    agentVersion: string;
   } | null>(null);
   const [filter, setFilter] = useState("");
+  const [fileError, setFileError] = useState("");
   return (
     <>
       <PageTitle
         title="节点管理"
-        description="审批节点接入，查看集群连接与资源状态。"
+        description="导入 Agent 接入文件，查看节点连接和资源状态。"
       >
         <Button variant="outline" onClick={() => void q.mutate()}>
           <RotateCw size={15} />
@@ -253,78 +264,125 @@ export function Nodes() {
         </Button>
         <Button onClick={() => setShow(!show)}>
           <Plus size={16} />
-          注册节点
+          添加节点
         </Button>
       </PageTitle>
       {op.ui}
       {show && (
         <section className="panel form-panel">
-          <h2>生成注册令牌</h2>
+          <h2>导入 Agent 接入文件</h2>
           <p className="muted">
-            令牌只展示一次。将 CA 公钥证书安全复制到节点后运行
-            Agent，随后在这里审批。
+            在 Agent 部署菜单中选择“导出接入文件”。文件包含访问
+            Key，请妥善保管。
           </p>
-          <ResourceForm
-            fields={[
-              {
-                name: "name",
-                label: "令牌用途",
-                required: true,
-                placeholder: "如：新接入的生产节点",
-              },
-              {
-                name: "maxUses",
-                label: "最大使用次数",
-                type: "number",
-                defaultValue: 1,
-                min: 1,
-                max: 50,
-              },
-              {
-                name: "hours",
-                label: "有效小时数",
-                type: "number",
-                defaultValue: 24,
-                min: 1,
-                max: 168,
-              },
-            ]}
-            busy={op.busy}
-            submit="生成令牌"
-            onSubmit={async (data) => {
-              const result = await op.run(
-                () => rpc<typeof token>("nodes.token", data),
-                "注册令牌已生成，请安全保存",
-              );
-              if (result) setToken(result);
-            }}
-          />
-          {token && (
-            <div className="secret-result">
-              <strong>令牌仅展示一次</strong>
-              <pre>{token.token}</pre>
-              <p>有效期至 {date(token.expiresAt)}</p>
-              <code>
-                pipker-agent --enroll-url {token.enrollUrl} --gateway{" "}
-                {token.gateway} --ca /etc/pipkerops/ca.crt --token-file
-                /etc/pipkerops/enrollment-token
-              </code>
-              <p className="muted">
-                把令牌写入权限为 0600 的 enrollment-token 文件。CA 公钥来自主控
-                PKI 目录；不要复制 CA 私钥。
-              </p>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setToken(null);
-                  setShow(false);
-                }}
-              >
-                已保存，隐藏令牌
-              </Button>
-            </div>
+          <label>
+            接入文件（JSON）
+            <input
+              type="file"
+              accept=".json,application/json"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                setChecked(null);
+                setFileError("");
+                if (!file) return;
+                if (file.size > 65536) {
+                  setFileError("接入文件不能超过 64 KiB");
+                  return;
+                }
+                void file
+                  .text()
+                  .then(setRaw)
+                  .catch(() => setFileError("读取文件失败，请重新选择"));
+              }}
+            />
+          </label>
+          <label>
+            或粘贴接入内容
+            <textarea
+              rows={6}
+              autoComplete="off"
+              spellCheck={false}
+              value={raw}
+              onChange={(e) => {
+                setRaw(e.target.value);
+                setChecked(null);
+              }}
+            />
+          </label>
+          <label>
+            节点名称（可选）
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="留空使用 Agent 名称"
+            />
+          </label>
+          <label>
+            关联已有节点
+            <select
+              value={existing}
+              onChange={(e) => setExisting(e.target.value)}
+            >
+              <option value="">创建新节点</option>
+              {q.data?.map((node) => (
+                <option key={node.id} value={node.id}>
+                  {node.name} — 重新接入并保留历史
+                </option>
+              ))}
+            </select>
+          </label>
+          {fileError && (
+            <p role="alert" className="error-text">
+              {fileError}
+            </p>
           )}
+          {checked && (
+            <p role="status">
+              连接验证成功：{checked.hostname} · Agent {checked.agentVersion}
+            </p>
+          )}
+          <div className="inline-actions">
+            <Button
+              variant="outline"
+              disabled={op.busy || !raw.trim()}
+              onClick={async () => {
+                setChecked(null);
+                const result = await op.run(
+                  () =>
+                    rpc<typeof checked>("nodes.test", {
+                      connection: JSON.parse(raw),
+                    }),
+                  "Agent 连接验证成功",
+                );
+                if (result) setChecked(result);
+              }}
+            >
+              测试连接
+            </Button>
+            <Button
+              disabled={op.busy || !checked}
+              onClick={() =>
+                op.ask(
+                  existing ? "重新接入此节点？" : "添加此节点？",
+                  "Ops 将使用导入的凭证连接此 Agent，并允许授权的主机管理操作。",
+                  async () => {
+                    const result = await rpc("nodes.import", {
+                      connection: JSON.parse(raw),
+                      id: existing || undefined,
+                      name: name || undefined,
+                      confirmed: true,
+                    });
+                    setRaw("");
+                    setChecked(null);
+                    setShow(false);
+                    return result;
+                  },
+                )
+              }
+            >
+              {existing ? "确认重新接入" : "确认添加"}
+            </Button>
+          </div>
         </section>
       )}
       <div className="list-toolbar">
@@ -351,64 +409,6 @@ export function Nodes() {
           }
         />
       </QueryState>
-      <div className="section-heading">
-        <h2>接入审批</h2>
-      </div>
-      <section className="panel">
-        <QueryState
-          loading={q.isLoading}
-          retry={() => void q.mutate()}
-          empty={!q.data?.some((n) => n.status === "PENDING")}
-          emptyTitle="没有待审批节点"
-          emptyText="Agent 提交注册请求后，会显示在这里。"
-        >
-          <DataTable headers={["节点", "主机 / 平台", "申请时间", "操作"]}>
-            {q.data
-              ?.filter((n) => n.status === "PENDING")
-              .map((n) => (
-                <tr key={n.id}>
-                  <td>{n.name}</td>
-                  <td>
-                    {n.hostname}
-                    <small>
-                      {n.os} / {n.arch}
-                    </small>
-                  </td>
-                  <td>{date(n.createdAt)}</td>
-                  <td className="inline-actions">
-                    <Button
-                      size="sm"
-                      onClick={() =>
-                        op.ask(
-                          `批准 ${n.name}？`,
-                          "批准后签发客户端证书，允许此节点提交采样和执行任务。请核对节点身份。",
-                          () =>
-                            rpc("nodes.approve", { id: n.id, confirmed: true }),
-                        )
-                      }
-                    >
-                      批准接入
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() =>
-                        op.ask(
-                          `拒绝 ${n.name}？`,
-                          "此节点将无法取得客户端证书。",
-                          () =>
-                            rpc("nodes.reject", { id: n.id, confirmed: true }),
-                        )
-                      }
-                    >
-                      拒绝
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-          </DataTable>
-        </QueryState>
-      </section>
     </>
   );
 }
@@ -455,6 +455,12 @@ export function NodeDetail({ id }: { id: string }) {
         )}
       </PageTitle>
       {op.ui}
+      {node && (
+        <p className="muted">
+          {node.agentUrl ?? "尚未导入新接入信息"}
+          {node.connectionError ? ` · ${node.connectionError}` : ""}
+        </p>
+      )}
       {edit && node && (
         <section className="panel form-panel">
           <h2>节点信息</h2>

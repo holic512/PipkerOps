@@ -1,8 +1,8 @@
 # API 与 MCP 契约
 
-Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{error}`；HTTP状态区分401/403/400/404/409/500。会话写请求必须与 `APP_ORIGIN` 同源。独立API Key使用Bearer。MCP为 `/api/mcp` 标准无状态Streamable HTTP，只接受Bearer；方法中的点替换为下划线，工具参数 `{params:{...}}`。`tools/list`公开每个方法的字段/必填项/枚举/默认值，`tasks_create`按任务类型公开对应payload；与Web调用共用 `src/lib/services/contracts.ts` 输入契约。工具参数中的confirmed没有默认true，不能将工具发现视为操作者授权。
+Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{error}`；HTTP状态区分401/403/400/404/409/500。业务接口只允许 HTTPS；反向代理保留的协议和 Host 动态决定同源地址，HTTP 返回403“请以 HTTPS 访问”。会话写请求必须与当前外部地址同源。独立API Key使用Bearer。MCP为 `/api/mcp` 标准无状态Streamable HTTP，只接受Bearer；方法中的点替换为下划线，工具参数 `{params:{...}}`。`tools/list`公开每个方法的字段/必填项/枚举/默认值，`tasks_create`按任务类型公开对应payload；与Web调用共用 `src/lib/services/contracts.ts` 输入契约。工具参数中的confirmed没有默认true，不能将工具发现视为操作者授权。
 
-所有节点操作在服务端校验角色、scope、节点范围与高危许可。VIEWER不能写；节点审批、Key管理、平台审计需要ADMIN。Key空 `nodeIds`无节点权限，`["*"]`全节点。Key原文仅创建时返回一次。当前Key不能创建其他Key；持久Cron和探针保留创建Key身份并在每次调度与执行前重授权；升级前没有授权创建者的旧探针会停用，重新保存后恢复。API列表至多返回近期记录，不能当作全量数据导出。
+所有节点操作在服务端校验角色、scope、节点范围与高危许可。VIEWER不能写；节点接入管理、Key管理、平台审计需要ADMIN。Key空 `nodeIds`无节点权限，`["*"]`全节点。Key原文仅创建时返回一次。当前Key不能创建其他Key；持久Cron和探针保留创建Key身份并在每次调度与执行前重授权；升级前没有授权创建者的旧探针会停用，重新保存后恢复。API列表至多返回近期记录，不能当作全量数据导出。
 
 `keys.create.scopes`只接受以下已知权限，拼写错误返回400；MCP输入Schema同步公开枚举。已有Key不因该创建校验自动变更；`*`仍受节点范围、高危许可及用户角色限制。
 
@@ -26,8 +26,12 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | nodes.list / nodes.metrics | metrics需要nodeId,hours(1–8760) | nodes:read；<=48h按窗口聚合最多1440点（不返回payload），超过为小时历史+最新原始小时桶去重合并 |
 | nodes.history | nodeId,kind(disk/network/io),hours(1–8760),device? | nodes:read+目标节点；返回设备列表及选中设备；<=48小时原始详情，>48小时UTC小时摘要加原始尾部，每个方向约最多720个时间桶，磁盘为%，网络/IO为B/s；省略设备选字典序首个 |
 | nodes.update | id,name,labels? | nodes:write+目标节点；更新名称和标签 |
-| nodes.token | name,maxUses(1–50),hours(1–168) | nodes:approve；单次返回token/gateway/enrollUrl |
-| nodes.approve / reject / revoke | id,confirmed:true | nodes:approve；审批签发mTLS，吊销断开 |
+| nodes.test | connection:{format:1,protocolVersion:1,agentId,url,caPem,accessKey,deployRoot} | nodes:approve；验证受信HTTPS及远端身份，不存凭证 |
+| nodes.import | connection,id?,name?,confirmed:true | nodes:approve高危；id指定原节点则保留历史，否则新增；访问Key独立保存 |
+| nodes.revoke | id,confirmed:true | nodes:approve高危；停止连接和派发 |
+| nodes.deployment | nodeId,deployRoot,component(agent/ops/scripts),confirmed:true | nodes:approve高危；验证安装标记并登记绝对目录 |
+| updates.releases | 无 | nodes:approve；手动查询有新版更新清单的正式发布 |
+| updates.create | nodeId,component,releaseTag,deployRoot,confirmed:true,idempotencyKey | nodes:approve高危（Ops更新另需admin:write）；返回持久更新父任务，result.executionTaskId关联实际宿主任务 |
 | applications.list / save / delete | save:{id?,name,description?,labels?,businessData?}；delete:{id,confirmed:true} | apps:read/write；应用独立于节点 |
 | deployments.save | id?,applicationId,nodeId,name,type,target,healthUrl?,metadata? | apps:write+目标节点；type为docker/compose/systemd/process/database/nginx；healthUrl另需probes:write并自动建立节点健康探针，null清除 |
 | deployments.delete | id,confirmed:true | apps:write高危+目标节点；解除关联并删除自动健康探针，不删除实际服务 |
@@ -48,7 +52,7 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | notifications.list / read | read:{id} | alerts:read；仅当前用户及授权范围通知 |
 | keys.list / create / revoke | create:{name,scopes,nodeIds,allowDangerous,days,confirmed:true}；revoke:{id,confirmed:true} | keys:write；API Key只能查看/吊销自身 |
 | audit.list | 无 | admin:write；最多200条，Key按节点/自身过滤 |
-| terminal.ticket | nodeId,containerId?,confirmed:true | terminal:write高危，容器另需docker:write；一次性60秒TLS WebSocket URL |
+| terminal.ticket | nodeId,containerId?,confirmed:true | terminal:write高危，容器另需docker:write；一次性60秒的同源WebSocket path |
 
 HTTP探针公网目标必须HTTPS；私网/回环允许HTTP用于内网健康检查。HTTP探针config支持 `method`、`headers`、`body`、`expectedStatus`，mapping形如 `{version:"data.version"}`。缺少映射字段会明确失败。TCP target为 `host:port`。主控和Agent HTTP均不跟随重定向（含同来源307/308），避免自动重放有副作用请求。GET/HEAD/OPTIONS及TCP可重试；其他HTTP方法作为非幂等处理，保存及手工执行均需高危许可和confirmed:true；自动执行保留保存时的授权身份，每次重授权。业务字段来自实际响应，不生成模拟值。
 
@@ -77,7 +81,9 @@ HTTP探针公网目标必须HTTPS；私网/回环允许HTTP用于内网健康检
 | nginx.check / nginx.certificate | check:{}；certificate:{domain,staging?} | sites:read | 否 |
 | nginx.reload / nginx.apply / nginx.remove | reload:{}；apply:{domain,config}；remove:{domain} | sites:write | 是 |
 | nginx.acme / nginx.renew | acme:{domain,email,staging?,timeoutSeconds?}；renew:{domain?,staging?,timeoutSeconds?} | sites:write | 是 |
-| agent.upgrade | url(HTTPS),sha256,restart? | nodes:approve | 是 |
+| agent.upgrade | artifactId,sha256,restart?；制品先经受信HTTPS上传 | nodes:approve | 是 |
+| deployment.update | deployRoot,artifactId,sha256 | nodes:approve | 是 |
+| ops.update | deployRoot,version | admin:write+目标节点 | 是 |
 | probe.run | probeId,type,target,timeoutMs,config,mapping | probes:write | 按配置；服务端重读已保存探针并验证source，不接受冒用probeId |
 | http.request | url(HTTPS),method,headers?,body?,timeoutMs?,mapping?；无nodeId | actions:write | 是 |
 
@@ -87,7 +93,7 @@ Compose部署先暂存并校验YAML，通过后保存配置再运行`up`。语�
 
 ## 终端消息
 
-获取ticket后连接返回的wss URL，浏览器Origin必须匹配APP_ORIGIN。发送 `{type:"terminal.input",data}` 或 `{type:"terminal.resize",cols,rows}`；接收terminal.output(data)、terminal.exit、terminal.error。ticket一次消费；关闭、注销、会话过期、Key吊销或节点吊销会结束会话。终端内容可能含敏感信息，平台审计记录建立/结束，不把交互内容作为任务脚本自动重放。
+获取ticket后将返回的 `path` 与浏览器当前地址组合为同源wss URL，浏览器Origin必须匹配当前外部协议及Host（含端口）。发送 `{type:"terminal.input",data}` 或 `{type:"terminal.resize",cols,rows}`；接收terminal.output(data)、terminal.exit、terminal.error。ticket一次消费；关闭、注销、会话过期、Key吊销或节点吊销会结束会话。终端内容可能含敏感信息，平台审计记录建立/结束，不把交互内容作为任务脚本自动重放。
 
 专项技能位于 `skills/pipkerops-skill/SKILL.md`，可复制到用户技能目录使用；不会自动安装或写入外部客户端配置。
 

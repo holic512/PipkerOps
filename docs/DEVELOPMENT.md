@@ -1,6 +1,6 @@
 # 开发与验证
 
-PipkerOps 由 Next.js Web/API、独立 TLS Gateway、后台 Worker 和 Go Agent 组成。Web、MCP、Cron 复用 `src/lib/services` 的输入契约、授权与持久化任务；PostgreSQL 为任务事实来源，Redis 仅作协调与限流。非幂等任务最多尝试一次，结果不明保留 UNKNOWN，依赖 Agent journal 对账。
+PipkerOps 由 Next.js Web/API、主动连接 Gateway、后台 Worker 和 Go Agent 组成。Web、MCP、Cron 复用 `src/lib/services` 的输入契约、授权与持久化任务；PostgreSQL 为任务事实来源，Redis 仅作协调与限流。非幂等任务最多尝试一次，结果不明保留 UNKNOWN，依赖 Agent journal 对账。
 
 ## 本地启动
 
@@ -12,17 +12,16 @@ mkdir -p config
 cp config/app.conf.example config/app.conf
 ```
 
-编辑 `config/app.conf`，填写数据库、Redis、管理员和 Gateway 配置；本地 `APP_ORIGIN=http://127.0.0.1:3000`。开发明文公网后端仅可显式设置 `ALLOW_INSECURE_BACKENDS=true`，生产不接受此例外。
+编辑 `config/app.conf`，填写数据库、Redis 和管理员配置；不配置外部域名。开发明文公网后端仅可显式设置 `ALLOW_INSECURE_BACKENDS=true`，生产不接受此例外。
 
 ```sh
 npm run db:generate
 npm run db:deploy
 npm run bootstrap
-npm run pki:init
 npm run dev
 ```
 
-另开两个终端运行 `npm run gateway`、`npm run worker`。本地页面为 `http://127.0.0.1:3000`；初始化不会覆盖已有管理员或 PKI。Agent 本地编译和配置见 [Agent 文档](../agent/README.md)。生产配置目录和部署菜单见[部署文档](DEPLOYMENT.md)。
+另开两个终端运行 `npm run gateway`、`npm run worker`。本地页面为 `http://127.0.0.1:3000`；HTTP 页面可打开；登录和业务接口需通过本机 HTTPS 反向代理访问。初始化不会覆盖已有管理员。Agent 本地编译和配置见 [Agent 文档](../agent/README.md)。生产配置目录和部署菜单见[部署文档](DEPLOYMENT.md)。
 
 ## 目录职责
 
@@ -42,7 +41,7 @@ npm run dev
 
 系统备份通过 `backups.list/create/delete` 共享服务和受保护下载路由实现。创建操作进入 `platform.backup` 持久任务，由 Worker 执行；归档与校验记录写入 `BACKUP_DIR`，不把备份二进制写回业务数据库。恢复调用同一存储服务的离线入口，不在运行中的 Web 请求里覆盖数据库。
 
-服务端配置在运行时读取，客户端不得接触数据库凭据。容器入口用 Node 原生 env-file 加载挂载文件，不以 shell 执行配置。PostgreSQL `application_name` 标识 web/gateway/worker，便于确认连接切换；业务 API 与 Agent 协议保持不变。
+服务端配置在运行时读取，客户端不得接触数据库凭据。容器入口用 Node 原生 env-file 加载挂载文件，不以 shell 执行配置。PostgreSQL `application_name` 标识 web/gateway/worker，便于确认连接切换；Agent 接入协议已切换为独立HTTPS服务，Ops导入接入文件后主动连接。
 
 ## 最小验证与构建
 
@@ -80,22 +79,37 @@ sudo env IMAGE=pipkerops:test sh tests/deployment.integration.sh
 
 Agent 双架构 CI 使用真实发布安装包和同目录校验文件，验证安装权限、重装保留配置状态、安装不自动启动、运行中拒绝重装，以及实际 systemd 启动、自启、重启、停止和状态菜单。测试拒绝已有 Agent 安装，使用本地测试证书和身份，不连接真实主控。
 
-## 平台与 Linux 联调
+## 独立部署与页面更新验收
 
-以下测试会创建真实资源，需专用开发环境，不能直接指向生产节点。先启动 Web、Gateway、Worker，编译 Agent，生成开发验收证书：
+`npm run build` 后执行下列测试。测试自行创建临时配置、PostgreSQL、Redis、Linux Agent 和真实 HTTPS 代理，不读取已有部署配置。发布服务响应由本地文件夹具提供；制品打包、校验、分发、持久任务、Python 脚本替换和数据库操作均实际执行。
 
 ```sh
+# Linux runner 使用 sudo，才能读取容器创建的 0700 私有状态目录
+sudo env PATH="$PATH" MANAGED_AGENT_IMAGE=python:3.12-slim \
+  node --import tsx --test tests/managed-deployment.integration.ts
+```
+
+覆盖 HTTP 登录拒绝、带端口 HTTPS 代理、独立 Agent 接入、错误 Key、任务执行、同源终端、节点凭证备份、断线恢复，以及摘要失败/本地文件冲突时不替换、成功更新脚本后配置和身份不变。同版本 Agent 更新直接报告无需更新，不生成重启任务。真实 GHCR Ops 版本升级仍需部署环境验收，不能用此发布响应夹具证明公网下载和镜像服务可达。
+
+独立的 `npm run test:agent-upgrade` 使用 `tests/fixtures/Dockerfile.systemd` 构建的独立 systemd 镜像，构建两份不同版本号的当前 Agent，验证 HTTPS 上传、ACK 前不重启、ACK 后真实 systemd 重启与新版本心跳、身份保持和重复任务去重。该测试不依赖 Ops 或已有业务数据库，结束清理自身容器。
+
+## 平台与 Linux 联调
+
+以下测试会创建真实资源，需专用开发环境，不能直接指向生产节点。先启动 Web、Gateway、Worker，编译 Agent。HTTPS Webhook 夹具需要单独生成开发验收证书：
+
+```sh
+npm run pki:init
 npx tsx scripts/dev-linux-pki.ts
 NODE_EXTRA_CA_CERTS="$PWD/.data/pki/ca.crt" npm run worker
 AGENT_BINARY=/absolute/path/pipker-agent npm run test:integration
 ```
 
-Worker 使用开发 CA 信任本地 HTTPS 夹具。证书生成拒绝覆盖已有文件；常规生产 PKI 不使用开发例外。
+Worker 使用开发 CA 信任本地 HTTPS 夹具。证书生成拒绝覆盖已有文件；这些证书仅服务于开发 HTTPS 夹具；生产 Agent 自行生成和维护身份，Ops 不签发 Agent 证书。
 
 ```sh
 docker build -f tests/fixtures/Dockerfile.agent -t pipkerops-agent-fixture:local .
 docker build -f tests/fixtures/Dockerfile.systemd -t pipkerops-systemd-fixture:local .
-GATEWAY_HOST=0.0.0.0 GATEWAY_PORT=9543 ENROLL_PORT=9544 GATEWAY_TLS_CERT=.data/pki/server-linux.crt GATEWAY_TLS_KEY=.data/pki/server-linux.key npm run gateway
+npm run gateway
 ```
 
 另开终端，指定 Linux 架构 Agent：
@@ -109,14 +123,14 @@ npm run test:alerts
 
 | 测试 | 实际验证及前置条件 |
 | --- | --- |
-| `test:integration` | 真实 Agent 注册审批、mTLS、任务、探针、证书轮换、MCP SDK 与权限撤销 |
+| `test:integration` | 真实 Agent 独立HTTPS接入、任务、探针、MCP SDK 与权限撤销 |
 | `test:linux` | 独立 Docker-in-Docker 的容器/Compose/PTY/Nginx/拓扑；需要 privileged 夹具，不挂宿主 Docker socket |
 | `test:systemd` | 私有 cgroup 的独立 systemd/UFW/APT/升级重启；需要 privileged 及可达软件源 |
 | `test:connectivity` | 两个独立节点双向 HTTP/TCP、故障阈值与恢复 |
 | `test:alerts` | 本地真实 HTTPS Webhook、去重、恢复、缺采样和最新指标；Worker 需信任夹具 CA |
 | `test:schedules` | 设置 `SCHEDULE_TEST_NODE_ID` 为专用授权节点，验证计划任务、过滤、权限和删除保留 |
 | `test:recovery` | 停止自己启动的 Worker 后设置 `RECOVERY_WORKER_EXCLUSIVE=true`，测试自身子进程崩溃和不重复副作用 |
-| `test:capacity` | 设置 `CAPACITY_NODES=10` 或50，要求充足资源及9543/9544 Gateway；短时结果不代表长期 SLA |
+| `test:capacity` | 设置 `CAPACITY_NODES=10` 或50，要求充足资源与已启动的 Gateway；短时结果不代表长期 SLA |
 
 集成测试按自身 ID 清理资源并保留审计。软件源、域名或外部网络失败应报告真实失败，不能用模拟结果替代。不要停止未知进程；恢复测试结束后重新启动自己的开发 Worker。
 
@@ -124,7 +138,7 @@ npm run test:alerts
 
 工作流为 `.github/workflows/ci.yml`。每次 master 推送在检查及双架构验收成功后发布正式 Release；一次推送包含多个提交时发布目标提交。PR 和手动触发只执行检查。
 
-Ops 版本在 `package.json`，Agent 版本在 `agent/VERSION`，Skill 版本在 `skills/VERSION`。提交前递增受影响组件的版本；CI 比较推送前后的组件源码，版本未递增时失败。Agent Markdown 文档修改不要求 Agent 升版，源码、安装文件和打包脚本变化仍需升版。Release 标题使用 `Ops v<版本> · Agent v<版本> · Skill v<版本>`；标签 `release-<运行编号>-<提交短哈希>` 独立于组件版本，运行编号不是组件版本，同一次运行重试复用标签。
+Ops 版本在 `package.json`，Agent 版本在 `agent/VERSION`，部署脚本版本在 `deploy/VERSION`，Skill 版本在 `skills/VERSION`。提交前递增受影响组件的版本；CI 比较推送前后的组件源码，版本未递增时失败。Agent Markdown 文档修改不要求 Agent 升版，源码、安装文件和打包脚本变化仍需升版。Release 标题使用 `Ops v<版本> · Agent v<版本> · Scripts v<版本> · Skill v<版本>`；标签 `release-<运行编号>-<提交短哈希>` 独立于组件版本，运行编号不是组件版本，同一次运行重试复用标签。
 
 Release 包含带各自版本的双架构 Agent 二进制和安装包、部署包、PipkerOpsSkill 包及 `SHA256SUMS`。附件直接显示实际文件名，正文记录提交信息、组件版本和各附件用途。Agent 安装包和同一 Release 的校验文件需人工上传到目标节点，再通过统一菜单安装；部署包默认拉取对应 Ops 版本镜像。GHCR 发布 Ops 版本、`edge`、`latest` 和提交 SHA 标签。双架构镜像经过原生验收后直接发布，不重新构建。标题及附件展示调整仅应用于后续发布，历史 Release 保持原状。
 

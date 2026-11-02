@@ -79,7 +79,7 @@ export function QueryState({
 }
 const states: Record<string, [string, string]> = {
   APPROVED: ["已批准", "good"],
-  PENDING: ["待审批", "warn"],
+  PENDING: ["待重新接入", "warn"],
   REJECTED: ["已拒绝", "bad"],
   REVOKED: ["已吊销", "bad"],
   HEALTHY: ["正常", "good"],

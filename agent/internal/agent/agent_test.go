@@ -2,17 +2,8 @@ package agent
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,17 +12,16 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestConfigRejectsPlaintextAndUserinfo(t *testing.T) {
-	valid := Config{Gateway: "wss://ops.example.invalid/agent", EnrollURL: "https://ops.example.invalid", Name: "test", StateDir: t.TempDir()}
+	valid := Config{Listen: "127.0.0.1:9443", PublicURL: "https://agent.example.invalid:9443", Name: "test", StateDir: t.TempDir(), DeployRoot: t.TempDir()}
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, mutate := range []func(*Config){func(c *Config) { c.Gateway = "ws://ops.example.invalid" }, func(c *Config) { c.EnrollURL = "http://ops.example.invalid" }, func(c *Config) { c.Gateway = "wss://secret@ops.example.invalid" }, func(c *Config) { c.StateDir = "relative" }} {
+	for _, mutate := range []func(*Config){func(c *Config) { c.PublicURL = "http://agent.example.invalid" }, func(c *Config) { c.PublicURL = "https://agent.example.invalid/path" }, func(c *Config) { c.PublicURL = "https://secret@agent.example.invalid" }, func(c *Config) { c.Listen = "127.0.0.1:0" }, func(c *Config) { c.DeployRoot = "relative" }, func(c *Config) { c.StateDir = "relative" }} {
 		c := valid
 		mutate(&c)
 		if c.Validate() == nil {
@@ -264,133 +254,5 @@ func TestUnsupportedLinuxOperationReturnsError(t *testing.T) {
 	_, _, err := (&Executor{StateDir: t.TempDir()}).Execute(context.Background(), Task{Type: "systemd.list", Payload: json.RawMessage(`{}`)}, nil)
 	if err == nil || !strings.Contains(err.Error(), "requires Linux") {
 		t.Fatalf("expected unsupported: %v", err)
-	}
-}
-
-func TestEnrollmentUsesTrustedTLSAndPersistsIdentity(t *testing.T) {
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test-ca"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
-	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ca, err = x509.ParseCertificate(caDER)
-	if err != nil {
-		t.Fatal(err)
-	}
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
-	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverCert := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, NotBefore: ca.NotBefore, NotAfter: ca.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	serverDER, err := x509.CreateCertificate(rand.Reader, serverCert, ca, &serverKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverKeyDER, err := x509.MarshalPKCS8PrivateKey(serverKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pair, err := tls.X509KeyPair(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: serverKeyDER}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var requests atomic.Int32
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		if r.Method != "POST" || r.URL.Path != "/enroll" {
-			t.Error("unexpected enrollment route")
-		}
-		var input map[string]string
-		if e := json.NewDecoder(r.Body).Decode(&input); e != nil {
-			t.Error(e)
-			w.WriteHeader(400)
-			return
-		}
-		if input["token"] != "test-token-never-store" {
-			w.WriteHeader(403)
-			return
-		}
-		csrBlock, _ := pem.Decode([]byte(input["csrPem"]))
-		if csrBlock == nil {
-			w.WriteHeader(400)
-			return
-		}
-		csr, e := x509.ParseCertificateRequest(csrBlock.Bytes)
-		if e != nil || csr.CheckSignature() != nil {
-			w.WriteHeader(400)
-			return
-		}
-		publicKey, ok := csr.PublicKey.(*rsa.PublicKey)
-		if !ok || publicKey.N.BitLen() != 2048 {
-			t.Error("Agent CSR must use RSA2048")
-			w.WriteHeader(400)
-			return
-		}
-		cert := &x509.Certificate{SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "node-test"}, NotBefore: ca.NotBefore, NotAfter: ca.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
-		der, e := x509.CreateCertificate(rand.Reader, cert, ca, csr.PublicKey, caKey)
-		if e != nil {
-			t.Error(e)
-			w.WriteHeader(500)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(identity{ID: "node-test", Status: "APPROVED", CertificatePEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), CAPEM: string(caPEM)})
-	}))
-	server.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}
-	server.StartTLS()
-	defer server.Close()
-	dir := t.TempDir()
-	caPath := filepath.Join(dir, "trusted.pem")
-	if err = os.WriteFile(caPath, caPEM, 0600); err != nil {
-		t.Fatal(err)
-	}
-	c := Config{Gateway: "wss://localhost:9443/agent", EnrollURL: server.URL, Token: "test-token-never-store", Name: "test-node", StateDir: filepath.Join(dir, "state"), CAFile: caPath}
-	tokenPath := filepath.Join(dir, "enrollment.token")
-	if err = os.WriteFile(tokenPath, []byte(c.Token+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	c.Token = ""
-	c.TokenFile = tokenPath
-	id, tlsConfig, err := enroll(context.Background(), c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id.ID != "node-test" || tlsConfig.InsecureSkipVerify || len(tlsConfig.Certificates) != 1 {
-		t.Fatal("invalid issued identity")
-	}
-	c.Token = ""
-	if err = os.Remove(tokenPath); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err = enroll(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
-	if requests.Load() != 1 {
-		t.Fatal("saved identity caused reenrollment")
-	}
-	for _, file := range []string{"agent.key", "agent.csr", "identity.json", "ca.pem"} {
-		data, e := os.ReadFile(filepath.Join(c.StateDir, file))
-		if e != nil {
-			t.Fatal(e)
-		}
-		if strings.Contains(string(data), "test-token-never-store") {
-			t.Fatalf("token leaked to %s", file)
-		}
-		info, e := os.Stat(filepath.Join(c.StateDir, file))
-		if e != nil || info.Mode().Perm() != 0600 {
-			t.Fatalf("private file mode: %v %v", info, e)
-		}
-	}
-	// Removing trust on a fresh state must fail rather than bypassing verification.
-	c.StateDir = filepath.Join(dir, "untrusted")
-	c.CAFile = ""
-	c.TokenFile = ""
-	c.Token = "test-token-never-store"
-	if _, _, err = enroll(context.Background(), c); err == nil {
-		t.Fatal("untrusted TLS was accepted")
 	}
 }

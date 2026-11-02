@@ -1,0 +1,13 @@
+# 复制到用户自己维护的 Nginx HTTPS 站点中。
+# listen/域名/证书由用户的 Nginx、Caddy 或 1Panel 配置，Ops 不处理它们。
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $http_host;
+    # 必须覆盖客户端传入的头，而不是追加。
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_buffering off;
+}
