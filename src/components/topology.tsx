@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module topology-ui
  * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 准确身份关联资源；选择同步详情，受控交互锁定保留刷新状态且禁止手工连线；矩阵固定列序并适配画布。
+ * @logic 准确身份关联资源；选择与详情弹窗分离，受控交互锁定保留刷新状态且禁止手工连线；矩阵固定列序并适配画布。
  * @dependencies React Flow, RPC, shared UI
  * @index_tags topology, connectivity, ui
  * @author holic512
@@ -39,6 +39,7 @@ import {
   Status,
 } from "./shared";
 import { Button } from "./ui/button";
+import { BusinessDialog } from "./ui/dialog";
 import { rpc } from "@/lib/client";
 import { topologyLinks } from "@/lib/topology-links";
 type GraphData = {
@@ -64,6 +65,7 @@ export function Topology() {
   const q = useQuery<GraphData>("topology");
   const [tab, setTab] = useState("graph");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [show, setShow] = useState(false);
   const [interactive, setInteractive] = useState(true);
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
@@ -71,7 +73,7 @@ export function Topology() {
   const [layout, setLayout] = useState<
     Record<string, Pick<Node, "position" | "measured" | "selected">>
   >({});
-  const op = useOperation(() => void q.mutate());
+  const op = useOperation(() => void q.mutate(), show);
   const graph = useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
@@ -286,16 +288,30 @@ export function Topology() {
           <RotateCw size={15} />
           刷新
         </Button>
-        <Button onClick={() => setShow(!show)}>
+        <Button
+          onClick={() => {
+            op.clear();
+            setShow(true);
+          }}
+        >
           <Plus size={16} />
           添加依赖
         </Button>
       </PageTitle>
       {op.ui}
       {show && (
-        <section className="panel form-panel">
-          <h2>应用依赖</h2>
+        <BusinessDialog
+          title="应用依赖"
+          onClose={() => {
+            setShow(false);
+            op.clear();
+          }}
+          operation={op}
+          formId="dependency-form"
+        >
           <ResourceForm
+            id="dependency-form"
+            hideSubmit
             busy={op.busy}
             fields={[
               {
@@ -325,9 +341,12 @@ export function Topology() {
                 required: true,
               },
             ]}
-            onSubmit={(d) => op.run(() => rpc("dependencies.save", d))}
+            onSubmit={async (d) => {
+              const result = await op.run(() => rpc("dependencies.save", d));
+              if (result) setShow(false);
+            }}
           />
-        </section>
+        </BusinessDialog>
       )}
       <div className="inner-tabs">
         <button
@@ -352,7 +371,26 @@ export function Topology() {
         emptyText="接入节点、创建应用或关联部署实例后，拓扑将自动生成。"
       >
         {tab === "graph" ? (
-          <div className="topology-layout">
+          <div
+            className="topology-layout"
+            onKeyDownCapture={(event) => {
+              if (
+                (event.key === "Enter" || event.key === " ") &&
+                event.target instanceof HTMLElement &&
+                event.target.closest(".react-flow__node")
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                const id = event.target
+                  .closest(".react-flow__node")
+                  ?.getAttribute("data-id");
+                if (id) {
+                  setSelectedId(id);
+                  setDetailsOpen(true);
+                }
+              }
+            }}
+          >
             <section className="topology-canvas" ref={canvasRef}>
               <ReactFlow
                 onInit={setFlow}
@@ -392,7 +430,10 @@ export function Topology() {
                 nodesDraggable={interactive}
                 elementsSelectable={interactive}
                 nodesConnectable={false}
-                onNodeClick={(_, node) => setSelectedId(node.id)}
+                onNodeClick={(_, node) => {
+                  setSelectedId(node.id);
+                  setDetailsOpen(true);
+                }}
                 onPaneClick={() => setSelectedId(null)}
                 aria-label="应用与节点拓扑"
                 ariaLabelConfig={{
@@ -462,8 +503,12 @@ export function Topology() {
                 </div>
               </section>
             )}
-            {selected && (
-              <aside className="panel graph-details">
+            {selected && detailsOpen && (
+              <BusinessDialog
+                title={String(selected.data.label)}
+                readOnly
+                onClose={() => setDetailsOpen(false)}
+              >
                 <h2>{String(selected.data.kind)}</h2>
                 <strong>{String(selected.data.label)}</strong>
                 <Status value={String(selected.data.state ?? "UNKNOWN")} />
@@ -479,9 +524,9 @@ export function Topology() {
                   </Link>
                 )}
                 <p className="muted">
-                  拖动或缩放画布；点击或按 Enter/空格查看详情，Esc 取消选择。
+                  关闭弹窗后可继续拖动或缩放画布；点击或按 Enter/空格查看详情。
                 </p>
-              </aside>
+              </BusinessDialog>
             )}
           </div>
         ) : (

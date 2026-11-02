@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module updates-ui
  * @description 版本发现、部署目录登记与 Ops/Agent/脚本更新入口。
- * @logic 手动检查发布；更新前展示目标和目录并确认，持久任务页跟踪最终结果。
+ * @logic 手动检查发布；更新前展示目标和目录并确认，结果弹窗提供持久任务入口，关闭后更新继续执行。
  * @dependencies React, node/update RPC, shared forms
  * @index_tags updates, deployment, releases, ui
  * @author holic512
@@ -14,6 +14,7 @@ import { useState } from "react";
 import { rpc, type NodeData } from "@/lib/client";
 import { useOperation, useQuery, PageTitle, QueryState } from "./shared";
 import { Button } from "./ui/button";
+import { BusinessDialog } from "./ui/dialog";
 type Release = { tag: string; name: string };
 export function Updates() {
   const nodes = useQuery<NodeData[]>("nodes.list");
@@ -26,6 +27,7 @@ export function Updates() {
   const [root, setRoot] = useState("");
   const [registered, setRegistered] = useState(false);
   const [taskId, setTaskId] = useState("");
+  const [resultOpen, setResultOpen] = useState(false);
   const node = nodes.data?.find((n) => n.id === nodeId);
   const targetRoot = root || node?.deployRoot || "";
   return (
@@ -33,8 +35,24 @@ export function Updates() {
       <PageTitle
         title="版本更新"
         description="手动选择发布版本，更新应用和部署脚本。"
-      />
+      >
+        {taskId && (
+          <Button variant="outline" onClick={() => setResultOpen(true)}>
+            查看最近结果
+          </Button>
+        )}
+      </PageTitle>
       {op.ui}
+      {taskId && resultOpen && (
+        <BusinessDialog
+          title="更新任务已创建"
+          readOnly
+          onClose={() => setResultOpen(false)}
+        >
+          <p role="status">任务在后台继续执行。</p>
+          <Link href={`/tasks/${taskId}`}>查看进度与结果</Link>
+        </BusinessDialog>
+      )}
       {user.data?.role !== "ADMIN" ? (
         <p>版本更新需要管理员权限。</p>
       ) : (
@@ -160,6 +178,7 @@ export function Updates() {
                         idempotencyKey: crypto.randomUUID(),
                       });
                       setTaskId(task.id);
+                      setResultOpen(true);
                       return task;
                     },
                   )
@@ -175,14 +194,6 @@ export function Updates() {
             )}
             {node && !node.connected && (
               <p className="error-text">节点当前离线，恢复连接后再更新。</p>
-            )}
-            {taskId && (
-              <p role="status">
-                更新任务已创建：
-                <Link className="entity-link" href={`/tasks/${taskId}`}>
-                  查看进度与结果
-                </Link>
-              </p>
             )}
           </section>
         </QueryState>

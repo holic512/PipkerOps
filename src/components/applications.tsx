@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module application-and-probe-ui
  * @description 应用独立建模、多实例关联和多源探针的创建、执行与历史查询。
- * @logic 表单调用统一业务API，部署关联节点，探针记录真实延迟与成功率；实例入口携带准确节点和目标进入共用运维页面。
+ * @logic 应用和探针使用弹窗创建及管理，核对保留输入；实例入口携带准确节点和目标，历史查询不改变列表布局。
  * @dependencies React, shared UI, RPC
  * @index_tags apps, deployments, probes, ui
  * @author holic512
@@ -39,6 +39,7 @@ import {
   JsonView,
 } from "./shared";
 import { Button } from "./ui/button";
+import { BusinessDialog } from "./ui/dialog";
 export function Applications() {
   const q = useQuery<AppData[]>("applications.list");
   const nodes = useQuery<NodeData[]>("nodes.list");
@@ -48,7 +49,7 @@ export function Applications() {
   const [view, setView] = useState<"cards" | "table">("cards");
   const op = useOperation(() => {
     void q.mutate();
-  });
+  }, show || !!selectedId);
   const [tab, setTab] = useState("instances");
   return (
     <>
@@ -64,7 +65,8 @@ export function Applications() {
         </Button>
         <Button
           onClick={() => {
-            setShow(!show);
+            op.clear();
+            setShow(true);
             setSelectedId(null);
           }}
         >
@@ -74,9 +76,18 @@ export function Applications() {
       </PageTitle>
       {op.ui}
       {show && (
-        <section className="panel form-panel">
-          <h2>创建应用</h2>
+        <BusinessDialog
+          title="创建应用"
+          onClose={() => {
+            setShow(false);
+            op.clear();
+          }}
+          operation={op}
+          formId="create-app"
+        >
           <ResourceForm
+            id="create-app"
+            hideSubmit
             busy={op.busy}
             fields={[
               {
@@ -97,7 +108,7 @@ export function Applications() {
               if (result) setShow(false);
             }}
           />
-        </section>
+        </BusinessDialog>
       )}
       <div className="list-toolbar">
         <span className="muted">
@@ -142,7 +153,11 @@ export function Applications() {
               <button
                 key={a.id}
                 className={`app-card ${selected?.id === a.id ? "app-selected" : ""}`}
-                onClick={() => setSelectedId(a.id)}
+                onClick={() => {
+                  op.clear();
+                  setTab("instances");
+                  setSelectedId(a.id);
+                }}
               >
                 <div className="app-card-header">
                   <span className="app-symbol">
@@ -174,7 +189,11 @@ export function Applications() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => setSelectedId(a.id)}
+                    onClick={() => {
+                      op.clear();
+                      setTab("instances");
+                      setSelectedId(a.id);
+                    }}
                   >
                     管理实例
                   </Button>
@@ -185,9 +204,24 @@ export function Applications() {
         )}
       </QueryState>
       {selected && (
-        <section className="panel detail-panel">
+        <BusinessDialog
+          title={selected.name}
+          size="detail"
+          onClose={() => {
+            setSelectedId(null);
+            setTab("instances");
+            op.clear();
+          }}
+          operation={op}
+          formId={
+            tab === "associate"
+              ? "associate-instance"
+              : tab === "edit"
+                ? "edit-app"
+                : undefined
+          }
+        >
           <div className="panel-header">
-            <h2>{selected.name}</h2>
             <Button
               variant="destructive"
               size="sm"
@@ -324,6 +358,8 @@ export function Applications() {
           ) : tab === "associate" ? (
             <div className="form-panel">
               <ResourceForm
+                id="associate-instance"
+                hideSubmit
                 busy={op.busy}
                 fields={[
                   { name: "name", label: "实例名称", required: true },
@@ -373,6 +409,8 @@ export function Applications() {
           ) : tab === "edit" ? (
             <div className="form-panel">
               <ResourceForm
+                id="edit-app"
+                hideSubmit
                 key={selected.id}
                 busy={op.busy}
                 fields={[
@@ -432,7 +470,7 @@ export function Applications() {
                 ))}
             </div>
           )}
-        </section>
+        </BusinessDialog>
       )}
     </>
   );
@@ -453,7 +491,7 @@ export function Probes() {
     { id: selected },
     selected ? 15000 : 0,
   );
-  const op = useOperation(() => void q.mutate());
+  const op = useOperation(() => void q.mutate(), show || !!selected);
   return (
     <>
       <PageTitle
@@ -467,7 +505,8 @@ export function Probes() {
         <Button
           onClick={() => {
             setEditing(null);
-            setShow(!show);
+            op.clear();
+            setShow(true);
           }}
         >
           <Plus size={16} />
@@ -476,9 +515,19 @@ export function Probes() {
       </PageTitle>
       {op.ui}
       {show && (
-        <section className="panel form-panel">
-          <h2>{editing ? "编辑探针" : "创建探针"}</h2>
+        <BusinessDialog
+          title={editing ? "编辑探针" : "创建探针"}
+          onClose={() => {
+            setShow(false);
+            setEditing(null);
+            op.clear();
+          }}
+          operation={op}
+          formId="probe-form"
+        >
           <ResourceForm
+            id="probe-form"
+            hideSubmit
             key={editing?.id ?? "new"}
             busy={op.busy}
             fields={[
@@ -595,7 +644,7 @@ export function Probes() {
               else await op.run(save);
             }}
           />
-        </section>
+        </BusinessDialog>
       )}
       <QueryState
         error={q.error}
@@ -621,7 +670,10 @@ export function Probes() {
               <td>
                 <button
                   className="text-button entity-link"
-                  onClick={() => setSelected(p.id)}
+                  onClick={() => {
+                    op.clear();
+                    setSelected(p.id);
+                  }}
                 >
                   {p.name}
                 </button>
@@ -645,6 +697,7 @@ export function Probes() {
                   size="sm"
                   variant="ghost"
                   onClick={() => {
+                    op.clear();
                     setEditing(p);
                     setShow(true);
                   }}
@@ -679,7 +732,10 @@ export function Probes() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setSelected(p.id)}
+                  onClick={() => {
+                    op.clear();
+                    setSelected(p.id);
+                  }}
                 >
                   历史
                 </Button>
@@ -701,9 +757,16 @@ export function Probes() {
         </DataTable>
       </QueryState>
       {selected && (
-        <section className="panel detail-panel">
+        <BusinessDialog
+          title={`探测历史 · ${q.data?.find((p) => p.id === selected)?.name ?? ""}`}
+          size="detail"
+          readOnly
+          onClose={() => {
+            setSelected("");
+            op.clear();
+          }}
+        >
           <div className="panel-header">
-            <h2>探测历史 · {q.data?.find((p) => p.id === selected)?.name}</h2>
             <div className="inline-actions">
               <span>
                 成功率{" "}
@@ -740,7 +803,7 @@ export function Probes() {
               ))}
             </DataTable>
           </QueryState>
-        </section>
+        </BusinessDialog>
       )}
     </>
   );

@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module node-monitoring-ui
  * @description 集群概览、Agent 接入文件导入与节点实际指标历史。
- * @logic 统一查询真实 API，未采样显示空态，导入或停用节点需确认。
+ * @logic 统一查询真实 API；节点接入在弹窗中测试与核对，临时凭证退出即清理；未采样显示空态。
  * @dependencies React, SWR, node services
  * @index_tags nodes, overview, metrics, ui
  * @author holic512
@@ -33,6 +33,7 @@ import {
   JsonView,
 } from "./shared";
 import { Button } from "./ui/button";
+import { BusinessDialog } from "./ui/dialog";
 import { ResourceHistory } from "./resource-history";
 const online = (node: NodeData) => node.connected;
 export function Overview() {
@@ -240,7 +241,6 @@ function MetricBar({ value }: { value?: number }) {
 }
 export function Nodes() {
   const q = useQuery<NodeData[]>("nodes.list");
-  const op = useOperation(() => void q.mutate());
   const [show, setShow] = useState(false);
   const [raw, setRaw] = useState("");
   const [name, setName] = useState("");
@@ -252,6 +252,16 @@ export function Nodes() {
   } | null>(null);
   const [filter, setFilter] = useState("");
   const [fileError, setFileError] = useState("");
+  const op = useOperation(() => void q.mutate(), show);
+  const closeImport = () => {
+    setShow(false);
+    setRaw("");
+    setName("");
+    setExisting("");
+    setChecked(null);
+    setFileError("");
+    op.clear();
+  };
   return (
     <>
       <PageTitle
@@ -262,128 +272,146 @@ export function Nodes() {
           <RotateCw size={15} />
           刷新
         </Button>
-        <Button onClick={() => setShow(!show)}>
+        <Button
+          onClick={() => {
+            op.clear();
+            setShow(true);
+          }}
+        >
           <Plus size={16} />
           添加节点
         </Button>
       </PageTitle>
       {op.ui}
       {show && (
-        <section className="panel form-panel">
-          <h2>导入 Agent 接入文件</h2>
-          <p className="muted">
-            在 Agent 部署菜单中选择“导出接入文件”。文件包含访问
-            Key，请妥善保管。
-          </p>
-          <label>
-            接入文件（JSON）
-            <input
-              type="file"
-              accept=".json,application/json"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                setChecked(null);
-                setFileError("");
-                if (!file) return;
-                if (file.size > 65536) {
-                  setFileError("接入文件不能超过 64 KiB");
-                  return;
+        <BusinessDialog
+          title="导入 Agent 接入文件"
+          description="在 Agent 部署菜单中选择“导出接入文件”。文件包含访问 Key，请妥善保管。"
+          onClose={closeImport}
+          operation={op}
+          footer={
+            <>
+              <Button
+                variant="outline"
+                disabled={op.busy}
+                onClick={closeImport}
+              >
+                取消
+              </Button>
+              <Button
+                variant="outline"
+                disabled={op.busy || !raw.trim()}
+                onClick={async () => {
+                  setChecked(null);
+                  const result = await op.run(
+                    () =>
+                      rpc<typeof checked>("nodes.test", {
+                        connection: JSON.parse(raw),
+                      }),
+                    "Agent 连接验证成功",
+                  );
+                  if (result) setChecked(result);
+                }}
+              >
+                测试连接
+              </Button>
+              <Button
+                disabled={op.busy || !checked}
+                onClick={() =>
+                  op.ask(
+                    existing ? "重新接入此节点？" : "添加此节点？",
+                    "Ops 将使用导入的凭证连接此 Agent，并允许授权的主机管理操作。",
+                    async () => {
+                      const result = await rpc("nodes.import", {
+                        connection: JSON.parse(raw),
+                        id: existing || undefined,
+                        name: name || undefined,
+                        confirmed: true,
+                      });
+                      closeImport();
+                      return result;
+                    },
+                  )
                 }
-                void file
-                  .text()
-                  .then(setRaw)
-                  .catch(() => setFileError("读取文件失败，请重新选择"));
-              }}
-            />
-          </label>
-          <label>
-            或粘贴接入内容
-            <textarea
-              rows={6}
-              autoComplete="off"
-              spellCheck={false}
-              value={raw}
-              onChange={(e) => {
-                setRaw(e.target.value);
-                setChecked(null);
-              }}
-            />
-          </label>
-          <label>
-            节点名称（可选）
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="留空使用 Agent 名称"
-            />
-          </label>
-          <label>
-            关联已有节点
-            <select
-              value={existing}
-              onChange={(e) => setExisting(e.target.value)}
-            >
-              <option value="">创建新节点</option>
-              {q.data?.map((node) => (
-                <option key={node.id} value={node.id}>
-                  {node.name} — 重新接入并保留历史
-                </option>
-              ))}
-            </select>
-          </label>
-          {fileError && (
-            <p role="alert" className="error-text">
-              {fileError}
-            </p>
-          )}
-          {checked && (
-            <p role="status">
-              连接验证成功：{checked.hostname} · Agent {checked.agentVersion}
-            </p>
-          )}
-          <div className="inline-actions">
-            <Button
-              variant="outline"
-              disabled={op.busy || !raw.trim()}
-              onClick={async () => {
-                setChecked(null);
-                const result = await op.run(
-                  () =>
-                    rpc<typeof checked>("nodes.test", {
-                      connection: JSON.parse(raw),
-                    }),
-                  "Agent 连接验证成功",
-                );
-                if (result) setChecked(result);
-              }}
-            >
-              测试连接
-            </Button>
-            <Button
-              disabled={op.busy || !checked}
-              onClick={() =>
-                op.ask(
-                  existing ? "重新接入此节点？" : "添加此节点？",
-                  "Ops 将使用导入的凭证连接此 Agent，并允许授权的主机管理操作。",
-                  async () => {
-                    const result = await rpc("nodes.import", {
-                      connection: JSON.parse(raw),
-                      id: existing || undefined,
-                      name: name || undefined,
-                      confirmed: true,
-                    });
-                    setRaw("");
-                    setChecked(null);
-                    setShow(false);
-                    return result;
-                  },
-                )
-              }
-            >
-              {existing ? "确认重新接入" : "确认添加"}
-            </Button>
-          </div>
-        </section>
+              >
+                {existing ? "确认重新接入" : "确认添加"}
+              </Button>
+            </>
+          }
+        >
+          <fieldset className="dialog-fields" disabled={op.busy}>
+            <label>
+              接入文件（JSON）
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  setChecked(null);
+                  setFileError("");
+                  setRaw("");
+                  op.clear();
+                  if (!file) return;
+                  if (file.size > 65536) {
+                    setFileError("接入文件不能超过 64 KiB");
+                    return;
+                  }
+                  void file
+                    .text()
+                    .then(setRaw)
+                    .catch(() => setFileError("读取文件失败，请重新选择"));
+                }}
+              />
+            </label>
+            <label>
+              或粘贴接入内容
+              <textarea
+                rows={6}
+                autoComplete="off"
+                spellCheck={false}
+                value={raw}
+                onChange={(e) => {
+                  setRaw(e.target.value);
+                  setChecked(null);
+                  setFileError("");
+                  op.clear();
+                }}
+              />
+            </label>
+            <label>
+              节点名称（可选）
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="留空使用 Agent 名称"
+              />
+            </label>
+            <label>
+              关联已有节点
+              <select
+                value={existing}
+                onChange={(e) => setExisting(e.target.value)}
+              >
+                <option value="">创建新节点</option>
+                {q.data?.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {node.name} — 重新接入并保留历史
+                  </option>
+                ))}
+              </select>
+            </label>
+            {fileError && (
+              <p role="alert" className="error-text">
+                {fileError}
+              </p>
+            )}
+            {checked && (
+              <p role="status">
+                连接验证成功：{checked.hostname} · Agent {checked.agentVersion}
+              </p>
+            )}
+          </fieldset>
+        </BusinessDialog>
       )}
       <div className="list-toolbar">
         <input
@@ -421,7 +449,7 @@ export function NodeDetail({ id }: { id: string }) {
     resolution: string;
     samples: Record<string, unknown>[];
   }>("nodes.metrics", { nodeId: id, hours });
-  const op = useOperation(() => void q.mutate());
+  const op = useOperation(() => void q.mutate(), edit);
   const [tab, setTab] = useState("metrics");
   return (
     <>
@@ -436,7 +464,13 @@ export function NodeDetail({ id }: { id: string }) {
         <Button variant="outline" asChild>
           <Link href={`/terminal?node=${id}`}>打开终端</Link>
         </Button>
-        <Button variant="outline" onClick={() => setEdit(!edit)}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            op.clear();
+            setEdit(true);
+          }}
+        >
           编辑名称与标签
         </Button>
         {node?.status === "APPROVED" && (
@@ -462,9 +496,18 @@ export function NodeDetail({ id }: { id: string }) {
         </p>
       )}
       {edit && node && (
-        <section className="panel form-panel">
-          <h2>节点信息</h2>
+        <BusinessDialog
+          title="节点信息"
+          onClose={() => {
+            setEdit(false);
+            op.clear();
+          }}
+          operation={op}
+          formId="node-edit"
+        >
           <ResourceForm
+            id="node-edit"
+            hideSubmit
             key={node.id}
             busy={op.busy}
             fields={[
@@ -488,7 +531,7 @@ export function NodeDetail({ id }: { id: string }) {
               if (result) setEdit(false);
             }}
           />
-        </section>
+        </BusinessDialog>
       )}
       <QueryState
         error={q.error}

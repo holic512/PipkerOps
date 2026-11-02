@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module operations-ui
  * @description 任务、Docker、文件、系统、站点、自动化和PTY页面，操作统一进入任务队列。
- * @logic 任务按计划筛选，解释无日志与Compose部分失败并指向状态查询；危险操作确认后执行，提交失败保留幂等键，终端不重放输入。
+ * @logic 任务按计划筛选；资源表单在弹窗内核对，执行结果可重复查看；提交失败保留幂等键，终端不重放输入。
  * @dependencies React, shared UI, RPC, xterm
  * @index_tags operations, tasks, terminal, automation, ui
  * @author holic512
@@ -34,6 +34,7 @@ import {
   type Field,
 } from "./shared";
 import { Button } from "./ui/button";
+import { BusinessDialog } from "./ui/dialog";
 import { createTaskSubmission } from "@/lib/task-submission";
 const taskLogMessages: Record<string, string> = {
   QUEUED: "任务已入队，等待派发…",
@@ -556,6 +557,7 @@ function OperationsForm({
       : config.actions[0].type,
   );
   const [task, setTask] = useState("");
+  const [resultOpen, setResultOpen] = useState(false);
   const [submitTask] = useState(() => createTaskSubmission());
   const taskQuery = useQuery<TaskData>(
     task ? "tasks.get" : null,
@@ -574,11 +576,18 @@ function OperationsForm({
       confirmed: current.dangerous,
     });
     setTask(result.id);
+    setResultOpen(true);
     return result;
   };
   return (
     <>
-      <PageTitle title={config.title} description={config.description} />
+      <PageTitle title={config.title} description={config.description}>
+        {task && (
+          <Button variant="outline" onClick={() => setResultOpen(true)}>
+            查看最近结果
+          </Button>
+        )}
+      </PageTitle>
       {op.ui}
       <QueryState
         error={q.error}
@@ -672,10 +681,14 @@ function OperationsForm({
             )}
           </div>
         </section>
-        {task && (
-          <section className="panel detail-panel">
+        {task && resultOpen && (
+          <BusinessDialog
+            title="执行结果"
+            size="detail"
+            readOnly
+            onClose={() => setResultOpen(false)}
+          >
             <div className="panel-header">
-              <h2>执行结果</h2>
               <Link href={`/tasks/${task}`}>任务详情</Link>
             </div>
             <QueryState
@@ -700,7 +713,7 @@ function OperationsForm({
                   )}
               </div>
             </QueryState>
-          </section>
+          </BusinessDialog>
         )}
       </QueryState>
     </>
@@ -770,6 +783,7 @@ export function Resources({ mode }: { mode: string }) {
   const notifications = useQuery<GenericRow[]>(
     mode === "alerts" ? "notifications.list" : null,
   );
+  const [resultOpen, setResultOpen] = useState(false);
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState<GenericRow | null>(null);
   const [secret, setSecret] = useState("");
@@ -781,10 +795,13 @@ export function Resources({ mode }: { mode: string }) {
   const [submitAction] = useState(() => createTaskSubmission());
   const [actionUrl, setActionUrl] = useState("");
   const [runAction, setRunAction] = useState<GenericRow | null>(null);
-  const op = useOperation(() => {
-    void q.mutate();
-    void notifications.mutate();
-  });
+  const op = useOperation(
+    () => {
+      void q.mutate();
+      void notifications.mutate();
+    },
+    show || !!secret || !!runAction || !!certificateSite || resultOpen,
+  );
   const [title, description] = titles[mode];
   const nodeOptions = nodes.data
     ?.filter((n) => n.status === "APPROVED")
@@ -1005,7 +1022,9 @@ export function Resources({ mode }: { mode: string }) {
           <Button
             onClick={() => {
               setEditing(null);
-              setShow(!show);
+              op.clear();
+              setResultOpen(false);
+              setShow(true);
             }}
           >
             <Plus size={16} />
@@ -1020,8 +1039,330 @@ export function Resources({ mode }: { mode: string }) {
                     : "创建操作"}
           </Button>
         )}
+        {(siteTask || actionTask || actionUrl) && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              op.clear();
+              setResultOpen(true);
+            }}
+          >
+            查看最近结果
+          </Button>
+        )}
       </PageTitle>
       {op.ui}
+      {(show || secret || runAction || certificateSite || resultOpen) && (
+        <BusinessDialog
+          title={
+            show
+              ? `${title} · ${editing ? "编辑" : "新建"}`
+              : secret
+                ? "密钥创建成功"
+                : runAction
+                  ? `执行：${runAction.name}`
+                  : certificateSite
+                    ? `${certificateSite.domain} · 证书与 HTTPS`
+                    : "操作结果"
+          }
+          onClose={() => {
+            setShow(false);
+            setEditing(null);
+            setSecret("");
+            setRunAction(null);
+            setCertificateSite(null);
+            setResultOpen(false);
+            op.clear();
+          }}
+          operation={op}
+          formId={
+            show
+              ? "resource-edit"
+              : runAction
+                ? "run-action"
+                : certificateSite
+                  ? "certificate-form"
+                  : undefined
+          }
+          submit={
+            runAction ? "执行操作" : certificateSite ? "签发证书" : "保存"
+          }
+          readOnly={resultOpen && !secret}
+          footer={
+            secret ? (
+              <Button
+                onClick={() => {
+                  setSecret("");
+                  op.clear();
+                }}
+              >
+                已保存，隐藏密钥
+              </Button>
+            ) : undefined
+          }
+        >
+          {show && (
+            <>
+              <ResourceForm
+                id="resource-edit"
+                hideSubmit
+                key={editing?.id ?? "new"}
+                fields={(fields[mode] ?? []).map((field) => {
+                  const value = editing?.[field.name as keyof GenericRow];
+                  return {
+                    ...field,
+                    ...(value !== undefined && value !== null
+                      ? {
+                          defaultValue:
+                            field.type === "json"
+                              ? JSON.stringify(value, null, 2)
+                              : (value as string | number | boolean),
+                        }
+                      : {}),
+                  };
+                })}
+                busy={op.busy}
+                onSubmit={async (d) => {
+                  if (["actions", "schedules", "mcp"].includes(mode))
+                    op.ask(
+                      editing ? "确认保存修改？" : "确认创建？",
+                      mode === "mcp"
+                        ? `密钥：${d.name}。工具权限：${JSON.stringify(d.scopes)}。节点范围：${JSON.stringify(d.nodeIds)}（[] 无节点权限，["*"] 为全部节点）。高危操作：${d.allowDangerous ? "允许" : "禁止"}。有效期：${d.days} 天。确认后将创建可供 AI Agent 使用的密钥，请核对授权范围。`
+                        : mode === "schedules"
+                          ? `计划：${d.name}。状态：${d.enabled ? "启用" : "停用"}。节点：${nodes.data?.find((n) => n.id === d.nodeId)?.name ?? d.nodeId}（${d.nodeId}）。任务：${d.taskType}。Cron：${d.cron}；时区：${d.timezone}。参数：${JSON.stringify(d.payload)}。启用后将按此配置在后台执行。`
+                          : "请检查工具范围、执行目标和操作内容。该设置可能允许后台或 AI Agent 执行远程操作。",
+                      () =>
+                        save({ ...d, ...(editing ? { id: editing.id } : {}) }),
+                    );
+                  else
+                    await op.run(() =>
+                      save({ ...d, ...(editing ? { id: editing.id } : {}) }),
+                    );
+                }}
+              />
+            </>
+          )}
+          {secret && (
+            <>
+              <p>密钥只展示一次，请安全保存。</p>
+              <pre className="code-block">{secret}</pre>
+            </>
+          )}
+          {runAction && (
+            <>
+              <ResourceForm
+                id="run-action"
+                hideSubmit
+                key={`${runAction.id}:${context.toString()}`}
+                busy={op.busy}
+                fields={[
+                  ...(["URL", "HTTP"].includes(runAction.type ?? "")
+                    ? []
+                    : [
+                        {
+                          name: "nodeId",
+                          label: "执行节点",
+                          type: "select" as const,
+                          required: true,
+                          defaultValue: context.get("node") ?? "",
+                          options: nodeOptions?.filter(
+                            (n) =>
+                              !runAction.nodeIds?.length ||
+                              runAction.nodeIds.includes(n.value),
+                          ),
+                        },
+                      ]),
+                  ...(runAction.parameters?.map((p) => ({
+                    name: p.name,
+                    label: p.label,
+                    required: p.required,
+                    defaultValue: [
+                      "target",
+                      "applicationId",
+                      "deploymentId",
+                    ].includes(p.name)
+                      ? (context.get(p.name) ?? "")
+                      : "",
+                  })) ?? []),
+                ]}
+                submit="执行操作"
+                onSubmit={async (d) => {
+                  const { nodeId, ...values } = d;
+                  op.ask(
+                    `执行 ${runAction.name}？`,
+                    `执行位置：${nodeId ? (nodes.data?.find((n) => n.id === nodeId)?.name ?? nodeId) : "主控"}；参数：${JSON.stringify(values)}。参数将发送到服务端校验，远程操作进入任务队列并记录审计。`,
+                    async () => {
+                      setActionTask("");
+                      setActionUrl("");
+                      const r = await submitAction<{
+                        id?: string;
+                        url?: string;
+                      }>("actions.run", {
+                        id: runAction.id,
+                        nodeId,
+                        values,
+                        confirmed: true,
+                      });
+                      if (r.url)
+                        window.open(r.url, "_blank", "noopener,noreferrer");
+                      setActionTask(r.id ?? "");
+                      setActionUrl(r.url ?? "");
+                      setRunAction(null);
+                      setResultOpen(true);
+                      return r;
+                    },
+                    runAction.type === "URL"
+                      ? "链接已生成"
+                      : "任务已记录，请查看状态与结果",
+                  );
+                }}
+              />
+            </>
+          )}
+          {certificateSite && (
+            <>
+              <div className="form-panel">
+                <p>
+                  签发前请将域名解析到此节点，开放
+                  80/443，并先应用站点配置。Agent 需安装
+                  certbot；测试证书独立保存。启用 HTTPS 会添加每日续期计划。
+                </p>
+                <div className="inline-actions">
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      void op.run(async () => {
+                        const t = await rpc<{ id: string }>(
+                          "sites.certificate",
+                          {
+                            id: certificateSite.id,
+                          },
+                        );
+                        setSiteTask(t.id);
+                        setCertificateSite(null);
+                        setResultOpen(true);
+                        return t;
+                      }, "证书检查已排队")
+                    }
+                  >
+                    读取生产证书
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      op.ask(
+                        "启用 HTTPS？",
+                        "将使用已检查的有效生产证书生成 443 配置，通过语法检查后重新加载，并添加每日续期计划。",
+                        async () => {
+                          const t = await rpc<{ id: string }>("sites.https", {
+                            id: certificateSite.id,
+                            confirmed: true,
+                          });
+                          setSiteTask(t.id);
+                          setCertificateSite(null);
+                          setResultOpen(true);
+                          return t;
+                        },
+                        "HTTPS 配置任务已加入队列",
+                      )
+                    }
+                  >
+                    启用 HTTPS 与自动续期
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      op.ask(
+                        "检查并续期？",
+                        "将在此节点运行 Certbot 续期并检查、重新加载 Nginx。",
+                        async () => {
+                          const t = await rpc<{ id: string }>("sites.renew", {
+                            id: certificateSite.id,
+                            confirmed: true,
+                          });
+                          setSiteTask(t.id);
+                          setCertificateSite(null);
+                          setResultOpen(true);
+                          return t;
+                        },
+                        "续期任务已加入队列",
+                      )
+                    }
+                  >
+                    立即检查续期
+                  </Button>
+                </div>
+                <ResourceForm
+                  id="certificate-form"
+                  hideSubmit
+                  busy={op.busy}
+                  fields={[
+                    {
+                      name: "email",
+                      label: "ACME 联系邮箱",
+                      type: "email",
+                      required: true,
+                    },
+                    {
+                      name: "staging",
+                      label: "证书环境",
+                      type: "select",
+                      options: [
+                        { value: "false", label: "生产" },
+                        {
+                          value: "true",
+                          label: "测试（不能用于启用生产 HTTPS）",
+                        },
+                      ],
+                      defaultValue: "true",
+                    },
+                  ]}
+                  submit="签发证书"
+                  onSubmit={async (d) => {
+                    op.ask(
+                      "签发 ACME 证书？",
+                      "将向 ACME 服务注册邮箱、验证域名并申请证书。",
+                      async () => {
+                        const t = await rpc<{ id: string }>("sites.acme", {
+                          id: certificateSite.id,
+                          email: d.email,
+                          staging: d.staging === "true",
+                          confirmed: true,
+                        });
+                        setSiteTask(t.id);
+                        setCertificateSite(null);
+                        setResultOpen(true);
+                        return t;
+                      },
+                      "签发任务已加入队列",
+                    );
+                  }}
+                />
+              </div>
+            </>
+          )}
+          {resultOpen && (
+            <div className="dialog-fields">
+              {(mode === "sites" ? siteTask : actionTask) && (
+                <p role="status">
+                  任务已记录：
+                  <Link
+                    href={`/tasks/${mode === "sites" ? siteTask : actionTask}`}
+                  >
+                    查看执行日志与结果
+                  </Link>
+                </p>
+              )}
+              {mode === "actions" && actionUrl && (
+                <a href={actionUrl} target="_blank" rel="noopener noreferrer">
+                  打开操作链接
+                </a>
+              )}
+            </div>
+          )}
+        </BusinessDialog>
+      )}
+
       {mode === "mcp" && (
         <section className="panel form-panel compact-panel">
           <h2>连接 AI Agent</h2>
@@ -1032,56 +1373,7 @@ export function Resources({ mode }: { mode: string }) {
           <pre className="code-block">{`{"mcpServers":{"pipkerops":{"url":"https://你的主控域名/api/mcp","headers":{"Authorization":"Bearer 你的API密钥"}}}}`}</pre>
         </section>
       )}
-      {secret && (
-        <section className="secret-result detail-panel">
-          <h2>密钥只展示一次，请安全保存</h2>
-          <pre>{secret}</pre>
-          <Button variant="outline" size="sm" onClick={() => setSecret("")}>
-            已保存，隐藏密钥
-          </Button>
-        </section>
-      )}
-      {show && (
-        <section className="panel form-panel detail-panel">
-          <h2>
-            {title} · {editing ? "编辑" : "新建"}
-          </h2>
-          <ResourceForm
-            key={editing?.id ?? "new"}
-            fields={(fields[mode] ?? []).map((field) => {
-              const value = editing?.[field.name as keyof GenericRow];
-              return {
-                ...field,
-                ...(value !== undefined && value !== null
-                  ? {
-                      defaultValue:
-                        field.type === "json"
-                          ? JSON.stringify(value, null, 2)
-                          : (value as string | number | boolean),
-                    }
-                  : {}),
-              };
-            })}
-            busy={op.busy}
-            onSubmit={async (d) => {
-              if (["actions", "schedules", "mcp"].includes(mode))
-                op.ask(
-                  editing ? "确认保存修改？" : "确认创建？",
-                  mode === "mcp"
-                    ? `密钥：${d.name}。工具权限：${JSON.stringify(d.scopes)}。节点范围：${JSON.stringify(d.nodeIds)}（[] 无节点权限，["*"] 为全部节点）。高危操作：${d.allowDangerous ? "允许" : "禁止"}。有效期：${d.days} 天。确认后将创建可供 AI Agent 使用的密钥，请核对授权范围。`
-                    : mode === "schedules"
-                      ? `计划：${d.name}。状态：${d.enabled ? "启用" : "停用"}。节点：${nodes.data?.find((n) => n.id === d.nodeId)?.name ?? d.nodeId}（${d.nodeId}）。任务：${d.taskType}。Cron：${d.cron}；时区：${d.timezone}。参数：${JSON.stringify(d.payload)}。启用后将按此配置在后台执行。`
-                      : "请检查工具范围、执行目标和操作内容。该设置可能允许后台或 AI Agent 执行远程操作。",
-                  () => save({ ...d, ...(editing ? { id: editing.id } : {}) }),
-                );
-              else
-                await op.run(() =>
-                  save({ ...d, ...(editing ? { id: editing.id } : {}) }),
-                );
-            }}
-          />
-        </section>
-      )}
+
       <QueryState
         loading={q.isLoading}
         error={q.error}
@@ -1193,6 +1485,7 @@ export function Resources({ mode }: { mode: string }) {
                       size="sm"
                       variant="ghost"
                       onClick={() => {
+                        op.clear();
                         setEditing(r);
                         setShow(true);
                       }}
@@ -1212,6 +1505,8 @@ export function Resources({ mode }: { mode: string }) {
                               { id: r.id, confirmed: true },
                             );
                             setSiteTask(t.id);
+                            setCertificateSite(null);
+                            setResultOpen(true);
                             return t;
                           },
                           "站点删除任务已加入队列",
@@ -1233,6 +1528,7 @@ export function Resources({ mode }: { mode: string }) {
                               confirmed: true,
                             }).then((task) => {
                               setSiteTask(task.id);
+                              setResultOpen(true);
                               return task;
                             }),
                           "配置应用任务已加入队列",
@@ -1244,7 +1540,10 @@ export function Resources({ mode }: { mode: string }) {
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => setCertificateSite(r)}
+                      onClick={() => {
+                        op.clear();
+                        setCertificateSite(r);
+                      }}
                     >
                       证书与 HTTPS
                     </Button>
@@ -1269,6 +1568,7 @@ export function Resources({ mode }: { mode: string }) {
                       size="sm"
                       variant="ghost"
                       onClick={() => {
+                        op.clear();
                         setEditing(r);
                         setShow(true);
                       }}
@@ -1311,6 +1611,7 @@ export function Resources({ mode }: { mode: string }) {
                       size="sm"
                       variant="ghost"
                       onClick={() => {
+                        op.clear();
                         setEditing(r);
                         setShow(true);
                       }}
@@ -1343,6 +1644,7 @@ export function Resources({ mode }: { mode: string }) {
                       size="sm"
                       variant="ghost"
                       onClick={() => {
+                        op.clear();
                         setEditing(r);
                         setShow(true);
                       }}
@@ -1395,200 +1697,7 @@ export function Resources({ mode }: { mode: string }) {
           target、applicationId、deploymentId 参数预填。
         </p>
       )}
-      {runAction && (
-        <section className="panel form-panel detail-panel">
-          <h2>执行：{runAction.name}</h2>
-          <ResourceForm
-            key={`${runAction.id}:${context.toString()}`}
-            busy={op.busy}
-            fields={[
-              ...(["URL", "HTTP"].includes(runAction.type ?? "")
-                ? []
-                : [
-                    {
-                      name: "nodeId",
-                      label: "执行节点",
-                      type: "select" as const,
-                      required: true,
-                      defaultValue: context.get("node") ?? "",
-                      options: nodeOptions?.filter(
-                        (n) =>
-                          !runAction.nodeIds?.length ||
-                          runAction.nodeIds.includes(n.value),
-                      ),
-                    },
-                  ]),
-              ...(runAction.parameters?.map((p) => ({
-                name: p.name,
-                label: p.label,
-                required: p.required,
-                defaultValue: [
-                  "target",
-                  "applicationId",
-                  "deploymentId",
-                ].includes(p.name)
-                  ? (context.get(p.name) ?? "")
-                  : "",
-              })) ?? []),
-            ]}
-            submit="执行操作"
-            onSubmit={async (d) => {
-              const { nodeId, ...values } = d;
-              op.ask(
-                `执行 ${runAction.name}？`,
-                `执行位置：${nodeId ? (nodes.data?.find((n) => n.id === nodeId)?.name ?? nodeId) : "主控"}；参数：${JSON.stringify(values)}。参数将发送到服务端校验，远程操作进入任务队列并记录审计。`,
-                async () => {
-                  setActionTask("");
-                  setActionUrl("");
-                  const r = await submitAction<{ id?: string; url?: string }>(
-                    "actions.run",
-                    { id: runAction.id, nodeId, values, confirmed: true },
-                  );
-                  if (r.url)
-                    window.open(r.url, "_blank", "noopener,noreferrer");
-                  setActionTask(r.id ?? "");
-                  setActionUrl(r.url ?? "");
-                  return r;
-                },
-                runAction.type === "URL"
-                  ? "链接已生成"
-                  : "任务已记录，请查看状态与结果",
-              );
-            }}
-          />
-        </section>
-      )}
-      {mode === "sites" && siteTask && (
-        <p className="inline-feedback">
-          任务已加入队列：
-          <Link href={`/tasks/${siteTask}`}>查看执行日志与结果</Link>
-        </p>
-      )}
-      {mode === "actions" && actionTask && (
-        <p className="inline-feedback">
-          任务已记录：
-          <Link href={`/tasks/${actionTask}`}>查看执行日志与结果</Link>
-        </p>
-      )}
-      {mode === "actions" && actionUrl && (
-        <p className="inline-feedback">
-          操作链接：
-          <a href={actionUrl} target="_blank" rel="noopener noreferrer">
-            打开链接
-          </a>
-        </p>
-      )}
-      {certificateSite && (
-        <section className="panel detail-panel">
-          <div className="panel-header">
-            <h2>{certificateSite.domain} · 证书</h2>
-            <Button variant="ghost" onClick={() => setCertificateSite(null)}>
-              关闭
-            </Button>
-          </div>
-          <div className="form-panel">
-            <p>
-              签发前请将域名解析到此节点，开放 80/443，并先应用站点配置。Agent
-              需安装 certbot；测试证书独立保存。启用 HTTPS 会添加每日续期计划。
-            </p>
-            <div className="inline-actions">
-              <Button
-                variant="outline"
-                onClick={() =>
-                  void op.run(async () => {
-                    const t = await rpc<{ id: string }>("sites.certificate", {
-                      id: certificateSite.id,
-                    });
-                    setSiteTask(t.id);
-                    return t;
-                  }, "证书检查已排队")
-                }
-              >
-                读取生产证书
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  op.ask(
-                    "启用 HTTPS？",
-                    "将使用已检查的有效生产证书生成 443 配置，通过语法检查后重新加载，并添加每日续期计划。",
-                    async () => {
-                      const t = await rpc<{ id: string }>("sites.https", {
-                        id: certificateSite.id,
-                        confirmed: true,
-                      });
-                      setSiteTask(t.id);
-                      return t;
-                    },
-                    "HTTPS 配置任务已加入队列",
-                  )
-                }
-              >
-                启用 HTTPS 与自动续期
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  op.ask(
-                    "检查并续期？",
-                    "将在此节点运行 Certbot 续期并检查、重新加载 Nginx。",
-                    async () => {
-                      const t = await rpc<{ id: string }>("sites.renew", {
-                        id: certificateSite.id,
-                        confirmed: true,
-                      });
-                      setSiteTask(t.id);
-                      return t;
-                    },
-                    "续期任务已加入队列",
-                  )
-                }
-              >
-                立即检查续期
-              </Button>
-            </div>
-            <ResourceForm
-              busy={op.busy}
-              fields={[
-                {
-                  name: "email",
-                  label: "ACME 联系邮箱",
-                  type: "email",
-                  required: true,
-                },
-                {
-                  name: "staging",
-                  label: "证书环境",
-                  type: "select",
-                  options: [
-                    { value: "false", label: "生产" },
-                    { value: "true", label: "测试（不能用于启用生产 HTTPS）" },
-                  ],
-                  defaultValue: "true",
-                },
-              ]}
-              submit="签发证书"
-              onSubmit={async (d) => {
-                op.ask(
-                  "签发 ACME 证书？",
-                  "将向 ACME 服务注册邮箱、验证域名并申请证书。",
-                  async () => {
-                    const t = await rpc<{ id: string }>("sites.acme", {
-                      id: certificateSite.id,
-                      email: d.email,
-                      staging: d.staging === "true",
-                      confirmed: true,
-                    });
-                    setSiteTask(t.id);
-                    return t;
-                  },
-                  "签发任务已加入队列",
-                );
-              }}
-            />
-          </div>
-        </section>
-      )}
+
       {mode === "alerts" && (
         <section className="panel detail-panel">
           <div className="panel-header">

@@ -2,7 +2,7 @@
  * @file console.tsx
  * @project PipkerOps
  * @module manage-shell
- * @description 分组侧栏、访问标签、登录状态与模块页面的管理端入口。
+ * @description 紧凑分组侧栏、双行顶部导航、登录状态与模块页面的管理端入口。
  * @logic 路由选择真实业务及系统备份页面，认证失败转登录；访问标签保留当前会话导航。
  * @dependencies React, Next.js, SWR, Lucide
  * @index_tags ui, navigation, console
@@ -10,6 +10,7 @@
  */
 "use client";
 import Link from "next/link";
+import packageInfo from "../../package.json";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
@@ -199,7 +200,7 @@ export function Console() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <span className="version">PipkerOps 0.1.0</span>
+          <span className="version">PipkerOps {packageInfo.version}</span>
           <span>轻量集群运维</span>
         </div>
       </aside>

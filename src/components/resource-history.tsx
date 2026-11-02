@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module node-resource-history-ui
  * @description 节点磁盘容量、网络和磁盘IO真实历史的设备选择与可读图表。
- * @logic 切换指标重选设备；查询状态显式展示；按真实时间作图，断点不连线。
+ * @logic 切换指标重选设备；查询状态显式展示；按真实时间作图，断点不连线；最近采样值以弹窗展示。
  * @dependencies React, shared API query states, nodes.history
  * @index_tags nodes, metrics, history, ui
  * @author holic512
@@ -12,6 +12,8 @@
 import { useState } from "react";
 import { date } from "@/lib/client";
 import { QueryState, useQuery } from "./shared";
+import { Button } from "./ui/button";
+import { BusinessDialog } from "./ui/dialog";
 
 type History = {
   unit: string;
@@ -106,6 +108,7 @@ export function ResourceHistory({ nodeId }: { nodeId: string }) {
   );
 }
 function ResourceChart({ data }: { data: History }) {
+  const [valuesOpen, setValuesOpen] = useState(false);
   const all = data.series.flatMap((s) => s.points);
   const times = all.map((p) => new Date(p.recordedAt).getTime());
   const start = Math.min(...times),
@@ -222,40 +225,49 @@ function ResourceChart({ data }: { data: History }) {
           </text>
         </svg>
       </div>
-      <details className="resource-history-values">
-        <summary>查看最近采样值</summary>
-        <div
-          className="table-wrap"
-          role="region"
-          aria-label="最近资源采样值，可横向滚动"
-          tabIndex={0}
+      <Button variant="outline" onClick={() => setValuesOpen(true)}>
+        查看最近采样值
+      </Button>
+      {valuesOpen && (
+        <BusinessDialog
+          title="最近资源采样值"
+          size="detail"
+          readOnly
+          onClose={() => setValuesOpen(false)}
         >
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>指标</th>
-                <th>均值</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.series.flatMap((s) =>
-                s.points.slice(-10).map((p) => (
-                  <tr key={`${s.name}-${p.recordedAt}`}>
-                    <td>{date(p.recordedAt)}</td>
-                    <td>{s.name}</td>
-                    <td>
-                      {p.value === null
-                        ? "采样中断 / 计数重置"
-                        : valueLabel(p.value, data.unit)}
-                    </td>
-                  </tr>
-                )),
-              )}
-            </tbody>
-          </table>
-        </div>
-      </details>
+          <div
+            className="table-wrap"
+            role="region"
+            aria-label="最近资源采样值，可横向滚动"
+            tabIndex={0}
+          >
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>指标</th>
+                  <th>均值</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.series.flatMap((s) =>
+                  s.points.slice(-10).map((p) => (
+                    <tr key={`${s.name}-${p.recordedAt}`}>
+                      <td>{date(p.recordedAt)}</td>
+                      <td>{s.name}</td>
+                      <td>
+                        {p.value === null
+                          ? "采样中断 / 计数重置"
+                          : valueLabel(p.value, data.unit)}
+                      </td>
+                    </tr>
+                  )),
+                )}
+              </tbody>
+            </table>
+          </div>
+        </BusinessDialog>
+      )}
     </div>
   );
 }

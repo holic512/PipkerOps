@@ -4,7 +4,7 @@
  * @project PipkerOps
  * @module shared-ui
  * @description 业务查询、表单、状态与操作确认的共用组件。
- * @logic 查询呈现加载与失败状态；表单区分禁用和提交中，表格支持键盘滚动；确认保留错误及指定成功反馈。
+ * @logic 查询呈现加载与失败状态；表单支持弹窗底部提交，表格支持键盘滚动；操作确认按所在工作区使用内嵌或独立弹窗。
  * @dependencies React, SWR, RPC, UI components
  * @index_tags forms, queries, confirmation, feedback
  * @author holic512
@@ -180,7 +180,7 @@ export function Feedback({
     </div>
   );
 }
-export function useOperation(onSuccess?: () => void) {
+export function useOperation(onSuccess?: () => void, inline = false) {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{
     message: string;
@@ -210,9 +210,19 @@ export function useOperation(onSuccess?: () => void) {
       setBusy(false);
     }
   };
+  const clear = () => {
+    setConfirmation(null);
+    setFeedback(null);
+  };
   return {
     busy,
     run,
+    confirmation,
+    confirm: () => {
+      if (confirmation && !busy)
+        void run(confirmation.action, confirmation.success);
+    },
+    back: clear,
     ask: (
       title: string,
       description: string,
@@ -223,8 +233,8 @@ export function useOperation(onSuccess?: () => void) {
       setConfirmation({ title, description, action, success });
     },
     feedback,
-    clear: () => setFeedback(null),
-    ui: (
+    clear,
+    ui: inline ? null : (
       <>
         <Feedback value={feedback} onClose={() => setFeedback(null)} />
         <ConfirmDialog
@@ -233,7 +243,7 @@ export function useOperation(onSuccess?: () => void) {
           open={!!confirmation}
           busy={busy}
           error={feedback?.error ? feedback.message : undefined}
-          onClose={() => setConfirmation(null)}
+          onClose={clear}
           onConfirm={() => {
             if (confirmation)
               void run(confirmation.action, confirmation.success);
@@ -269,7 +279,11 @@ export function ResourceForm({
   disabled = false,
   submit = "保存",
   children,
+  id,
+  hideSubmit = false,
 }: {
+  id?: string;
+  hideSubmit?: boolean;
   fields: Field[];
   onSubmit: (data: Record<string, unknown>) => Promise<unknown>;
   busy: boolean;
@@ -280,9 +294,11 @@ export function ResourceForm({
   const [error, setError] = useState("");
   return (
     <form
+      id={id}
       className="resource-form"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (busy || disabled) return;
         setError("");
         const form = new FormData(e.currentTarget);
         const values: Record<string, unknown> = {};
@@ -301,7 +317,7 @@ export function ResourceForm({
         }
       }}
     >
-      <div className="form-grid">
+      <fieldset className="form-grid" disabled={busy || disabled}>
         {fields.map((f) => (
           <label
             key={f.name}
@@ -361,18 +377,20 @@ export function ResourceForm({
             )}
           </label>
         ))}
-      </div>
+      </fieldset>
       {children}
       {error && (
         <p role="alert" className="error-text">
           {error}
         </p>
       )}
-      <div className="form-footer">
-        <Button type="submit" disabled={busy || disabled}>
-          {busy ? "正在处理…" : submit}
-        </Button>
-      </div>
+      {!hideSubmit && (
+        <div className="form-footer">
+          <Button type="submit" disabled={busy || disabled}>
+            {busy ? "正在处理…" : submit}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
