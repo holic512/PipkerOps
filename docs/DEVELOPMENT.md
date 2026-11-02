@@ -191,3 +191,11 @@ sh scripts/package-agent.sh 0.1.0 arm64 /tmp/pipkerops-agent-release
 - 可访问性：共用表格已验证键盘横向滚动和焦点轮廓，Docker页历史axe检查为0违规/1人工确认项；不能据此宣称所有页面可访问性通过。
 - 配置确认：Key展示名称、scope、节点范围及空范围/全部语义、高危许可和有效期；计划展示名称、状态、准确节点名/ID、类型、Cron/时区和参数。390px键盘取消没有创建Key/计划请求；停用计划真实创建/编辑/取消/确认/删除复验通过且零任务。长参数确认框限制在390px/1280px视口内，内部滚动后Tab能访问操作按钮。
 - 响应式导航：390px关闭侧栏现从可访问树/键盘顺序隐藏，Tab从跳转链接进入菜单按钮；打开后键盘导航到拓扑并关闭、遮罩按钮键盘关闭通过。1280px主导航保持可用，缩回390px重新隐藏；未宣称打开菜单的完整焦点约束通过。
+
+## Docker 直连重构验证
+
+`npm run test:docker` 启动并清理专用 PostgreSQL、Redis 和 privileged Docker-in-Docker 夹具，不连接 app.conf 中的业务数据库、不挂宿主 Docker socket。需要本地 `docker:28-dind`、`postgres:17-alpine`、`redis:7-alpine`、`nginx:1.28-alpine` 镜像及 Go 编译器；按镜像完整平台标识导入应用镜像，在隔离守护进程内拉取 `registry:3` 作为专用本地镜像仓库。覆盖直接查询、拉取、容器生命周期、Compose 部署/部分失败/修正、独立日志与 Gateway 完成回传、并发重复请求、节点权限、未确认请求不重发，以及四个执行位占满时旧任务恢复排队且不消耗尝试次数。
+
+新增 Docker 契约单测随 `npm test` 运行，Agent HTTPS/独立 journal 测试随 `go test ./...` 运行。浏览器验证仅使用该独立夹具；`DOCKER_UI_TEST=true node --import tsx tests/docker-direct.integration.ts` 会在测试结束后保持临时 Web 供交互验证，输出私有 context 文件路径，通过 SIGINT 结束并清理夹具。
+
+本次验证：58项 TypeScript 单元测试、Agent `go test ./...`、6项隔离 Docker 集成检查通过；生产构建使用 `npx next build --webpack` 通过，默认 Turbopack 在本环境因构建子进程绑定端口被拒而失败。浏览器在1440px和390px检查节点树、准确行操作、确认取消、离线切换、旧日志链接及 Compose 表单返回保留输入；主工作区和表单弹窗 axe 检查均0违规/0待确认。

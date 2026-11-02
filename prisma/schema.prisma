@@ -1,7 +1,7 @@
 // @file schema.prisma
 // @project PipkerOps
 // @module persistence
-// @description 平台身份、节点文件夹分类、监控、应用、探针、持久化任务及运维资源的数据契约。
+// @description 平台身份、节点文件夹分类、监控、应用、探针、持久化任务、独立 Docker 操作日志及运维资源的数据契约。
 // @logic 管理端/Worker/Gateway 共用模型；原始指标按记录时间分区；任务默认仅执行一次。
 // @dependencies PostgreSQL, Prisma ORM 7
 // @index_tags database, auth, agent, metrics, tasks
@@ -51,6 +51,14 @@ enum TaskSource {
   SYSTEM
 }
 
+enum DockerOperationStatus {
+  REQUESTED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  UNKNOWN
+}
+
 model User {
   id               String            @id @default(cuid())
   email            String            @unique
@@ -64,6 +72,7 @@ model User {
   enrollmentTokens EnrollmentToken[]
   approvedNodes    Node[]            @relation("NodeApprover")
   tasks            Task[]
+  dockerOperations DockerOperation[]
   auditEvents      AuditEvent[]
   schedules        Schedule[]
   notifications    Notification[]
@@ -168,6 +177,7 @@ model Node {
   probes                 Probe[]          @relation("ProbeSource")
   probeResults           ProbeResult[]    @relation("ProbeResultSource")
   tasks                  Task[]
+  dockerOperations       DockerOperation[]
   auditEvents            AuditEvent[]
   schedules              Schedule[]
   alertRules             AlertRule[]
@@ -375,6 +385,45 @@ model TaskLog {
 
   @@unique([taskId, sequence])
   @@index([createdAt], type: Brin)
+}
+
+model DockerOperation {
+  id             String @id @default(uuid())
+  method         String
+  nodeId         String
+  actorId        String?
+  apiKeyId       String?
+  source         String
+  target         String
+  action         String?
+  idempotencyKey String @unique
+  requestHash    String
+  status         DockerOperationStatus @default(REQUESTED)
+  output         String @default("")
+  error          String?
+  result         Json @default("{}")
+  truncated      Boolean @default(false)
+  startedAt      DateTime? @db.Timestamptz(3)
+  finishedAt     DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  node           Node @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  actor          User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  logs           DockerOperationLog[]
+
+  @@index([nodeId, createdAt(sort: Desc)])
+}
+
+model DockerOperationLog {
+  id          String @id @default(cuid())
+  operationId String
+  sequence    Int
+  stream      String
+  message     String
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  operation   DockerOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@unique([operationId, sequence])
 }
 
 model AuditEvent {

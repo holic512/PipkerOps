@@ -91,6 +91,16 @@ sh scripts/package-agent.sh 0.1.1 arm64
 
 单次最多返回 64 个文件系统、64 个网卡、80 个进程、256 个端口、200 个容器。进程样本不是“CPU 最高进程”排行榜。权限不足、Docker 未安装等情况写入 `collectionErrors`；失败字段不会填入模拟值。主控只有在 CPU/内存数据均有效时才可保存对应数值样本。
 
+## Docker 直接操作
+
+0.1.2 起，交互管理无需任务：`POST /v1/docker/query` 接收 `{method,params}`，只允许 Docker/Compose 只读方法；`POST /v1/docker/operations` 接收 `{id,method,params}`，只允许 `docker.action`、`docker.pull`、`compose.deploy`，立即执行并返回操作快照（202）。`GET /v1/docker/operations/:id` 获取进度和结果。所有入口沿用受信 HTTPS/Bearer 认证。
+
+写操作先在 `<state-dir>/docker-operations/<id>.json` 同步保存请求摘要和执行记录，再运行；相同 ID/参数返回原记录，不同参数返回409。页面关闭、HTTP 断开后继续执行；Agent 重启时未完成记录标为 UNKNOWN，不重跑。查询不落日志文件。执行容量与普通任务共用四个槽位，升级/维护期间和容量满时直接409，不排队。
+
+WebSocket 返回 `docker.operation.started`、`docker.operation.log`（operationId/sequence/stream/message）、`docker.operation.result`（payload 为完整快照）。Gateway 保存后发送 `docker.operation.ack`；重连回传未确认日志和结果，不进入 `tasks/` journal。输出及日志有大小限制，快照包含 `truncated`。操作日志目录当前不自动清理。
+
+容器列表转换为有类型的资源；Compose 列表合并 `docker compose ls` 与受管配置目录，保存配置但尚无运行资源的项目仍可管理。外部项目可查状态，配置读取与更新只操作平台受管路径。旧任务协议与类型继续兼容；发布时先更新 Agent，再迁移并更新 Ops。
+
 ## 任务与持久化
 
 下发 `{type:'task',task:{id,type,payload}}`。Agent 返回 `task.started`、带单调 `sequence` 的 `task.log`，最后返回 `task.result`（`taskId,success,output,error?,result`）。最多并行四个普通任务；Agent、Ops 和部署脚本更新独占执行，不能与其他活动任务重叠；容量不足返回 `task.busy`，该任务没有开始执行。

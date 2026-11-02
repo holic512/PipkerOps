@@ -41,7 +41,11 @@ func newServerFixture(t *testing.T) *serverFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &Client{config: config, journal: j, executor: &Executor{StateDir: config.StateDir, DeployRoot: config.DeployRoot}, slots: make(chan struct{}, 4)}
+	docker, err := newDockerJournal(filepath.Join(config.StateDir, "docker-operations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{config: config, journal: j, docker: docker, executor: &Executor{StateDir: config.StateDir, DeployRoot: config.DeployRoot}, slots: make(chan struct{}, 4)}
 	ctx, cancel := context.WithCancel(context.Background())
 	server := httptest.NewUnstartedServer(client.handler(ctx, identity))
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{*identity.pair}, GetCertificate: identity.GetCertificate}

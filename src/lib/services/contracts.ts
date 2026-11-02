@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module business-contracts
  * @description Web/MCP 共享业务与节点分类方法的输入校验，以及核心方法的JSON输出契约。
- * @logic 方法参数只维护一份；Key限定已知scope，任务公开对应payload，实际执行仍重查权限与持久资源。
+ * @logic 方法参数只维护一份；Key限定已知scope，任务公开对应payload，Docker 直连公开独立读写与日志契约，执行校验权限与目标资源。
  * @dependencies Zod, task specifications
  * @index_tags api, mcp, validation, contracts
  * @author holic512
@@ -11,6 +11,12 @@
 import { z } from "zod";
 import { taskInput, taskSpecs } from "./tasks";
 import { connectionBundle } from "../agent-connection";
+import {
+  dockerMethodSchemas,
+  dockerReadMethods,
+  dockerResultSchemas,
+  dockerOperationSchema,
+} from "../docker-contracts";
 const label = z.string().trim().min(1).max(120);
 const nodeLabels = z.array(label).max(50);
 const id = z.string().min(1).max(100);
@@ -28,6 +34,7 @@ export const httpProbeConfig = z.object({
   expectedStatus: z.number().int().min(100).max(599).optional(),
 });
 export const METHODS = [
+  ...(Object.keys(dockerMethodSchemas) as (keyof typeof dockerMethodSchemas)[]),
   "overview",
   "nodes.list",
   "nodes.test",
@@ -92,6 +99,7 @@ export const METHODS = [
 ] as const;
 export type Method = (typeof METHODS)[number];
 export const mutation = (method: string) =>
+  !dockerReadMethods.includes(method) &&
   !["overview", "topology"].includes(method) &&
   !method.endsWith(".list") &&
   !method.endsWith(".get") &&
@@ -99,6 +107,7 @@ export const mutation = (method: string) =>
   !method.endsWith(".metrics") &&
   method !== "users.me";
 export const methodSchemas = {
+  ...dockerMethodSchemas,
   overview: z.object({}),
   "nodes.list": z.object({}),
   "nodes.deployment": z.object({
@@ -529,6 +538,26 @@ const wireDeviceHistory = z.object({
 
 /** Wire contracts after the shared business result's normal JSON serialization. */
 export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
+  ...Object.fromEntries(
+    Object.entries(dockerResultSchemas).map(([method, schema]) => [
+      method,
+      z.object({ data: schema }),
+    ]),
+  ),
+  "docker.action": z.object({ data: dockerOperationSchema }),
+  "docker.pull": z.object({ data: dockerOperationSchema }),
+  "compose.deploy": z.object({ data: dockerOperationSchema }),
+  "docker.operations.get": z.object({ data: dockerOperationSchema }),
+  "docker.operations.list": z.object({
+    data: z.array(
+      dockerOperationSchema.omit({
+        output: true,
+        error: true,
+        result: true,
+        logs: true,
+      }),
+    ),
+  }),
   "nodes.list": z.object({ data: z.array(wireNode) }),
   "nodeFolders.list": z.object({
     data: z.array(

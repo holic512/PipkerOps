@@ -2,7 +2,7 @@
  * @file operations.tsx
  * @project PipkerOps
  * @module operations-ui
- * @description 任务、Docker、文件、系统、站点、自动化和PTY页面，操作统一进入任务队列。
+ * @description 任务、文件、系统、站点、自动化和PTY页面；Docker 资源由独立管理页承载。
  * @logic 任务按计划筛选；资源表单在弹窗内核对，执行结果可重复查看；提交失败保留幂等键，终端不重放输入。
  * @dependencies React, shared UI, RPC, xterm
  * @index_tags operations, tasks, terminal, automation, ui
@@ -120,7 +120,7 @@ export function Tasks() {
             ? "请调整任务类型或节点搜索条件。"
             : scheduleId
               ? "仅显示记录计划关联后的任务；旧历史可在全部任务中查看。"
-              : "在节点、Docker 或系统运维页面发起操作后，任务会显示在这里。"
+              : "文件、系统运维和后台计划的任务显示在这里；Docker 交互操作请在对应节点的操作日志中查看。"
         }
       >
         <DataTable
@@ -241,111 +241,6 @@ const ops: Record<
     }[];
   }
 > = {
-  docker: {
-    title: "Docker / Compose",
-    description: "发现和管理节点容器、读取日志、拉取镜像与部署 Compose。",
-    actions: [
-      { type: "docker.list", label: "发现容器", dangerous: false, fields: [] },
-      {
-        type: "docker.inspect",
-        label: "容器详情",
-        dangerous: false,
-        fields: [{ name: "id", label: "容器名称或 ID", required: true }],
-      },
-      {
-        type: "docker.stats",
-        label: "容器监控",
-        dangerous: false,
-        fields: [{ name: "id", label: "容器名称或 ID（留空全部）" }],
-      },
-      {
-        type: "compose.list",
-        label: "Compose 项目",
-        dangerous: false,
-        fields: [],
-      },
-      {
-        type: "compose.status",
-        label: "Compose 状态",
-        dangerous: false,
-        fields: [{ name: "project", label: "项目名", required: true }],
-      },
-      {
-        type: "compose.read",
-        label: "读取 Compose",
-        dangerous: false,
-        fields: [{ name: "project", label: "受管项目名", required: true }],
-      },
-      {
-        type: "docker.logs",
-        label: "容器日志",
-        dangerous: false,
-        fields: [
-          { name: "id", label: "容器名称或 ID", required: true },
-          {
-            name: "tail",
-            label: "日志行数",
-            type: "number",
-            defaultValue: 200,
-            min: 1,
-            max: 2000,
-          },
-        ],
-      },
-      {
-        type: "docker.action",
-        label: "容器生命周期",
-        dangerous: true,
-        fields: [
-          { name: "id", label: "容器名称或 ID", required: true },
-          {
-            name: "action",
-            label: "操作",
-            type: "select",
-            required: true,
-            options: ["start", "stop", "restart", "remove"].map((v) => ({
-              value: v,
-              label:
-                {
-                  start: "启动",
-                  stop: "停止",
-                  restart: "重启",
-                  remove: "删除",
-                }[v] ?? v,
-            })),
-          },
-        ],
-      },
-      {
-        type: "docker.pull",
-        label: "拉取镜像",
-        dangerous: false,
-        fields: [
-          {
-            name: "image",
-            label: "镜像名称与标签",
-            required: true,
-            placeholder: "nginx:stable",
-          },
-        ],
-      },
-      {
-        type: "compose.deploy",
-        label: "Compose 部署",
-        dangerous: true,
-        fields: [
-          { name: "project", label: "项目名", required: true },
-          {
-            name: "yaml",
-            label: "Compose YAML",
-            type: "textarea",
-            required: true,
-            placeholder: "services:\n  web:\n    image: nginx:stable",
-          },
-        ],
-      },
-    ],
-  },
   files: {
     title: "文件管理",
     description:

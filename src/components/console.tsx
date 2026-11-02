@@ -51,6 +51,7 @@ import {
 import { Topology } from "./topology";
 import { Backups } from "./backups";
 import { Updates } from "./updates";
+import { DockerManagement } from "./docker-manager";
 const nav = [
   {
     group: "集群",
@@ -132,8 +133,9 @@ export function Console() {
     if (path === "/tasks") return <Tasks />;
     if (path === "/updates") return <Updates />;
     if (path === "/backups") return <Backups />;
+    if (path === "/docker") return <DockerManagement />;
     if (path === "/terminal") return null;
-    if (["/docker", "/files", "/system"].includes(path))
+    if (["/files", "/system"].includes(path))
       return <Operations key={path} mode={path.slice(1)} />;
     if (
       [

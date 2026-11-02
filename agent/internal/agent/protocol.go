@@ -35,6 +35,7 @@ type Message struct {
 	AgentID     string `json:"agentId,omitempty"`
 	Task        *Task  `json:"task,omitempty"`
 	TaskID      string `json:"taskId,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
 	Payload     any    `json:"payload,omitempty"`
 	Sequence    int    `json:"sequence,omitempty"`
 	Stream      string `json:"stream,omitempty"`

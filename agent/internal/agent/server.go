@@ -1,7 +1,7 @@
 // @file server.go
 // @project PipkerOps
 // @module agent/https-server
-// @description 独立 Agent HTTPS 信息、受权 WebSocket 与流式制品上传入口。
+// @description 独立 Agent HTTPS 信息、Docker 直连、受权 WebSocket 与流式制品上传入口。
 // @logic TLS 证书本地签发，Bearer 恒时验证；更新制品校验哈希后原子保存；断线不取消宿主任务。
 // @dependencies Go HTTP/TLS, gorilla/websocket, durable journal
 // @index_tags agent, https, websocket, artifacts
@@ -79,6 +79,8 @@ func (c *Client) handler(ctx context.Context, identity *identityStore) http.Hand
 			return
 		}
 		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/docker/"):
+			c.handleDocker(ctx, w, r)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/info":
 			host, _ := os.Hostname()
 			writeJSON(w, map[string]any{"agentId": identity.connection().AgentID, "name": c.config.Name, "hostname": host, "os": runtime.GOOS, "arch": runtime.GOARCH, "agentVersion": Version, "protocolVersion": 1, "deployRoot": c.config.DeployRoot})

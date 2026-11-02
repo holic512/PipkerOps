@@ -1,8 +1,8 @@
 // @file client.go
 // @project PipkerOps
 // @module agent/connection
-// @description 独立 HTTPS Agent 的 WebSocket 会话、心跳和任务调度。
-// @logic 单管理连接串行写；最多四任务并行，更新独占；任务不随断线取消，升级结果确认后重启。
+// @description 独立 HTTPS Agent 的 WebSocket 会话、心跳、任务调度和 Docker 操作日志回传。
+// @logic 单管理连接串行写；普通任务与直接操作共用四个执行位，更新独占；执行不随断线取消，升级结果确认后重启。
 // @dependencies gorilla/websocket, agent journal, collector, executor
 // @index_tags agent, gateway, websocket, reconnect
 // @author holic512
@@ -25,6 +25,7 @@ import (
 type Client struct {
 	config         Config
 	journal        *journal
+	docker         *dockerJournal
 	executor       *Executor
 	mu             sync.Mutex
 	conn           *websocket.Conn
@@ -72,7 +73,11 @@ func Run(ctx context.Context, c Config) error {
 	if err != nil {
 		return err
 	}
-	client := &Client{config: c, journal: j, executor: &Executor{StateDir: c.StateDir, DeployRoot: c.DeployRoot}, slots: make(chan struct{}, 4)}
+	docker, err := newDockerJournal(filepath.Join(c.StateDir, "docker-operations"))
+	if err != nil {
+		return err
+	}
+	client := &Client{config: c, journal: j, docker: docker, executor: &Executor{StateDir: c.StateDir, DeployRoot: c.DeployRoot}, slots: make(chan struct{}, 4)}
 	client.pendingRestart, err = j.pendingUpgradeRestart()
 	if err != nil {
 		return err
@@ -133,6 +138,12 @@ func (c *Client) acceptConnection(ctx context.Context, conn *websocket.Conn, age
 		slog.Error("replay task journal failed", "error", err)
 		return
 	}
+	if c.docker != nil {
+		if err := c.docker.replay(c.send); err != nil {
+			slog.Error("replay Docker operation log failed", "error", err)
+			return
+		}
+	}
 	go c.monitor(connCtx)
 	for {
 		var message Message
@@ -176,6 +187,12 @@ func (c *Client) acceptConnection(ctx context.Context, conn *websocket.Conn, age
 				slog.Error("task acknowledgement was not persisted", "taskId", message.TaskID, "error", err)
 			} else {
 				c.maybeRestartAfterAck(ctx, message.TaskID)
+			}
+		case "docker.operation.ack":
+			if c.docker != nil {
+				if err := c.docker.ack(message.OperationID); err != nil {
+					slog.Error("Docker operation acknowledgement failed", "operationId", message.OperationID)
+				}
 			}
 		case "terminal.open", "terminal.input", "terminal.resize", "terminal.close":
 			terminal.handle(connCtx, message)

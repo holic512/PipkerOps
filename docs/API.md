@@ -1,6 +1,6 @@
 # API 与 MCP 契约
 
-Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{error}`；HTTP状态区分401/403/400/404/409/500。业务接口只允许 HTTPS；反向代理保留的协议和 Host 动态决定同源地址，HTTP 返回403“请以 HTTPS 访问”。会话写请求必须与当前外部地址同源。独立API Key使用Bearer。MCP为 `/api/mcp` 标准无状态Streamable HTTP，只接受Bearer；方法中的点替换为下划线，工具参数 `{params:{...}}`。`tools/list`公开每个方法的字段/必填项/枚举/默认值，`tasks_create`按任务类型公开对应payload；与Web调用共用 `src/lib/services/contracts.ts` 输入契约。工具参数中的confirmed没有默认true，不能将工具发现视为操作者授权。
+Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{error}`；HTTP状态区分400/401/403/404/409/422/500/502。业务接口只允许 HTTPS；反向代理保留的协议和 Host 动态决定同源地址，HTTP 返回403“请以 HTTPS 访问”。会话写请求必须与当前外部地址同源。独立API Key使用Bearer。MCP为 `/api/mcp` 标准无状态Streamable HTTP，只接受Bearer；方法中的点替换为下划线，工具参数 `{params:{...}}`。`tools/list`公开每个方法的字段/必填项/枚举/默认值，`tasks_create`按任务类型公开对应payload；与Web调用共用 `src/lib/services/contracts.ts` 输入契约。工具参数中的confirmed没有默认true，不能将工具发现视为操作者授权。
 
 所有节点操作在服务端校验角色、scope、节点范围与高危许可。VIEWER不能写；节点接入管理、Key管理、平台审计需要ADMIN。Key空 `nodeIds`无节点权限，`["*"]`全节点。Key原文仅创建时返回一次。当前Key不能创建其他Key；持久Cron和探针保留创建Key身份并在每次调度与执行前重授权；升级前没有授权创建者的旧探针会停用，重新保存后恢复。API列表至多返回近期记录，不能当作全量数据导出。
 
@@ -97,6 +97,34 @@ QUEUED→DISPATCHED→RUNNING→SUCCEEDED/FAILED；失去执行证据为UNKNOWN�
 
 Compose部署先暂存并校验YAML，通过后保存配置再运行`up`。语法失败不替换原配置；运行阶段失败可能已经创建或修改资源。新Agent的结果包含`configurationSaved`、`applySucceeded`，运行失败另有`runtimeMayBePartial:true`；Web运维页和任务详情提供准确项目状态入口。保留此次尝试的配置，不自动回滚或重放，先查状态/日志，再显式修正配置。旧Agent没有这些附加标志，需升级才能得到完整恢复提示；原任务状态和结果对象保持兼容。
 
+## Docker / Compose 直连管理
+
+交互入口使用共享 Web/MCP 直连服务，不创建 `Task` 或 `TaskLog`。Ops 从服务端使用节点公开 CA 和私有调用凭证访问 Agent；浏览器不接触凭证。旧 Docker 任务类型保留，供已有定时计划、自定义操作和历史客户端兼容使用。
+
+| 方法 | 输入 | 结果 |
+| --- | --- | --- |
+| `docker.list` | `nodeId` | `containers:[{id,name,image,state,status,ports,createdAt}]`，完整 ID |
+| `docker.inspect` | `nodeId,id` | `containers`，仅返回受限详情，不包含环境变量和命令 |
+| `docker.stats` | `nodeId,id?` | `containers`，保留真实 CLI 统计字段；缺采样不补零 |
+| `docker.logs` | `nodeId,id,tail?`，默认200、最多2000 | `output,truncated` |
+| `compose.list` | `nodeId` | `projects:[{name,status,managed}]`，合并运行项目及已保存的受管配置 |
+| `compose.status/read` | `nodeId,project` | `services` / `project,yaml`；外部项目可查询状态，配置编辑限平台受管项目 |
+| `docker.action` | `nodeId,id,action(start/stop/restart/remove),confirmed:true,idempotencyKey` | 独立操作记录；删除不强制停止，不删除挂载卷 |
+| `docker.pull` | `nodeId,image,idempotencyKey` | 独立操作记录 |
+| `compose.deploy` | `nodeId,project,yaml,confirmed:true,idempotencyKey` | 独立操作记录；YAML 上限128 KiB，与配置读取一致 |
+| `docker.operations.list` | `nodeId` | 最近50条操作摘要，不附带输出正文 |
+| `docker.operations.get` | `id` | 完整操作、日志和执行结果；活动/未知记录通过 Agent 快照对账 |
+
+读取使用 `docker:read`；写入使用 `docker:write`，生命周期与 Compose 部署另需高危许可和显式确认；不依赖 `tasks:*`。所有接口继续校验角色和节点范围。MCP 同名方法以点替换为下划线，公开输入/输出结构和正确的只读标记。
+
+写操作状态为 `REQUESTED`（请求中）、`RUNNING`、`SUCCEEDED`、`FAILED`、`UNKNOWN`；没有排队、领取或自动重试。相同请求身份只查询原记录，参数或调用者变化返回409。初始响应不代表完成，应使用返回 ID 读取操作日志。连接失败可能已发生实际操作，UNKNOWN 时先核对资源，不换键重提。
+
+Agent 通过 `POST /v1/docker/query` 即时读取，`POST /v1/docker/operations` 立即启动写入，`GET /v1/docker/operations/:id` 返回快照。写操作在独立 `docker-operations` 目录留存身份、日志及结果；关闭页面或 HTTP 连接不取消执行。普通任务和直接操作共用四个执行位，升级独占；忙时返回409，不进入队列。
+
+Gateway 接收 `docker.operation.started/log/result`，日志按 `(operationId,sequence)` 去重，结果持久化后回复 `docker.operation.ack`。断线恢复只重放执行证据；Agent 重启中断的操作标为 UNKNOWN，不重新执行。沿用命令输出大小上限，达到上限明确标记截断。自动列表/统计刷新不落持久操作记录；写入记录审计，不保存完整 YAML 或凭证。Agent 日志当前不自动清理，应监控状态目录容量。
+
+页面左侧按现有文件夹选择节点，右侧同页管理容器和 Compose。列表每5秒刷新，活动操作日志每秒更新；详情展示字段及表格，配置展示 YAML，执行输出展示文本。`node/target/action` 旧链接定位资源并允许自动读取；写操作仍须用户确认。旧 Agent 返回不支持时明确提示升级，不回退到任务执行。发布顺序为 Agent 0.1.2，再迁移数据库并部署 Ops 0.1.7；配套 Skill 0.1.1 使用直连工具。
+
 ## 终端消息
 
 获取ticket后将返回的 `path` 与浏览器当前地址组合为同源wss URL，浏览器Origin必须匹配当前外部协议及Host（含端口）。发送 `{type:"terminal.input",data}` 或 `{type:"terminal.resize",cols,rows}`；接收terminal.output(data)、terminal.exit、terminal.error。ticket一次消费；关闭、注销、会话过期、Key吊销或节点吊销会结束会话。终端内容可能含敏感信息，平台审计记录建立/结束，不把交互内容作为任务脚本自动重放。
@@ -105,9 +133,9 @@ Compose部署先暂存并校验YAML，通过后保存配置再运行`up`。语�
 
 ## 应用实例运维入口
 
-应用中心的部署实例提供 Docker 详情/日志/生命周期/终端、Compose 状态/配置/部署更新、systemd 状态/管理及自定义动作入口。运维页面支持 `node`、`target`、`action` 查询参数，终端使用 `node`、`target`；参数只预填，不触发执行。切换节点后不继续预填原节点目标。任务入队后查看页面结果或任务详情；服务端照常校验角色、scope、节点范围和高危许可。
+应用中心的部署实例提供 Docker 详情/日志/生命周期/终端、Compose 状态/配置/部署更新、systemd 状态/管理及自定义动作入口。运维页面支持 `node`、`target`、`action` 查询参数，终端使用 `node`、`target`；Docker 页面可自动读取对应资源，写入不会自动执行；其他运维页仍只预填。切换节点后不沿用原节点目标。Docker 直接操作查看独立日志，其他任务查看任务详情；服务端照常校验角色、scope、节点范围和高危许可。
 
-解除实例关联只移除平台关联和该实例的健康探针，不删除节点资源；确认框展示应用、实例、节点、类型及目标。已保存的运维链接仍是共用页面的参数预填，解除关联不会使其失效或自动执行；用户显式提交时继续按当前权限和实际目标执行，资源已删除则由任务报告失败。
+解除实例关联只移除平台关联和该实例的健康探针，不删除节点资源；确认框展示应用、实例、节点、类型及目标。已保存的运维链接仍是共用页面的参数预填，解除关联不会使其失效或自动执行；用户显式提交时继续按当前权限和实际目标执行，资源已删除则由对应直连查询或任务报告失败。
 
 自定义动作页接收 `node`、`target`、`applicationId`、`deploymentId`，仅为动作声明的同名参数预填；用户选择动作并检查全部参数后确认执行，不猜测其他参数含义。节点选项受动作节点范围限制。
 

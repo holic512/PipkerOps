@@ -44,7 +44,7 @@ export async function POST(request: Request) {
         method.replaceAll(".", "_"),
         {
           title: method,
-          description: `PipkerOps 业务方法 ${method}，params 使用平台 API 契约。远程执行返回 Task；危险操作必须 confirmed:true。`,
+          description: `PipkerOps 业务方法 ${method}，params 使用平台 API 契约。Docker/Compose 直接查询或返回独立操作日志，其他任务入口返回 Task；危险操作必须 confirmed:true。`,
           inputSchema: {
             params:
               method === "tasks.create" ? mcpTaskInput : methodSchemas[method],

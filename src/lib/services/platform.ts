@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module business-api
  * @description Web 与 MCP 共用的资源服务入口，路由节点分类、业务方法、平台备份与输入契约。
- * @logic 查询执行scope/节点过滤，总览在SQL限制逐节点最新采样；任务按计划筛选，远端操作统一持久化并审计。
+ * @logic 查询执行scope/节点过滤，总览在SQL限制逐节点最新采样；任务按计划筛选，Docker 直连记录独立操作日志，其他远端操作保持任务审计。
  * @dependencies Prisma, authorization, node/task services, cron-parser
  * @index_tags api, apps, probes, topology, automation
  * @author holic512
@@ -16,6 +16,8 @@ import { randomToken, hashToken } from "../crypto";
 import * as nodes from "./nodes";
 import * as organization from "./node-organization";
 import * as backups from "./backups";
+import { executeDocker } from "./docker";
+import { dockerMethodSchemas, type DockerMethod } from "../docker-contracts";
 import { listReleases, queueUpdate } from "./updates";
 import { metricDetails } from "./metric-details";
 import { createTask, validateTask, listTasks, getTask } from "./tasks";
@@ -112,6 +114,8 @@ export async function execute(
   if (!Object.hasOwn(methodSchemas, method))
     throw new ApiError(404, "未知业务方法");
   const schema = methodSchemas[method as keyof typeof methodSchemas];
+  if (Object.hasOwn(dockerMethodSchemas, method))
+    return executeDocker(actor, method as DockerMethod, schema.parse(input));
   const p = schema.passthrough().parse(input);
   switch (method) {
     case "backups.list":

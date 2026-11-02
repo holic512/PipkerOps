@@ -2,7 +2,7 @@
  * @file agent-connection.ts
  * @project PipkerOps
  * @module agent-transport
- * @description Agent 接入文件、受信 HTTPS 请求和私有访问凭证存储。
+ * @description Agent 接入文件、受信 HTTPS/JSON 请求和私有访问凭证存储。
  * @logic 入口验证接入文件；严格验证 CA/地址且不跟随重定向；凭证不进入普通查询。
  * @dependencies Node.js HTTPS/filesystem, Zod
  * @index_tags agent, https, credentials
@@ -147,5 +147,80 @@ export async function agentRequest(
       req.on("close", () => source.destroy());
       source.pipe(req);
     } else req.end();
+  });
+}
+
+/** Docker uses bounded JSON requests; credentials and TLS policy stay server-side. */
+export async function agentDockerRequest(
+  bundle: Pick<ConnectionBundle, "url" | "caPem" | "accessKey">,
+  path: string,
+  payload?: unknown,
+) {
+  return new Promise<unknown>((resolve, reject) => {
+    const data = payload === undefined ? undefined : JSON.stringify(payload);
+    const req = request(
+      new URL(path, bundle.url),
+      {
+        method: data === undefined ? "GET" : "POST",
+        ca: bundle.caPem,
+        minVersion: "TLSv1.2",
+        timeout: 15000,
+        headers: {
+          Authorization: `Bearer ${bundle.accessKey}`,
+          ...(data === undefined
+            ? {}
+            : {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(data),
+              }),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > 2 * 1024 * 1024) {
+            res.destroy();
+            reject(new ApiError(502, "Agent Docker 响应超过 2 MiB"));
+          } else chunks.push(chunk);
+        });
+        res.on("error", reject);
+        res.on("end", () => {
+          const status = res.statusCode ?? 502;
+          if (status === 404) {
+            reject(
+              new ApiError(
+                404,
+                "Agent 不支持 Docker 直连接口或操作记录不存在，请检查 Agent 版本",
+              ),
+            );
+            return;
+          }
+          if (status === 401 || status === 403) {
+            reject(new ApiError(403, "Agent 访问 Key 无效"));
+            return;
+          }
+          try {
+            const response = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+            if (status !== 200 && status !== 202) {
+              reject(
+                new ApiError(
+                  [400, 409, 422].includes(status) ? status : 502,
+                  response.error === "Agent busy or maintenance in progress"
+                    ? "Agent 正忙或正在维护，请稍后刷新"
+                    : String(response.error ?? "Agent Docker 请求失败"),
+                ),
+              );
+            } else resolve(response);
+          } catch {
+            reject(new ApiError(502, "Agent 返回了无效的 Docker 响应"));
+          }
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.on("error", (error) => reject(agentError(error)));
+    req.end(data);
   });
 }

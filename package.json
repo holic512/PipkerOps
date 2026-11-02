@@ -1,6 +1,6 @@
 {
   "name": "pipkerops",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "type": "module",
   "engines": {
@@ -32,7 +32,8 @@
     "test:database": "node --import tsx --test tests/database-concurrency.integration.ts",
     "test:history-capacity": "DEVICE_HISTORY_CAPACITY=true node --import tsx --test tests/database-concurrency.integration.ts",
     "test:managed": "node --import tsx --test tests/managed-deployment.integration.ts",
-    "test:agent-upgrade": "node --import tsx --test tests/agent-upgrade.integration.ts"
+    "test:agent-upgrade": "node --import tsx --test tests/agent-upgrade.integration.ts",
+    "test:docker": "node --import tsx --test tests/docker-direct.integration.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.4.3",

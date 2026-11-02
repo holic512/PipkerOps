@@ -13,6 +13,7 @@
 | 应用拓扑 | Application、Deployment、Dependency                | 应用独立存在；同应用/节点/类型/目标不重复；依赖禁止自引用                           |
 | 探针     | Probe、ProbeResult                                 | 来源为空表示主控，否则为指定 Agent；保存 HTTP/TCP 配置、字段映射及执行身份          |
 | 任务调度 | Task、TaskLog、Schedule                            | 任务持久化；日志按任务内 sequence 去重；计划保存下次执行时间和创建身份              |
+| Docker 直连 | DockerOperation、DockerOperationLog | 独立操作身份、状态和日志；不进入任务队列，日志按操作内 sequence 去重 |
 | 告警审计 | AlertRule、Notification、AuditEvent                | 规则仅指向一个节点或探针；通知支持已读；审计关联身份、节点及资源                    |
 | 运维资源 | Site、CustomAction                                 | 站点保存域名/上游/配置；动作保存类型、动态参数、节点范围和高危标记                  |
 
@@ -119,3 +120,7 @@ npm run test:database
 | 套件 | 6项通过，总耗时约18.5秒 |
 
 这些是本机内存文件系统上的单次观测，未测试30天完整原始采样、更没有填满365天摘要；365天请求只覆盖已有30天数据。不能据此推断生产磁盘延迟、全年满量查询或50节点长期持续采集表现。此前全年约1,402万行仍是算术估算，生产容量验收保持待完成。
+
+## Docker 操作日志
+
+`DockerOperation` 保存方法、节点、操作者/Key身份、来源、目标、生命周期动作、全局唯一幂等键及请求摘要、执行状态/时间、有限输出、错误和结果；不保存 Compose YAML。`DockerOperationLog(operationId,sequence)` 唯一约束去重重连输出。写入意图仅用于追踪直接请求，没有领取、租约、重试或 Worker 调度。开始和完成关联 AuditEvent。旧 Task/TaskLog/Schedule 模型保持兼容。迁移 `202611030001_docker_operations` 仅新增类型和表，不修改历史任务。

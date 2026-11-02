@@ -88,6 +88,7 @@ const states: Record<string, [string, string]> = {
   UNKNOWN: ["待确认", "neutral"],
   PAUSED: ["已停用", "neutral"],
   QUEUED: ["排队中", "neutral"],
+  REQUESTED: ["请求中", "info"],
   DISPATCHED: ["已分发", "info"],
   RUNNING: ["执行中", "info"],
   SUCCEEDED: ["成功", "good"],
@@ -98,6 +99,10 @@ const states: Record<string, [string, string]> = {
   ERROR: ["错误", "bad"],
   running: ["运行中", "good"],
   exited: ["已停止", "neutral"],
+  created: ["已创建", "neutral"],
+  paused: ["已暂停", "warn"],
+  restarting: ["重启中", "info"],
+  dead: ["异常退出", "bad"],
   online: ["在线", "good"],
   offline: ["离线", "bad"],
 };

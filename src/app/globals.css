@@ -1007,6 +1007,228 @@ td.inline-actions {
   margin: 0;
   color: #344256;
 }
+
+.docker-workspace {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.docker-node-picker {
+  margin: 0;
+  overflow: hidden;
+}
+.docker-picker-toggle {
+  display: none;
+}
+.docker-picker-search {
+  display: block;
+  padding: 0 12px 12px;
+}
+.docker-picker-search input {
+  width: 100%;
+  min-width: 0;
+}
+.docker-node-picker nav {
+  max-height: calc(100vh - 310px);
+  overflow: auto;
+  padding: 0 8px 12px;
+}
+.docker-node-picker ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.docker-node-picker ul ul {
+  padding-inline-start: 15px;
+}
+.docker-picker-node,
+.docker-picker-folder {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 9px 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--foreground);
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.docker-picker-node:hover,
+.docker-picker-folder:hover {
+  background: var(--secondary);
+}
+.docker-picker-node.active {
+  color: var(--primary);
+  background: #eaf2ff;
+}
+.docker-picker-node > span,
+.docker-picker-folder > span {
+  flex: 1;
+  min-width: 0;
+}
+.docker-picker-node small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.docker-picker-folder small {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.docker-picker-node svg,
+.docker-picker-folder svg {
+  flex: none;
+}
+.docker-picker-node:focus-visible,
+.docker-picker-folder:focus-visible {
+  outline-offset: -2px;
+}
+.docker-resources {
+  min-width: 0;
+}
+.docker-resources > .panel + .panel {
+  margin-top: 16px;
+}
+.docker-node-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.docker-node-heading h2 {
+  margin: 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.docker-resources > .list-toolbar {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.docker-resources .list-toolbar > .inline-actions {
+  margin-inline-start: auto;
+}
+.docker-resource-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.docker-resource-link:hover {
+  text-decoration: underline;
+}
+.docker-image {
+  max-width: 240px;
+  overflow-wrap: anywhere;
+}
+.docker-ports {
+  max-width: 230px;
+  min-width: 100px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.docker-metrics {
+  min-width: 120px;
+  font-variant-numeric: tabular-nums;
+}
+.docker-row-actions {
+  min-width: 250px;
+  flex-wrap: wrap;
+}
+.docker-target-row {
+  background: #eaf2ff;
+}
+.docker-row-menu {
+  position: relative;
+}
+.docker-row-menu summary {
+  padding: 6px 8px;
+  color: var(--primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.docker-row-menu summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.docker-row-menu > div {
+  display: flex;
+  gap: 6px;
+  padding: 6px 0;
+  flex-wrap: wrap;
+}
+.docker-detail-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 24px;
+  margin: 16px 0 24px;
+}
+.docker-detail-fields dt {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.docker-detail-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.docker-yaml {
+  display: grid;
+  gap: 8px;
+}
+.docker-yaml textarea,
+#docker-compose-form textarea {
+  min-height: 300px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  tab-size: 2;
+}
+.docker-resources .inline-error {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1000px) {
+  .docker-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .docker-picker-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    border: 0;
+    padding: 12px;
+    background: var(--card);
+    color: var(--foreground);
+    text-align: start;
+  }
+  .docker-picker-toggle span {
+    margin-inline-start: auto;
+    max-width: 55%;
+    overflow-wrap: anywhere;
+    color: var(--muted-foreground);
+  }
+  .docker-picker-body {
+    display: none;
+  }
+  .docker-picker-body.is-open {
+    display: block;
+  }
+  .docker-node-picker nav {
+    max-height: 320px;
+  }
+}
+@media (max-width: 560px) {
+  .docker-detail-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .docker-resources .list-toolbar > .inline-actions {
+    margin-inline-start: 0;
+  }
+}
 .empty-state p {
   max-width: 58ch;
   font-size: 12px;

@@ -2,8 +2,8 @@
  * @file gateway.ts
  * @project PipkerOps
  * @module agent-gateway
- * @description 主动连接已导入的 HTTPS Agent，持久任务分发及同源 Web 终端转发。
- * @logic CA 与 Agent 身份校验；连接凭证变更即重连；结果入库后 ACK；终端票据一次性消费。
+ * @description 主动连接 HTTPS Agent，任务分发、Docker 独立操作日志及同源 Web 终端转发。
+ * @logic CA 与 Agent 身份校验；连接凭证变更即重连；任务与 Docker 操作分别入库后 ACK；终端票据一次性消费。
  * @dependencies HTTP, WebSocket, Prisma, Redis, agent transport
  * @index_tags gateway, agent, pty, metrics
  * @author holic512
@@ -20,6 +20,8 @@ import { readCredential, testAgent, agentError } from "../lib/agent-connection";
 import { finishTask } from "../lib/services/results";
 import { authorize, requireHttps, refreshActor, type Actor } from "../lib/auth";
 import { taskSpecs } from "../lib/services/tasks";
+import { storeDockerLog, storeDockerSnapshot } from "../lib/services/docker";
+import { dockerSnapshotSchema } from "../lib/docker-contracts";
 const connections = new Map<string, WebSocket>();
 const identifiedConnections = new WeakSet<WebSocket>();
 const connectionCredentials = new WeakMap<WebSocket, string>();
@@ -338,6 +340,18 @@ async function receive(id: string, ws: WebSocket, raw: string) {
       }
     }
   }
+  if (p.type === "task.busy" && p.taskId) {
+    // Direct Docker requests share Agent capacity; a rejected legacy task has not begun.
+    await db().task.updateMany({
+      where: { id: p.taskId, nodeId: id, status: "DISPATCHED" },
+      data: {
+        status: "QUEUED",
+        attempts: { decrement: 1 },
+        dispatchedAt: null,
+        leaseExpiresAt: null,
+      },
+    });
+  }
   if (p.type === "task.started" && p.taskId) {
     const task = await db().task.findFirst({
       where: { id: p.taskId, nodeId: id, status: "DISPATCHED" },
@@ -360,6 +374,29 @@ async function receive(id: string, ws: WebSocket, raw: string) {
         },
       });
     }
+  }
+  if (p.type === "docker.operation.log") {
+    await storeDockerLog(id, z.string().uuid().parse(p.operationId), p);
+  }
+  if (
+    p.type === "docker.operation.started" ||
+    p.type === "docker.operation.result"
+  ) {
+    const snapshot = dockerSnapshotSchema.parse(p.payload);
+    if (snapshot.id !== p.operationId)
+      throw new Error("Docker operation identity mismatch");
+    const stored = await storeDockerSnapshot(id, snapshot);
+    if (
+      stored &&
+      p.type === "docker.operation.result" &&
+      ws.readyState === WebSocket.OPEN
+    )
+      ws.send(
+        JSON.stringify({
+          type: "docker.operation.ack",
+          operationId: snapshot.id,
+        }),
+      );
   }
   if (p.type === "task.log" && p.taskId) {
     const data = z
