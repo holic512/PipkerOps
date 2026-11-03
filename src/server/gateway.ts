@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module agent-gateway
  * @description 主动连接 HTTPS Agent，任务分发、Docker 独立操作日志及同源 Web 终端转发。
- * @logic CA 与 Agent 身份校验；连接凭证变更即重连；任务与 Docker 操作分别入库后 ACK；终端票据一次性消费。
+ * @logic 连接凭证变更即重连；派发前复核任务全部权限；任务与Docker操作分别入库后ACK；终端票据一次性消费。
  * @dependencies HTTP, WebSocket, Prisma, Redis, agent transport
  * @index_tags gateway, agent, pty, metrics
  * @author holic512
@@ -19,7 +19,7 @@ import { hashToken } from "../lib/crypto";
 import { readCredential, testAgent, agentError } from "../lib/agent-connection";
 import { finishTask } from "../lib/services/results";
 import { authorize, requireHttps, refreshActor, type Actor } from "../lib/auth";
-import { taskSpecs } from "../lib/services/tasks";
+import { authorizeTask } from "../lib/services/tasks";
 import { storeDockerLog, storeDockerSnapshot } from "../lib/services/docker";
 import { dockerSnapshotSchema } from "../lib/docker-contracts";
 const connections = new Map<string, WebSocket>();
@@ -537,14 +537,11 @@ async function dispatch() {
               role: "VIEWER",
               apiKeyId: stored.apiKeyId ?? undefined,
             });
-            const spec = taskSpecs[task.type];
-            if (!spec) throw new Error("unknown task");
-            authorize(
+            authorizeTask(
               actor,
-              spec.scope,
+              task.type,
               nodeId,
-              spec.dangerous ||
-                (task.type === "probe.run" && !stored.idempotent),
+              task.type === "probe.run" && !stored.idempotent,
             );
           }
         } catch {

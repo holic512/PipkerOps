@@ -84,6 +84,8 @@ HTTP探针公网目标必须HTTPS；私网/回环允许HTTP用于内网健康检
 | compose.deploy | project,yaml | docker:write | 是 |
 | files.list / files.read | path(绝对路径) | files:read | 否 |
 | files.write / mkdir / remove | path；write另需content | files:write | 是 |
+| container.files.list / read | containerId,path（容器内绝对路径） | files:read + docker:read | 否 |
+| container.files.write / mkdir / remove | containerId,path；write另需content | files:write + docker:write | 是 |
 | nginx.check / nginx.certificate | check:{}；certificate:{domain,staging?} | sites:read | 否 |
 | nginx.reload / nginx.apply / nginx.remove | reload:{}；apply:{domain,config}；remove:{domain} | sites:write | 是 |
 | nginx.acme / nginx.renew | acme:{domain,email,staging?,timeoutSeconds?}；renew:{domain?,staging?,timeoutSeconds?} | sites:write | 是 |
@@ -171,3 +173,11 @@ systemd 周期采样新增 `payload.services`，仅包含已加载的服务单�
 | `GET /api/backups/:id` | 认证后流式下载归档，支持管理员 Session 或合规 Bearer Key，不公开绝对文件路径 |
 
 Worker 在实际执行前重新校验创建者权限。备份超时、失败或执行状态不明不会自动重放；页面可通过原幂等键找回任务。归档文件保存在 Docker 持久目录，更新容器不清理。离线恢复步骤见部署文档，运行中的业务接口不提供覆盖恢复。
+
+### 远程工作台与容器文件
+
+`/terminal` 为「远程工作台」，`/files` 保留查询参数跳转至该入口；`node` 指定节点，`target` 指定容器名称或 ID，省略 `target` 表示宿主机。文件树和活动终端共用目标，文件目录浏览不自动改变 Shell 工作目录。「在终端进入」只粘贴转义后的 `cd` 命令，等待用户回车执行。
+
+文件操作继续通过 `tasks.create` 提交、`tasks.get` 查询结果。宿主机使用 `files.*`，容器使用独立的 `container.files.*`（Agent 0.1.3 起），不回退为宿主机任务。容器 ID 使用与终端相同的名称约束；创建及派发前同时校验文件与 Docker scope。写操作必须 `confirmed:true` 且有高危许可，提交失败沿用幂等键找回原任务；UNKNOWN 不自动重放。
+
+目录结果为 `{path,containerId?,entries:[{name,directory,symlink,size,mode,modifiedAt}],limited}`，最多 1000 项。读取正文在任务 `output`，`result` 包含 `path`、`containerId?`、`truncated`、`binary`；最多 256 KiB，截断和非 UTF-8 文本禁止在页面编辑覆盖。写入采用同目录临时文件原子替换，权限 0600；新建目录权限 0750，删除不递归，拒绝符号链接穿越及受保护路径。

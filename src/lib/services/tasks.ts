@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module tasks
  * @description 统一校验任务类型、目标权限、高危确认与幂等键，持久化执行意图和审计。
- * @logic 平台备份由主控执行；Web/MCP/Cron共用校验与执行；列表可按计划关联筛选且保留节点授权过滤；非幂等任务只有一次尝试。
+ * @logic Web/MCP/Cron共用校验；容器文件同时校验文件和Docker权限；非幂等任务只有一次尝试。
  * @dependencies Prisma, Zod, authorization
  * @index_tags tasks, audit, execution
  * @author holic512
@@ -22,7 +22,13 @@ const name = z
   .regex(/^[a-zA-Z0-9_.:@/+-]+$/);
 export const taskSpecs: Record<
   string,
-  { scope: string; dangerous: boolean; idempotent: boolean; schema: z.ZodType }
+  {
+    scope: string;
+    additionalScope?: string;
+    dangerous: boolean;
+    idempotent: boolean;
+    schema: z.ZodType;
+  }
 > = {
   "platform.backup": {
     scope: "admin:write",
@@ -260,6 +266,37 @@ export const taskSpecs: Record<
     }),
   },
 };
+const containerFilePath = text
+  .startsWith("/")
+  .refine((value) => !value.includes("\0"), "路径不能包含空字符");
+for (const action of ["list", "read", "write", "mkdir", "remove"]) {
+  const spec = taskSpecs[`files.${action}`];
+  taskSpecs[`container.files.${action}`] = {
+    ...spec,
+    additionalScope: spec.dangerous ? "docker:write" : "docker:read",
+    schema: z.object({
+      containerId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/),
+      path: containerFilePath,
+      ...(action === "write" ? { content: z.string().max(262144) } : {}),
+    }),
+  };
+}
+
+export function authorizeTask(
+  actor: Actor,
+  type: string,
+  nodeId?: string,
+  dangerous = false,
+) {
+  if (!Object.hasOwn(taskSpecs, type))
+    throw new ApiError(400, "不支持的任务类型");
+  const spec = taskSpecs[type];
+  authorize(actor, spec.scope, nodeId, spec.dangerous || dangerous);
+  if (spec.additionalScope)
+    authorize(actor, spec.additionalScope, nodeId, spec.dangerous || dangerous);
+  return spec;
+}
+
 const safeProject = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/);
 const domain = z
   .string()
@@ -348,10 +385,7 @@ export async function validateTask(
   transaction?: Prisma.TransactionClient,
 ) {
   const data = taskInput.parse(input);
-  if (!Object.hasOwn(taskSpecs, data.type))
-    throw new ApiError(400, "不支持的任务类型");
-  const spec = taskSpecs[data.type];
-  authorize(actor, spec.scope, data.nodeId, spec.dangerous);
+  const spec = authorizeTask(actor, data.type, data.nodeId);
   if (spec.dangerous) confirm(data.confirmed);
   let payload = spec.schema.parse(data.payload) as Record<string, unknown>;
   if (data.type === "probe.run") {

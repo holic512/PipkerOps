@@ -199,3 +199,16 @@ sh scripts/package-agent.sh 0.1.0 arm64 /tmp/pipkerops-agent-release
 新增 Docker 契约单测随 `npm test` 运行，Agent HTTPS/独立 journal 测试随 `go test ./...` 运行。浏览器验证仅使用该独立夹具；`DOCKER_UI_TEST=true node --import tsx tests/docker-direct.integration.ts` 会在测试结束后保持临时 Web 供交互验证，输出私有 context 文件路径，通过 SIGINT 结束并清理夹具。
 
 本次验证：58项 TypeScript 单元测试、Agent `go test ./...`、6项隔离 Docker 集成检查通过；生产构建使用 `npx next build --webpack` 通过，默认 Turbopack 在本环境因构建子进程绑定端口被拒而失败。浏览器在1440px和390px检查节点树、准确行操作、确认取消、离线切换、旧日志链接及 Compose 表单返回保留输入；主工作区和表单弹窗 axe 检查均0违规/0待确认。
+
+
+## 远程工作台验证（2026-11-03）
+
+文件管理与远程终端统一为「远程工作台」，旧 `/files` 入口保留查询参数跳转 `/terminal`。节点及 Docker 部署详情继续通过 `node` / `target` 定位工作目标。文件树以宿主机或容器为独立上下文，跨页面保留目录及会话；目录命令仅粘贴，用户回车后执行。
+
+`npm test` 包含容器文件输入契约、双 scope 授权、目录命令引用、轮询停止和写入提交后查询断线只找回原任务的回归测试。Agent 测试覆盖目录元数据、独立命令参数、二进制输出和 UTF-8 截断边界。
+
+`npm run test:docker` 在原隔离 PostgreSQL / Redis / Docker-in-Docker 夹具内新增工作台检查：宿主机与容器同路径隔离、五种文件操作、真实容器 PTY 互相读写、中文/空格/单引号/换行名称、二进制与读取截断、1000 项目录限制、符号链接及保护路径、停止/缺失容器、只读文件系统、未确认拒绝和 Gateway 派发前 Docker scope 复核。此检查继续使用持久任务与真实 Agent，不连接业务节点。
+
+浏览器使用 `agent-browser` 独立会话及夹具自建 HTTPS/WSS 代理，已验证 1440px / 390px 布局、无页面横向溢出、文件编辑确认、文件与终端双向读写、两个容器内容隔离、宿主机/容器会话切换、分屏焦点同步、跨页面保留、离线禁用、树键盘展开/读取、弹窗焦点恢复、手机文件/终端切换及关闭工作台释放连接。工作台和文件弹窗 axe 检查均 0 违规、0 待确认；设计检测无发现。
+
+`DOCKER_UI_TEST=true node --import tsx --test tests/docker-direct.integration.ts` 保留专用页面，输出私有 context 文件路径；context 包含 HTTPS origin 和临时测试 Cookie 文件路径，不输出凭据。使用独立会话导入该测试 Cookie 后访问 origin；本地自签证书仅在该测试会话中忽略证书错误。交互验证最长两小时，结束向 context 中的测试 PID 发送 SIGINT，清理夹具自有资源。

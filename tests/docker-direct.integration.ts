@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
+import WebSocket from "ws";
 import { writeFile, symlink, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -17,7 +18,9 @@ import {
   stopAgent,
 } from "./helpers/agent-fixture";
 import { runtimeFixture } from "./helpers/runtime-fixture";
+import { uiProxy } from "./helpers/ui-proxy";
 import { configValues } from "../src/lib/config";
+import { redis } from "../src/lib/redis";
 import { execute } from "../src/lib/services/platform";
 import {
   methodOutputSchemas,
@@ -34,7 +37,7 @@ import type { PrismaClient } from "../src/generated/prisma/client";
 const runFile = promisify(execFile);
 test(
   "隔离 Linux：Docker 全部直连、独立日志、Gateway 回传与任务兼容",
-  { timeout: process.env.DOCKER_UI_TEST === "true" ? 1800000 : 420000 },
+  { timeout: process.env.DOCKER_UI_TEST === "true" ? 7200000 : 420000 },
   async (t) => {
     const fixture = await organizationFixture();
     const previousConfig = { ...configValues };
@@ -46,6 +49,8 @@ test(
     let gateway: ChildProcess | undefined;
     let web: ChildProcess | undefined;
     let runtime: ReturnType<typeof runtimeFixture> | undefined;
+    let proxy: Awaited<ReturnType<typeof uiProxy>> | undefined;
+    let terminalRedis: Awaited<ReturnType<typeof redis>> | undefined;
     let gatewayLog = "";
     try {
       const redisPassword = randomBytes(24).toString("hex");
@@ -259,7 +264,8 @@ test(
       await fixture.client.node.create({
         data: { name: "离线验证节点", status: "APPROVED", folderId: folder.id },
       });
-      runtime = runtimeFixture(await availablePort());
+      const gatewayPort = await availablePort();
+      runtime = runtimeFixture(gatewayPort);
       gateway = runtime.start("gateway");
       gateway.stdout?.on("data", (part) => {
         gatewayLog += String(part);
@@ -294,7 +300,7 @@ test(
         );
       const project = "direct-fixture";
       const yaml =
-        'services:\n  web:\n    image: localhost:5000/direct-fixture:latest\n    command: [sh, -c, "echo docker-direct-ready; sleep 600"]\n';
+        'services:\n  web:\n    image: localhost:5000/direct-fixture:latest\n    command: [sh, -c, "echo docker-direct-ready; sleep 10800"]\n';
       let containerId = "";
       await t.test(
         "镜像拉取、部署离页继续、资源解析和日志回看均不创建任务",
@@ -591,7 +597,328 @@ test(
           assert.equal(await fixture.client.task.count(), 1);
         },
       );
+      await t.test(
+        "远程工作台：宿主机/容器文件、边界、权限及PTY互相读写",
+        async () => {
+          const task = async (
+            type: string,
+            payload: Record<string, unknown>,
+            expected = "SUCCEEDED",
+          ) => {
+            const created = await call<{ id: string }>("tasks.create", {
+              type,
+              payload,
+              nodeId: node.id,
+              confirmed: true,
+            });
+            const completed = await until(
+              () =>
+                fixture.client.task.findUniqueOrThrow({
+                  where: { id: created.id },
+                }),
+              (value) =>
+                ["SUCCEEDED", "FAILED", "CANCELLED", "UNKNOWN"].includes(
+                  value.status,
+                ),
+              type,
+            );
+            assert.equal(
+              completed.status,
+              expected,
+              `${type}: ${completed.error}`,
+            );
+            return completed;
+          };
+          const root = "/tmp/workspace 中文 '目录";
+          const file = `${root}/file '中文.txt`;
+          await task("files.mkdir", { path: root });
+          await task("container.files.mkdir", { containerId, path: root });
+          await task("files.write", { path: file, content: "host-only" });
+          await task("container.files.write", {
+            containerId,
+            path: file,
+            content: "container-only",
+          });
+          assert.equal(
+            (await task("files.read", { path: file })).output,
+            "host-only",
+          );
+          assert.equal(
+            (await task("container.files.read", { containerId, path: file }))
+              .output,
+            "container-only",
+          );
+          const listed = await task("container.files.list", {
+            containerId,
+            path: root,
+          });
+          assert.ok(JSON.stringify(listed.result).includes("file '中文.txt"));
+          const quote = (value: string) =>
+            `'${value.replaceAll("'", "'\\''")}'`;
+          terminalRedis = await redis();
+          const wsTicket = await call<{ path: string }>("terminal.ticket", {
+            nodeId: node.id,
+            containerId,
+            confirmed: true,
+          });
+          const ws = new WebSocket(
+            new URL(wsTicket.path, `ws://127.0.0.1:${gatewayPort}`),
+            {
+              headers: {
+                Host: "localhost",
+                Origin: "https://localhost",
+                "X-Forwarded-Proto": "https",
+              },
+            },
+          );
+          let output = "";
+          ws.on("message", (raw) => {
+            const packet = JSON.parse(String(raw));
+            if (packet.type === "terminal.output") output += packet.data;
+          });
+          await new Promise<void>((done, reject) => {
+            ws.once("open", done);
+            ws.once("error", reject);
+          });
+          try {
+            await until(
+              async () => output,
+              (value) => value.includes("#") || value.includes("$"),
+              "container prompt",
+            );
+            ws.send(
+              JSON.stringify({
+                type: "terminal.input",
+                data: `cat ${quote(file)}; printf 'terminal-new' > ${quote(file)}; printf '\\nPTY_file_done\\n'\n`,
+              }),
+            );
+            await until(
+              async () => output,
+              (value) =>
+                value.includes("container-only") &&
+                value.includes("PTY_file_done\r\n"),
+              "PTY reads file task and writes new content",
+            );
+            assert.equal(
+              (await task("container.files.read", { containerId, path: file }))
+                .output,
+              "terminal-new",
+            );
+          } finally {
+            ws.close();
+          }
+          docker(
+            "exec",
+            name,
+            "docker",
+            "exec",
+            containerId,
+            "sh",
+            "-c",
+            'ln -s "$1" "$2"; printf data > "$3"; mkdir "$4"; printf "binary\\000value" > "$5"',
+            "fixture",
+            file,
+            `${root}/link`,
+            `${root}/line\nfile`,
+            `${root}/nested`,
+            `${root}/binary`,
+          );
+          await task(
+            "container.files.read",
+            { containerId, path: `${root}/link` },
+            "FAILED",
+          );
+          await task(
+            "container.files.read",
+            { containerId, path: "/proc/self/environ" },
+            "FAILED",
+          );
+          await task(
+            "container.files.remove",
+            { containerId, path: root },
+            "FAILED",
+          );
+          const metadata = await task("container.files.list", {
+            containerId,
+            path: root,
+          });
+          assert.ok(JSON.stringify(metadata.result).includes("line\\nfile"));
+          const binary = await task("container.files.read", {
+            containerId,
+            path: `${root}/binary`,
+          });
+          assert.equal((binary.result as { binary: boolean }).binary, true);
+          docker(
+            "exec",
+            name,
+            "docker",
+            "exec",
+            containerId,
+            "sh",
+            "-c",
+            'head -c 262145 /dev/zero > "$1"; for i in $(seq 1 1001); do : > "$2/item-$i"; done',
+            "fixture",
+            `${root}/large`,
+            `${root}/nested`,
+          );
+          const large = await task("container.files.read", {
+            containerId,
+            path: `${root}/large`,
+          });
+          assert.equal(
+            (large.result as { truncated: boolean }).truncated,
+            true,
+          );
+          docker(
+            "exec",
+            name,
+            "docker",
+            "exec",
+            containerId,
+            "sh",
+            "-c",
+            'awk \'BEGIN {for (i=0;i<90000;i++) printf "中"}\' > "$1"',
+            "fixture",
+            `${root}/chinese`,
+          );
+          const chinese = await task("container.files.read", {
+            containerId,
+            path: `${root}/chinese`,
+          });
+          assert.equal(chinese.output, "中".repeat(87381));
+          assert.equal(
+            (chinese.result as { truncated: boolean }).truncated,
+            true,
+          );
+          assert.equal((chinese.result as { binary: boolean }).binary, false);
+          const limited = await task("container.files.list", {
+            containerId,
+            path: `${root}/nested`,
+          });
+          assert.equal((limited.result as { limited: boolean }).limited, true);
+          assert.equal(
+            (limited.result as { entries: unknown[] }).entries.length,
+            1000,
+          );
+          await task("container.files.remove", { containerId, path: file });
+          await task(
+            "container.files.read",
+            { containerId: "missing-workspace-target", path: "/etc/hostname" },
+            "FAILED",
+          );
+          for (const scopes of [["files:read"], ["docker:read"]]) {
+            await assert.rejects(
+              execute(
+                {
+                  ...actor,
+                  apiKeyId: "scope-test",
+                  nodeIds: [node.id],
+                  scopes,
+                },
+                "tasks.create",
+                {
+                  nodeId: node.id,
+                  type: "container.files.list",
+                  payload: { containerId, path: "/" },
+                },
+              ),
+              { status: 403 },
+            );
+          }
+          await assert.rejects(
+            call("tasks.create", {
+              nodeId: node.id,
+              type: "container.files.write",
+              payload: { containerId, path: file, content: "no-confirm" },
+            }),
+            { status: 400 },
+          );
+          const deniedKey = await fixture.client.apiKey.create({
+            data: {
+              userId: user.id,
+              name: "file-dispatch-denial",
+              keyPrefix: "fixture",
+              keyHash: hashToken(randomToken()),
+              scopes: ["files:read"],
+              nodeIds: [node.id],
+              allowDangerous: false,
+            },
+          });
+          const deniedTask = await fixture.client.task.create({
+            data: {
+              type: "container.files.list",
+              nodeId: node.id,
+              actorId: user.id,
+              apiKeyId: deniedKey.id,
+              source: "WEB",
+              status: "QUEUED",
+              payload: { containerId, path: "/" },
+              idempotent: true,
+              maxAttempts: 1,
+            },
+          });
+          const denied = await until(
+            () =>
+              fixture.client.task.findUniqueOrThrow({
+                where: { id: deniedTask.id },
+              }),
+            (value) => value.status === "CANCELLED",
+            "Gateway checks additional container scope",
+          );
+          assert.equal(denied.error, "执行前权限已失效");
+          await fixture.client.apiKey.update({
+            where: { id: deniedKey.id },
+            data: { revokedAt: new Date() },
+          });
+          const stopped = docker(
+            "exec",
+            name,
+            "docker",
+            "create",
+            "nginx:1.28-alpine",
+          );
+          await task(
+            "container.files.list",
+            { containerId: stopped, path: "/" },
+            "FAILED",
+          );
+          docker("exec", name, "docker", "rm", stopped);
+          const readonly = docker(
+            "exec",
+            name,
+            "docker",
+            "run",
+            "-d",
+            "--read-only",
+            "--entrypoint",
+            "sh",
+            "nginx:1.28-alpine",
+            "-c",
+            "sleep 600",
+          );
+          await task(
+            "container.files.write",
+            { containerId: readonly, path: "/tmp/file", content: "blocked" },
+            "FAILED",
+          );
+          docker("exec", name, "docker", "rm", "-f", readonly);
+          await task("files.remove", { path: file });
+          await task("files.remove", { path: root });
+        },
+      );
       if (process.env.DOCKER_UI_TEST === "true") {
+        docker("exec", name, "mkdir", "-p", "/tmp/workspace-ui/sub");
+        dockerWrite(name, "/tmp/workspace-ui/sample.txt", "host-ui-original");
+        docker(
+          "exec",
+          name,
+          "docker",
+          "exec",
+          containerId,
+          "sh",
+          "-c",
+          "mkdir -p /tmp/workspace-ui/sub; printf container-ui-original > /tmp/workspace-ui/sample.txt",
+        );
         for (const path of [
           ".next",
           "package.json",
@@ -638,17 +965,20 @@ test(
           },
         });
         const cookieName = (await import("../src/lib/auth")).sessionCookie;
+        proxy = await uiProxy(port, gatewayPort, fixture.directory);
         await mkdir(join(runtime.directory, "ui"), { recursive: true });
         await writeFile(
           join(runtime.directory, "ui", "cookie.curl"),
-          `curl 'http://127.0.0.1:${port}/' -H 'Cookie: ${cookieName}=${token}'\n`,
+          `curl '${proxy.origin}/' -H 'Cookie: ${cookieName}=${token}'\n`,
           { mode: 0o600 },
         );
         await writeFile(
           join(runtime.directory, "ui", "context.json"),
           JSON.stringify({
             pid: process.pid,
-            port,
+            port: proxy.port,
+            origin: proxy.origin,
+            agentContainer: name,
             nodeId: node.id,
             containerId,
             project,
@@ -665,6 +995,8 @@ test(
       console.error("Owned Docker fixture Gateway:", gatewayLog.slice(-1200));
       throw error;
     } finally {
+      terminalRedis?.destroy();
+      await proxy?.close();
       await stopAgent(web);
       await stopAgent(gateway);
       runtime?.cleanup();

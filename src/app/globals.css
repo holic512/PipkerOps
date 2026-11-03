@@ -2011,6 +2011,281 @@ fieldset {
     width: 17px;
   }
 }
+.remote-workspace-toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.remote-workspace-toolbar label,
+.remote-file-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.remote-workspace-toolbar select {
+  min-width: 160px;
+}
+.remote-target-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.remote-target-form input {
+  width: 260px;
+}
+.remote-session-count {
+  margin-left: auto;
+  align-self: center;
+}
+.remote-workspace-notice {
+  margin: 0;
+  padding: 10px 16px;
+}
+.remote-workspace-body {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  min-height: 540px;
+}
+.remote-workspace-body.files-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+.remote-workspace-body.files-collapsed .remote-files-area {
+  display: none;
+}
+.remote-files-area {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+.remote-files {
+  display: flex;
+  flex-direction: column;
+  height: clamp(540px, calc(100dvh - 260px), 850px);
+}
+.remote-files[hidden],
+.terminal-pane[hidden] {
+  display: none;
+}
+.remote-files-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 12px 4px;
+}
+.remote-files-heading > span {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.remote-files-target {
+  margin: 0 12px 12px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.remote-path-form {
+  display: flex;
+  gap: 6px;
+  margin: 0 10px 8px;
+}
+.remote-path-form input {
+  min-width: 0;
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
+.remote-file-actions {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.remote-file-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+  margin: 0;
+}
+.remote-file-tree ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.remote-file-tree [role="treeitem"] {
+  list-style: none;
+  outline: none;
+}
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  min-height: 34px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.file-tree-row:hover {
+  background: var(--muted);
+}
+.file-tree-row.selected {
+  background: #e9f1ff;
+  color: #124aa1;
+}
+.file-tree-row svg {
+  flex-shrink: 0;
+}
+.file-tree-chevron {
+  display: flex;
+  flex: 0 0 13px;
+}
+.file-tree-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.file-tree-row > .muted {
+  margin-left: auto;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.remote-file-tree [role="treeitem"]:focus-visible > .file-tree-row {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.file-tree-feedback {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.file-tree-feedback p {
+  margin-bottom: 8px;
+}
+.remote-files-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.remote-terminal {
+  min-width: 0;
+}
+.remote-session-tabs {
+  min-height: 42px;
+  overflow-x: auto;
+}
+.remote-session-tabs .terminal-tab {
+  flex-shrink: 0;
+}
+.remote-workspace .terminal-pane.current > .terminal-pane-title {
+  background: #213e65;
+  color: #eef5ff;
+}
+.terminal-pane-title > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-current-label {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.remote-terminal .xterm-container {
+  height: clamp(420px, calc(100dvh - 380px), 720px);
+}
+.remote-file-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0;
+}
+.remote-file-content {
+  min-height: 320px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+.remote-mobile-switch {
+  display: none;
+}
+@media (max-width: 1100px) and (min-width: 851px) {
+  .remote-workspace-body {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+  .remote-target-form input {
+    width: 220px;
+  }
+  .remote-workspace .terminal-grid.split {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 850px) {
+  .remote-files-toggle {
+    display: none;
+  }
+  .remote-mobile-switch {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .remote-workspace-body,
+  .remote-workspace-body.files-collapsed {
+    display: block;
+    min-height: 0;
+  }
+  .remote-workspace-body.mobile-files .remote-files-area {
+    display: block;
+    border-right: 0;
+  }
+  .remote-workspace-body.mobile-files .remote-terminal,
+  .remote-workspace-body.mobile-terminal .remote-files-area {
+    display: none;
+  }
+  .remote-files {
+    height: max(460px, calc(100dvh - 330px));
+  }
+  .remote-terminal .xterm-container {
+    height: 380px;
+  }
+}
+@media (max-width: 560px) {
+  .remote-workspace-toolbar {
+    padding: 12px;
+    gap: 10px;
+  }
+  .remote-workspace-toolbar > label,
+  .remote-target-form {
+    width: 100%;
+  }
+  .remote-target-form label {
+    min-width: 0;
+    flex: 1;
+  }
+  .remote-target-form input {
+    width: 100%;
+    min-width: 0;
+  }
+  .remote-workspace-toolbar select {
+    width: 100%;
+  }
+  .remote-session-count {
+    font-size: 11px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,

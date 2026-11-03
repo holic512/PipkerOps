@@ -292,7 +292,7 @@ export function NodeDetail({ id }: { id: string }) {
         description={`${node?.hostname ?? id} · ${node?.os ?? "等待采集"} / ${node?.arch ?? "—"}`}
       >
         <Button variant="outline" asChild>
-          <Link href={`/terminal?node=${id}`}>打开终端</Link>
+          <Link href={`/terminal?node=${id}`}>打开工作台</Link>
         </Button>
         {canWrite && (
           <Button

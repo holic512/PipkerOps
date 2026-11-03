@@ -2,7 +2,7 @@
 // @project PipkerOps
 // @module agent/execution
 // @description Linux 运维任务路由、命令边界、有限输出及升级验证。
-// @logic 命令按参数执行；Compose报告配置保存与运行失败边界；高危任务由主控授权且Agent不自动重试。
+// @logic 命令按参数执行；文件按宿主机/容器任务分派；高危任务由主控授权且Agent不自动重试。
 // @dependencies Go standard library, Docker/systemctl/nginx/ufw/package manager CLIs
 // @index_tags agent, operations, docker, nginx, files, upgrade
 // @author holic512
@@ -28,6 +28,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 type logFunc func(stream, message string)
@@ -50,6 +51,7 @@ type executionParams struct {
 	Name           string `json:"name"`
 	Path           string `json:"path"`
 	Content        string `json:"content"`
+	ContainerID    string `json:"containerId"`
 	Domain         string `json:"domain"`
 	Config         string `json:"config"`
 	Port           int    `json:"port"`
@@ -187,6 +189,8 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		return command("systemctl", p.Action, "--", p.Name)
 	case "files.list", "files.read", "files.write", "files.mkdir", "files.remove":
 		return fileOperation(task.Type, p, e.StateDir)
+	case "container.files.list", "container.files.read", "container.files.write", "container.files.mkdir", "container.files.remove":
+		return containerFileOperation(ctx, task.Type, p)
 	case "nginx.check":
 		return command("nginx", "-t")
 	case "nginx.reload":
@@ -411,11 +415,8 @@ func fileOperation(taskType string, p executionParams, stateDir string) (string,
 		if e != nil {
 			return "", nil, e
 		}
-		truncated := len(b) > maxOutput
-		if truncated {
-			b = b[:maxOutput]
-		}
-		return string(b), map[string]any{"path": path, "truncated": truncated}, nil
+		content, truncated, binary := fileText(b)
+		return content, map[string]any{"path": path, "truncated": truncated, "binary": binary}, nil
 	case "files.write":
 		if len(p.Content) > maxOutput {
 			return "", nil, errors.New("file content exceeds 256 KiB")
@@ -429,6 +430,27 @@ func fileOperation(taskType string, p executionParams, stateDir string) (string,
 		err = os.Remove(path) // Deliberately non-recursive: never expand user paths or globs.
 	}
 	return "", map[string]any{"path": path}, err
+}
+
+func fileText(raw []byte) (content string, truncated, binary bool) {
+	truncated = len(raw) > maxOutput
+	if truncated {
+		raw = raw[:maxOutput]
+		// A byte limit can split a valid UTF-8 character; omit its partial tail
+		// rather than classifying an ordinary Chinese text file as binary.
+		start := len(raw) - 1
+		for start > 0 && start > len(raw)-utf8.UTFMax && !utf8.RuneStart(raw[start]) {
+			start--
+		}
+		if !utf8.FullRune(raw[start:]) {
+			raw = raw[:start]
+		}
+	}
+	binary = !utf8.Valid(raw) || bytes.IndexByte(raw, 0) >= 0
+	if binary {
+		return "", truncated, true
+	}
+	return string(raw), truncated, false
 }
 
 func validatedPath(raw, stateDir string, mutation bool) (string, error) {

@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module manage-shell
  * @description 紧凑分组侧栏、双行顶部导航、登录状态与模块页面的管理端入口。
- * @logic 路由选择真实业务及系统备份页面，认证失败转登录；访问标签保留当前会话导航。
+ * @logic 路由选择真实业务及系统备份页面，认证失败转登录；文件旧入口归一至远程工作台；标签保留工作台连接及导航。
  * @dependencies React, Next.js, SWR, Lucide
  * @index_tags ui, navigation, console
  * @author holic512
@@ -23,7 +23,6 @@ import {
   Container,
   Globe,
   Terminal,
-  Folder,
   Command,
   CalendarClock,
   ListChecks,
@@ -41,17 +40,12 @@ import { useQuery } from "./shared";
 import { Overview, NodeDetail } from "./nodes";
 import { Nodes } from "./node-manager";
 import { Applications, Probes } from "./applications";
-import {
-  Tasks,
-  TaskDetail,
-  Operations,
-  Resources,
-  TerminalPage,
-} from "./operations";
+import { Tasks, TaskDetail, Operations, Resources } from "./operations";
 import { Topology } from "./topology";
 import { Backups } from "./backups";
 import { Updates } from "./updates";
 import { DockerManagement } from "./docker-manager";
+import { RemoteWorkspace } from "./remote-workspace";
 const nav = [
   {
     group: "集群",
@@ -68,8 +62,7 @@ const nav = [
     items: [
       { path: "/docker", name: "Docker / Compose", icon: Container },
       { path: "/sites", name: "站点管理", icon: Globe },
-      { path: "/terminal", name: "远程终端", icon: Terminal },
-      { path: "/files", name: "文件管理", icon: Folder },
+      { path: "/terminal", name: "远程工作台", icon: Terminal },
       { path: "/system", name: "系统运维", icon: Command },
     ],
   },
@@ -94,7 +87,8 @@ const nav = [
 ];
 const items = nav.flatMap((g) => g.items);
 export function Console() {
-  const path = usePathname();
+  const pathname = usePathname();
+  const path = pathname === "/files" ? "/terminal" : pathname;
   const router = useRouter();
   const [mobile, setMobile] = useState(false);
   const [tabs, setTabs] = useState(path === "/" ? ["/"] : ["/", path]);
@@ -107,6 +101,10 @@ export function Console() {
   const current = items.find((i) =>
     i.path === "/" ? path === "/" : path.startsWith(i.path),
   );
+  useEffect(() => {
+    if (pathname === "/files")
+      router.replace(`/terminal${window.location.search}`, { scroll: false });
+  }, [pathname, router]);
   useEffect(() => {
     if (path !== "/login" && user.error?.status === 401)
       router.replace("/login");
@@ -135,7 +133,7 @@ export function Console() {
     if (path === "/backups") return <Backups />;
     if (path === "/docker") return <DockerManagement />;
     if (path === "/terminal") return null;
-    if (["/files", "/system"].includes(path))
+    if (path === "/system")
       return <Operations key={path} mode={path.slice(1)} />;
     if (
       [
@@ -277,7 +275,7 @@ export function Console() {
           {render()}
           {tabs.includes("/terminal") && (
             <div hidden={path !== "/terminal"}>
-              <TerminalPage />
+              <RemoteWorkspace visible={path === "/terminal"} />
             </div>
           )}
         </main>

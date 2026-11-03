@@ -297,7 +297,7 @@ export function Applications() {
                                 ["容器详情", "/docker", "docker.inspect"],
                                 ["日志", "/docker", "docker.logs"],
                                 ["生命周期", "/docker", "docker.action"],
-                                ["终端", "/terminal", ""],
+                                ["远程工作台", "/terminal", ""],
                               ]
                             : d.type === "compose"
                               ? [

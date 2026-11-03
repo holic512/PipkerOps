@@ -141,7 +141,7 @@ WebSocket 返回 `docker.operation.started`、`docker.operation.log`（operation
 
 除 `system.info`、`probe.run` 外，所有运维任务只允许在 Linux 执行。Docker/Compose、Nginx、systemd、UFW 及软件包管理依赖相应主机工具；缺失时返回真实错误，不静默替代。APT 软件安装先 `apt-get update`，成功后才安装，复用同一任务超时并保留两步输出/实时日志；更新失败不会继续安装。DNF 使用其原有安装流程；不添加第三方软件源。
 
-命令参数不会经 shell 拼接，只有显式 `shell.exec` 使用 shell。子进程不继承 `PIPKEROPS_*` 环境变量。默认命令超时 5 分钟，三类更新默认 30 分钟，可设置 1–3600 秒；输出最多保存 256 KiB，stdout/stderr 分别限制实时日志字节数；协议帧最大 2 MiB，结构化结果最多 1 MiB。
+命令参数不会经 shell 拼接；显式 `shell.exec` 接受用户脚本，容器文件任务仅使用固定脚本和独立参数。子进程不继承 `PIPKEROPS_*` 环境变量。默认命令超时 5 分钟，三类更新默认 30 分钟，可设置 1–3600 秒；输出最多保存 256 KiB，stdout/stderr 分别限制实时日志字节数；协议帧最大 2 MiB，结构化结果最多 1 MiB。
 
 文件接口拒绝符号链接穿越及 Agent 状态、`/proc`、`/sys`、`/dev` 访问，不进行递归删除。它属于已授权的主机管理能力，不是用于隔离恶意本机 root 用户的安全沙箱。写文件采用原子替换、0600 权限，父目录需已存在。
 
@@ -208,3 +208,11 @@ Docker/Compose 新任务通过临时 CLI fixture 验证参数及 JSON 输出结�
 证书轮换验证临期阈值、CA/Key/Agent ID 保持不变、SAN、原子落盘失败及重启加载；升级自动重启用惰性回调验证结果/ACK/分发标记顺序及重复确认去重，测试绝不调用真实 systemd 重启。
 
 HTTP探针与主控保持一致：拒绝自动重定向，包括同来源307/308，防止POST等请求被自动重放；如需检查最终地址，应显式配置该地址。
+
+## 容器文件任务（0.1.3 起）
+
+`container.files.list/read/write/mkdir/remove` 使用 `{containerId,path,content?}`，通过现有持久任务执行并对账。`path` 是容器内绝对路径，`content` 仅写入需要；宿主机 `files.*` 保持兼容。容器任务使用独立类型，旧 Agent 会拒绝不支持的类型，不会将容器路径作用于宿主机。
+
+执行使用 `docker exec -i <containerId> /bin/sh -ceu <固定脚本>`，目标路径作为位置参数、内容通过 stdin 传递，保持容器默认用户权限。容器需运行并包含 `/bin/sh` 及 BusyBox/GNU 基础文件工具（stat、head、cat、mkdir、rm、rmdir、mktemp、chmod、mv、sync）；缺失工具、停止或只读文件系统返回真实错误，不安装工具或提权。目录元数据使用 NUL 分隔，保留中文、空格及换行文件名，再由 Go 生成结构化结果。
+
+列表最多 1000 项，读取最多 256 KiB，返回截断与二进制标记。容器内部拒绝 `/proc`、`/sys`、`/dev` 和符号链接穿越；禁止修改根目录及递归删除。写入使用同目录临时文件、0600 权限、同步和原子替换；创建目录使用 0750 权限。终端目录联动只由管理端粘贴 `cd` 命令，PTY 协议保持原样。
