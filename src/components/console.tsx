@@ -9,12 +9,13 @@
  * @author holic512
  */
 "use client";
+import Image from "next/image";
 import Link from "next/link";
+import logo from "@/assets/logo.png";
 import packageInfo from "../../package.json";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  Network,
   LayoutDashboard,
   Server,
   Boxes,
@@ -167,9 +168,14 @@ export function Console() {
       )}
       <aside className={`sidebar ${mobile ? "sidebar-open" : ""}`}>
         <Link className="brand" href="/">
-          <span>
-            <Network size={23} />
-          </span>
+          <Image
+            src={logo}
+            alt=""
+            width={32}
+            height={32}
+            className="brand-logo"
+            loading="eager"
+          />
           PipkerOps
         </Link>
         <div className="workspace-label">

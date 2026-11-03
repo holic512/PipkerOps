@@ -1,6 +1,8 @@
 "use client";
+import Image from "next/image";
 import { useSyncExternalStore, useState } from "react";
-import { Network, ArrowRight, LockKeyhole } from "lucide-react";
+import { ArrowRight, LockKeyhole } from "lucide-react";
+import logo from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 export default function Login() {
   const secure = useSyncExternalStore(
@@ -13,7 +15,14 @@ export default function Login() {
   return (
     <main className="login-page">
       <div className="login-brand">
-        <Network size={32} />
+        <Image
+          src={logo}
+          alt=""
+          width={40}
+          height={40}
+          className="brand-logo"
+          loading="eager"
+        />
         <span>PipkerOps</span>
       </div>
       <section className="login-panel">

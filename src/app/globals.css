@@ -265,14 +265,10 @@ svg {
 .brand:hover {
   text-decoration: none;
 }
-.brand > span {
-  width: 31px;
-  height: 33px;
-  border-radius: 8px;
-  color: #fff;
-  background: var(--primary);
-  display: grid;
-  place-items: center;
+.brand-logo {
+  display: block;
+  flex-shrink: 0;
+  mix-blend-mode: multiply;
 }
 .workspace-label {
   display: flex;
@@ -1764,7 +1760,7 @@ fieldset {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: var(--primary);
+  color: #182230;
   font-size: 25px;
   font-weight: 700;
   letter-spacing: -0.03em;
