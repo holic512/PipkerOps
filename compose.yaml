@@ -1,6 +1,6 @@
 name: ${COMPOSE_PROJECT_NAME:-pipkerops}
 x-runtime: &runtime
-  image: ${PIPKEROPS_IMAGE:-ghcr.io/holic512/pipkerops}:${PIPKEROPS_VERSION:-0.1.4}
+  image: ${PIPKEROPS_IMAGE:-ghcr.io/holic512/pipkerops}:${PIPKEROPS_VERSION:-0.1.9}
   restart: unless-stopped
   environment:
     NODE_ENV: production
@@ -50,7 +50,7 @@ services:
     depends_on:
       init: { condition: service_completed_successfully }
     healthcheck:
-      test: [CMD, node, --import, tsx, deploy/resources/health.ts]
+      test: [CMD, node, runtime/health.mjs]
       interval: 5s
       timeout: 5s
       retries: 12

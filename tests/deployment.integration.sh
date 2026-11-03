@@ -12,6 +12,7 @@ umask 077
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 [ "$(id -u)" -eq 0 ] || { echo 'Run with sudo to verify deployment ownership for UID 10001.' >&2; exit 1; }
 image=${IMAGE:?Set IMAGE to the locally built application image}
+proxy_image=${PROXY_IMAGE:-nginx:1.28-alpine-slim}
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/pipkerops-deploy.XXXXXX")
 chmod 0755 "$fixture"
 project=pko-test-$(openssl rand -hex 6)
@@ -20,6 +21,7 @@ redis_container=$project-redis
 registry_container=$project-registry
 tls_container=$project-tls
 registry_image=
+registry_proxy_image=
 deployment=$fixture/deploy
 export DEPLOY_CONFIG=$deployment/data/ops/config DEPLOY_DATA=$deployment/data/ops DEPLOY_NGINX=$deployment/resources/nginx.conf
 stage=prepare
@@ -28,11 +30,22 @@ sync_config() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from in
 cleanup() {
   result=$?
   trap - EXIT INT TERM
+  if [ "$result" -ne 0 ] && [ -f "$fixture/operation.log" ]; then
+    python3 - "$fixture/operation.log" "${password:-}" "${admin_password:-}" <<'DIAGNOSTIC'
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(errors='replace')
+for secret in filter(None, sys.argv[2:]):
+    text = text.replace(secret, '[redacted]')
+print('\n'.join(text.splitlines()[-20:]), file=sys.stderr)
+DIAGNOSTIC
+  fi
   if [ "$result" -ne 0 ]; then echo "Deployment verification failed at: $stage" >&2; compose logs --tail 20 init web gateway worker proxy 2>/dev/null || true; docker logs --tail 20 "$tls_container" 2>/dev/null || true; if [ -f "$fixture/registry.log" ]; then tail -20 "$fixture/registry.log"; fi; fi
   docker rm -f "$pg_container" "$redis_container" "$registry_container" "$tls_container" >/dev/null 2>&1 || true
   compose down --remove-orphans >/dev/null 2>&1 || true
   docker run --rm --user 0 --entrypoint sh -v "$fixture:/fixture" "$image" -c 'rm -rf /fixture/*' >/dev/null 2>&1 || true
   if [ -n "$registry_image" ]; then docker image rm "$registry_image" >/dev/null 2>&1 || true; fi
+  if [ -n "$registry_proxy_image" ]; then docker image rm "$registry_proxy_image" >/dev/null 2>&1 || true; fi
   rm -rf "$fixture"
   exit "$result"
 }
@@ -45,6 +58,7 @@ cat > "$deployment/config/ops/compose.env" <<SETTINGS
 COMPOSE_PROJECT_NAME=$project
 PIPKEROPS_IMAGE=${image%:*}
 PIPKEROPS_VERSION=${image##*:}
+PIPKEROPS_PROXY_IMAGE=$proxy_image
 WEB_BIND=127.0.0.1
 WEB_PORT=0
 SETTINGS
@@ -98,6 +112,8 @@ until docker exec "$pg_container" pg_isready -U pipkerops -d pko_a >/dev/null 2>
   attempt=$((attempt+1)); [ "$attempt" -lt 60 ] || exit 1; sleep 1
 done
 for database in pko_b pko_c; do docker exec "$pg_container" createdb -U pipkerops "$database"; done
+stage=first-init-without-downloads
+compose run --rm --no-deps -T -e HTTP_PROXY=http://127.0.0.1:9 -e HTTPS_PROXY=http://127.0.0.1:9 init > "$fixture/operation.log" 2>&1
 stage=start
 python3 "$deployment/script/start.py" > "$fixture/operation.log" 2>&1
 cat > "$fixture/https.conf" <<'NGINX'
@@ -117,7 +133,7 @@ server {
   }
 }
 NGINX
-docker run -d --name "$tls_container" --network "$network" -p 127.0.0.1::443 -v "$fixture/web-cert:/cert:ro" -v "$fixture/https.conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.28-alpine-slim >/dev/null
+docker run -d --name "$tls_container" --network "$network" -p 127.0.0.1::443 -v "$fixture/web-cert:/cert:ro" -v "$fixture/https.conf:/etc/nginx/conf.d/default.conf:ro" "$proxy_image" >/dev/null
 stage=proxy-health
 web_url() { address=$(docker port "$tls_container" 443); printf 'https://%s:%s' "${TEST_CONNECT_HOST:-127.0.0.1}" "${address##*:}"; }
 http_url() { address=$(compose port proxy 80); printf 'http://%s:%s' "${TEST_CONNECT_HOST:-127.0.0.1}" "${address##*:}"; }
@@ -145,6 +161,11 @@ assert_connections() {
 stage=initial-health-login
 login
 assert_connections pko_a
+stage=repeat-init-without-downloads
+admin_before=$(docker exec "$pg_container" psql -U pipkerops -d pko_a -Atc 'SELECT id, "passwordHash" FROM "User" WHERE email = $$admin@fixture.test$$')
+compose run --rm --no-deps -T -e HTTP_PROXY=http://127.0.0.1:9 -e HTTPS_PROXY=http://127.0.0.1:9 init > "$fixture/operation.log" 2>&1
+[ "$admin_before" = "$(docker exec "$pg_container" psql -U pipkerops -d pko_a -Atc 'SELECT id, "passwordHash" FROM "User" WHERE email = $$admin@fixture.test$$')" ]
+echo 'PASS repeated initialization needs no downloads and preserves administrator identity/password'
 credential_id=11111111-1111-4111-8111-111111111111
 docker run --rm --user 0 --entrypoint sh -v "$deployment/data/ops/credentials:/credentials" "$image" -c 'printf "fixture-access-key-preserved" > /credentials/11111111-1111-4111-8111-111111111111; chown 10001:10001 /credentials/*; chmod 600 /credentials/*'
 ca_hash=$(docker run --rm --entrypoint sha256sum -v "$deployment/data/ops/credentials:/credentials:ro" "$image" "/credentials/$credential_id")
@@ -210,7 +231,11 @@ until docker exec "$registry_container" wget -qO- "http://$registry_address/v2/"
 registry_image=$registry_address/pipkerops:${image##*:}
 docker tag "$image" "$registry_image"
 docker push "$registry_image" > "$fixture/registry.log" 2>&1
+registry_proxy_image=$registry_address/nginx:fixture
+docker tag "$proxy_image" "$registry_proxy_image"
+docker push "$registry_proxy_image" >> "$fixture/registry.log" 2>&1
 sed "s|^PIPKEROPS_IMAGE=.*|PIPKEROPS_IMAGE=$registry_address/pipkerops|" "$deployment/config/ops/compose.env" > "$fixture/registry.env"
+printf 'PIPKEROPS_PROXY_IMAGE=%s\n' "$registry_proxy_image" >> "$fixture/registry.env"
 cp "$fixture/registry.env" "$deployment/config/ops/compose.env"
 stage=update-pull-failure
 if python3 "$deployment/script/update.py" nonexistent-fixture-version > "$fixture/operation.log" 2>&1; then exit 1; fi
@@ -304,4 +329,12 @@ echo 'PASS backup deletion removes persistent archive without deleting live appl
 stage=image-content
 [ "$(docker image inspect --format '{{.Config.User}}' "$image")" = '10001:10001' ]
 docker run --rm --entrypoint sh "$image" -c 'test ! -e /app/.env && test ! -e /app/config/app.conf && test ! -e /app/.git && test ! -e /app/.data/pki/ca.key'
-echo 'PASS non-root image excludes runtime credentials and private keys'
+docker run --rm --entrypoint sh "$image" -c '
+  for path in src scripts tsconfig.json prisma.config.ts node_modules/tsx node_modules/esbuild node_modules/eslint node_modules/@vercel/nft; do
+    test ! -e "/app/$path" || exit 1
+  done
+  for role in runtime gateway worker bootstrap health; do test -f "/app/runtime/$role.mjs" || exit 1; done
+  test -f /app/prisma.config.mjs && test -f /app/node_modules/prisma/build/index.js && test -d /app/prisma/migrations
+  command -v pg_dump && command -v pg_restore
+'
+echo 'PASS non-root standalone image contains compiled roles and migration/backup tools without source or build tools'

@@ -62,6 +62,12 @@ python3 -m unittest discover -s tests -p '*_test.py'
 
 新增核心入口维护项目文件索引；配置、私钥、备份、运行状态、生成客户端和构建产物不入库。具体数据库约束和容量测试见[数据库文档](database.md)。
 
+`npm run build` 依次生成 Prisma 客户端、构建 Next.js standalone，再执行 `build:runtime`。最后一步将 Gateway、Worker、容器启动、健康检查、管理员初始化及 Prisma 配置预编译为 Node.js 24 的共享 ESM，并用 `@vercel/nft` 将必要依赖补入同一个 `.next/standalone` 目录。同路径依赖只存一份；另显式保留 Prisma Schema Engine、schema 和迁移目录。镜像继续使用官方 `prisma migrate deploy`，不在启动时安装依赖或下载引擎。
+
+运行镜像只复制合并后的 standalone、静态资源和 shell 入口，不复制完整 `node_modules`、项目源码、开发脚本或 TypeScript 配置。镜像内通过 `node runtime/runtime.mjs <web|gateway|worker|init|restore>` 启动，Gateway 健康检查为 `node runtime/health.mjs`；PostgreSQL 17 客户端继续用于系统备份和恢复。开发环境的 `npm run gateway`、`worker`、`bootstrap`、`db:deploy` 不变。修改运行代码后需重新执行完整构建，不能将旧 standalone 与新源码混用。
+
+2026-11-03 本地 `linux/arm64` 验证使用相同 Node 24.22.1 / Alpine 3.24.3 基础文件系统，按 OCI manifest 的压缩层大小求和：原镜像 286.10 MiB，精简后 104.98 MiB，减少 181.12 MiB（63.31%）。原完整依赖层 209.77 MiB 已移除，合并后的 standalone 层为 42.98 MiB。由于本地基础镜像缓存缺少可导出的原始压缩层，比较前将同一基础文件系统重建为完整本地 OCI 基准；两次镜像的基础及 PostgreSQL 客户端层摘要相同。这是本地 arm64 测量，线上 amd64 体积以对应架构构建为准。
+
 ```sh
 # 隔离 PostgreSQL 17：全部迁移、指标维护、任务并发
 npm run test:database
@@ -78,13 +84,13 @@ docker build --provenance=false -f deploy/resources/Dockerfile -t pipkerops:test
 sudo env IMAGE=pipkerops:test sh tests/deployment.integration.sh
 ```
 
-部署集成测试需要 root 权限以验证 UID 10001 的目录和文件权限。测试只将部署工具复制到临时目录，使用独立配置源和运行副本，创建随机 Compose 项目、临时 PostgreSQL/Redis/registry 和证书，只清理自身资源，不读取仓库中的部署私有配置。测试包含 Python 菜单与启停更新、配置 A/B 切换、空库初始化、登录、三角色连接、错误配置、系统备份 API/Worker/持久文件、离线恢复和镜像无凭据检查。
+部署集成测试需要 root 权限以验证 UID 10001 的目录和文件权限。测试只将部署工具复制到临时目录，使用独立配置源和运行副本，创建随机 Compose 项目、临时 PostgreSQL/Redis/registry 和证书，只清理自身资源，不读取仓库中的部署私有配置。测试包含 Python 菜单与启停更新、配置 A/B 切换、空库及重复初始化、禁用下载代理时管理员身份和密码保持、登录、三角色连接、错误配置、系统备份 API/Worker/持久文件、离线恢复及镜像仅含运行产物检查。
 
 Agent 双架构 CI 使用真实发布安装包和同目录校验文件，验证安装权限、重装保留配置状态、安装不自动启动、运行中拒绝重装，以及实际 systemd 启动、自启、重启、停止和状态菜单。测试拒绝已有 Agent 安装，使用本地测试证书和身份，不连接真实主控。
 
 ## 独立部署与页面更新验收
 
-`npm run build` 后执行下列测试。测试自行创建临时配置、PostgreSQL、Redis、Linux Agent 和真实 HTTPS 代理，不读取已有部署配置。发布服务响应由本地文件夹具提供；制品打包、校验、分发、持久任务、Python 脚本替换和数据库操作均实际执行。
+`npm run build` 后执行下列测试。测试将 standalone 和静态资源完整复制到临时目录，直接运行打包的 JavaScript，不链接仓库源码或完整依赖；自行创建临时配置、PostgreSQL、Redis、Linux Agent 和真实 HTTPS 代理，不读取已有部署配置。发布服务响应由本地文件夹具提供；制品打包、校验、分发、持久任务、Python 脚本替换和数据库操作均实际执行。
 
 ```sh
 # Linux runner 使用 sudo，才能读取容器创建的 0700 私有状态目录

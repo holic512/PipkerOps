@@ -14,6 +14,8 @@ sudo python3 /opt/pipkerops/deploy/menu.py
 
 然后手动编辑 `config/ops/app.conf` 和 `config/ops/compose.env`，再选择“启动”。应用配置依次为数据库、缓存 Redis、初始管理员、持久目录、后台任务；TLS 参数与各自后端相邻。启动才进行数据库迁移和管理员初始化，并只使用已准备的本地镜像。缺少镜像时先停止服务、重新安装；需要切换版本时使用“更新”。重复安装保留实际配置和数据，已有本地镜像可直接复用。
 
+Ops 0.1.9 的 standalone 运行入口与部署脚本 0.1.2 配套。已有部署先更新脚本，再通过“更新”切换 Ops 至 0.1.9 或更新版本；完成镜像切换后再执行普通重启。新 Compose 的 Gateway 健康检查使用镜像内预编译的 JavaScript，旧版 Ops 镜像没有该入口。实际 `compose.env` 保留用户已设置的版本，不会被示例配置覆盖。
+
 数据库与 Redis 是否使用 TLS 完全由 `DATABASE_SSL_MODE`、`REDIS_TLS` 决定，生产环境也支持 `disable`、`false`，不需要额外开关。启用 TLS 时仍可指定各自 CA。脚本不处理 Web TLS，不要求提供域名或证书。私有镜像需要先由执行部署命令的账户完成对应仓库的 `docker login`。
 
 ```sh

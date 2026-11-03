@@ -2,9 +2,9 @@
  * @file managed-deployment.integration.ts
  * @project PipkerOps
  * @module managed-deployment-verification
- * @description 隔离后端、生产Web、独立Agent与真实HTTPS代理的完整接入验证。
- * @logic 只创建临时目录和独立容器；真实验证HTTP接入、持久任务、发布制品更新及配置凭证保留。
- * @dependencies Docker, Go, OpenSSL, built Next.js output
+ * @description 隔离后端、打包运行产物、独立Agent与真实HTTPS代理的完整接入验证。
+ * @logic 复制 standalone 到临时目录并直接运行 JavaScript；验证接入、持久任务、更新及配置凭证保留。
+ * @dependencies Docker, Go, OpenSSL, built standalone runtime
  * @index_tags integration, agent, https, backup
  * @author holic512
  */
@@ -17,7 +17,6 @@ import {
   writeFileSync,
   readFileSync,
   cpSync,
-  symlinkSync,
   rmSync,
   realpathSync,
   readdirSync,
@@ -261,16 +260,16 @@ test(
     const child = (command: string, args: string[], cwd = fixture) => {
       const preload =
         command === globalThis.process.execPath
-          ? ["--import", join(root, "tests/fixtures/managed-github.mjs")]
-          : [];
-      const process = spawn(command, [...preload, ...args], {
+          ? `--import=${JSON.stringify(join(root, "tests/fixtures/managed-github.mjs"))}`
+          : "";
+      const process = spawn(command, args, {
         cwd,
         env: {
           ...globalThis.process.env,
           NODE_ENV: "production",
           PORT: String(webPort),
           HOSTNAME: "127.0.0.1",
-          NODE_OPTIONS: "",
+          NODE_OPTIONS: preload,
           PIPKEROPS_TEST_GITHUB_FIXTURE: join(fixture, "github-responses.json"),
           PIPKEROPS_TEST_GITHUB_AUDIT: join(fixture, "github-network.jsonl"),
           PATH: `${fixture}/bin:${globalThis.process.env.PATH}`,
@@ -335,53 +334,47 @@ test(
         join(fixture, "config/app.conf"),
         `DATABASE_HOST=127.0.0.1\nDATABASE_PORT=${pgPort}\nDATABASE_USERNAME=pipkerops\nDATABASE_PASSWORD=fixture-only\nDATABASE_NAME=managed\nREDIS_HOST=127.0.0.1\nREDIS_PORT=${redisPort}\nREDIS_PASSWORD=fixture-only\nBOOTSTRAP_EMAIL=managed@fixture.test\nBOOTSTRAP_PASSWORD=fixture-only-password-for-tests\nBOOTSTRAP_NAME=Fixture\nGATEWAY_PORT=${gatewayPort}\nNODE_CREDENTIALS_DIR=${fixture}/data/ops/credentials\nBACKUP_DIR=${fixture}/data/ops/backups\nRELEASE_CACHE_DIR=${fixture}/data/ops/releases\nWORKER_INTERVAL_MS=300\n`,
       );
+      cpSync(join(root, ".next/standalone"), fixture, { recursive: true });
+      cpSync(join(root, ".next/static"), join(fixture, ".next/static"), {
+        recursive: true,
+      });
       for (const name of [
-        "node_modules",
         "src",
-        "prisma",
         "scripts",
         "tsconfig.json",
-        "package.json",
         "prisma.config.ts",
+        "node_modules/tsx",
       ])
-        symlinkSync(join(root, name), join(fixture, name));
-      symlinkSync(join(root, ".next"), join(fixture, ".next"));
-      cpSync(
-        join(root, ".next/standalone/server.js"),
-        join(fixture, "server.js"),
-      );
-      execFileSync(
-        process.execPath,
-        ["--import", "tsx", join(root, "deploy/resources/runtime.ts"), "init"],
-        {
-          cwd: fixture,
-          stdio: "pipe",
-          env: { ...process.env, NODE_ENV: "production" },
-        },
-      );
+        assert.equal(existsSync(join(fixture, name)), false, name);
+      execFileSync(process.execPath, ["runtime/runtime.mjs", "init"], {
+        cwd: fixture,
+        stdio: "pipe",
+        env: { ...process.env, NODE_ENV: "production" },
+      });
       mkdirSync(join(fixture, "bin"));
       writeFileSync(
         join(fixture, "bin/pg_dump"),
         `#!/bin/sh\nexec docker exec ${pg} pg_dump -U pipkerops -d managed "$@"\n`,
         { mode: 0o700 },
       );
-      child(process.execPath, ["server.js"]);
-      child(process.execPath, [
-        "--import",
-        "tsx",
-        join(root, "src/server/gateway.ts"),
-      ]);
-      child(process.execPath, [
-        "--import",
-        "tsx",
-        join(root, "src/server/worker.ts"),
-      ]);
+      for (const role of ["web", "gateway", "worker"])
+        child(process.execPath, ["runtime/runtime.mjs", role]);
       await wait(
         () =>
           fetch(`http://127.0.0.1:${webPort}/api/health`).then((r) => r.status),
         (s) => s === 200,
         "Web",
       );
+      await wait(
+        () =>
+          fetch(`http://127.0.0.1:${gatewayPort}/health`).then((r) => r.status),
+        (status) => status === 200,
+        "Gateway",
+      );
+      execFileSync(process.execPath, ["runtime/health.mjs"], {
+        cwd: fixture,
+        stdio: "pipe",
+      });
       const blocked = await fetch(
         `http://127.0.0.1:${webPort}/api/auth/login`,
         { method: "POST", body: "{}" },
@@ -878,11 +871,7 @@ test(
       const gateway = children[1];
       gateway.kill("SIGTERM");
       await new Promise<void>((done) => gateway.once("exit", () => done()));
-      child(process.execPath, [
-        "--import",
-        "tsx",
-        join(root, "src/server/gateway.ts"),
-      ]);
+      child(process.execPath, ["runtime/runtime.mjs", "gateway"]);
       await wait(
         () => rpc<{ connected: boolean }[]>("nodes.list"),
         (r) => r[0].connected,

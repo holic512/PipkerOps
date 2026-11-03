@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module deployment/runtime
  * @description 容器角色启动、外部后端预检及系统备份的离线恢复入口。
- * @logic 配置由应用文本文件载入；预检成功后启动角色，维护命令不输出连接凭据。
+ * @logic 配置由应用文本文件载入；预检后启动预编译角色，使用官方 CLI 迁移且不输出连接凭据。
  * @dependencies Node.js, Prisma, Redis, PostgreSQL 17 client
  * @index_tags deployment, config, init, backup
  * @author holic512
@@ -32,9 +32,15 @@ try {
     for (const [label, args] of [
       [
         "数据库迁移",
-        ["node_modules/prisma/build/index.js", "migrate", "deploy"],
+        [
+          "node_modules/prisma/build/index.js",
+          "migrate",
+          "deploy",
+          "--config",
+          "prisma.config.mjs",
+        ],
       ],
-      ["管理员初始化", ["--import", "tsx", "scripts/bootstrap.ts"]],
+      ["管理员初始化", ["runtime/bootstrap.mjs"]],
     ] as const) {
       stage = label;
       await run(process.execPath, [...args], false);
@@ -49,10 +55,7 @@ try {
     console.log("恢复完成；请核对业务数据与 UNKNOWN 任务后启动应用。");
   } else {
     stage = `${role} 运行`;
-    const args =
-      role === "web"
-        ? ["server.js"]
-        : ["--import", "tsx", `src/server/${role}.ts`];
+    const args = role === "web" ? ["server.js"] : [`runtime/${role}.mjs`];
     await run(process.execPath, args, true);
   }
 } catch (error) {

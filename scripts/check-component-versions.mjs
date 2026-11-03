@@ -62,6 +62,7 @@ if (base && !/^0+$/.test(base)) {
           path,
         ) ||
         path === "scripts/bootstrap.ts" ||
+        path === "scripts/build-runtime.mjs" ||
         /^(compose\.yaml|package\.json|package-lock\.json|next\.config\.|Dockerfile)/.test(
           path,
         ),
