@@ -53,10 +53,7 @@ export function Applications() {
   const [tab, setTab] = useState("instances");
   return (
     <>
-      <PageTitle
-        title="应用中心"
-        description="以应用为中心，关联跨节点的容器、服务和部署实例。"
-      >
+      <PageTitle title="应用中心">
         <Button variant="outline" asChild>
           <Link href="/topology">
             <Waypoints size={16} />
@@ -494,10 +491,7 @@ export function Probes() {
   const op = useOperation(() => void q.mutate(), show || !!selected);
   return (
     <>
-      <PageTitle
-        title="多源探针"
-        description="从主控或指定节点持续探测 HTTP / TCP，记录延迟、成功率与业务字段。"
-      >
+      <PageTitle title="多源探针">
         <Button variant="outline" onClick={() => void q.mutate()}>
           <RotateCw size={15} />
           刷新

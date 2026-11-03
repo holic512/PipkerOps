@@ -201,10 +201,7 @@ function DockerWorkspace({
 
   return (
     <>
-      <PageTitle
-        title="Docker / Compose"
-        description="选择节点，查看实时资源并直接执行操作。执行过程与结果保存在操作日志中。"
-      >
+      <PageTitle title="Docker / Compose">
         <Button
           variant="outline"
           disabled={!nodeId}

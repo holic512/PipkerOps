@@ -280,10 +280,7 @@ export function Topology() {
   ].sort();
   return (
     <>
-      <PageTitle
-        title="应用拓扑"
-        description="从应用依赖定位部署与节点，查看真实探测得到的连通性。"
-      >
+      <PageTitle title="应用拓扑">
         <Button variant="outline" onClick={() => void q.mutate()}>
           <RotateCw size={15} />
           刷新

@@ -137,10 +137,7 @@ export function RemoteWorkspace({ visible }: { visible: boolean }) {
     );
   return (
     <>
-      <PageTitle
-        title="远程工作台"
-        description="在同一工作区管理节点或容器文件，并使用经审计的远程 Shell。浏览目录后可将 cd 命令填入终端，回车执行。"
-      >
+      <PageTitle title="远程工作台">
         <Button
           className="remote-files-toggle"
           variant="outline"

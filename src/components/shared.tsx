@@ -3,8 +3,8 @@
  * @file shared.tsx
  * @project PipkerOps
  * @module shared-ui
- * @description 业务查询、表单、状态与操作确认的共用组件。
- * @logic 查询呈现加载与失败状态；表单支持弹窗底部提交，表格支持键盘滚动；操作确认按所在工作区使用内嵌或独立弹窗。
+ * @description 紧凑页面标题、业务查询、表单、状态与操作确认的共用组件。
+ * @logic 标题与操作共用紧凑行；查询呈现加载与失败状态；表单支持弹窗底部提交，表格支持键盘滚动；操作确认按所在工作区使用内嵌或独立弹窗。
  * @dependencies React, SWR, RPC, UI components
  * @index_tags forms, queries, confirmation, feedback
  * @author holic512
@@ -117,20 +117,15 @@ export function Status({ value }: { value: string }) {
 }
 export function PageTitle({
   title,
-  description,
   children,
 }: {
   title: string;
-  description: string;
   children?: React.ReactNode;
 }) {
   return (
     <div className="page-title">
-      <div>
-        <h1>{title}</h1>
-        <p>{description}</p>
-      </div>
-      <div className="page-actions">{children}</div>
+      <h1>{title}</h1>
+      {children && <div className="page-actions">{children}</div>}
     </div>
   );
 }

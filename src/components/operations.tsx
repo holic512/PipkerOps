@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module operations-ui
  * @description 任务、系统、站点与自动化页面；文件与PTY由远程工作台承载。
- * @logic 任务按计划筛选；资源表单在弹窗内核对，执行结果可重复查看；提交失败保留幂等键，终端不重放输入。
+ * @logic 页面使用紧凑标题，任务标识保留在详情信息区；任务按计划筛选；资源表单在弹窗内核对，执行结果可重复查看；提交失败保留幂等键，终端不重放输入。
  * @dependencies React, shared UI, RPC
  * @index_tags operations, tasks, terminal, automation, ui
  * @author holic512
@@ -71,10 +71,7 @@ export function Tasks() {
   const op = useOperation(() => void q.mutate());
   return (
     <>
-      <PageTitle
-        title="执行任务"
-        description="追踪每次操作的状态、输出和执行来源。结果不明的非幂等任务不会自动重试。"
-      >
+      <PageTitle title="执行任务">
         <Button variant="outline" onClick={() => void q.mutate()}>
           <RotateCw size={15} />
           刷新
@@ -169,7 +166,7 @@ export function TaskDetail({ id }: { id: string }) {
         <ChevronLeft size={15} />
         执行任务
       </Link>
-      <PageTitle title={task?.type ?? "任务详情"} description={id}>
+      <PageTitle title={task?.type ?? "任务详情"}>
         <Button variant="outline" onClick={() => void q.mutate()}>
           <RotateCw size={15} />
           刷新
@@ -184,6 +181,9 @@ export function TaskDetail({ id }: { id: string }) {
           <>
             <div className="node-summary">
               <Status value={task.status} />
+              <span>
+                任务 ID <code>{id}</code>
+              </span>
               <span>来源 {task.source}</span>
               <span>创建 {date(task.createdAt)}</span>
               <span>开始 {date(task.startedAt)}</span>
@@ -224,7 +224,6 @@ const ops: Record<
   string,
   {
     title: string;
-    description: string;
     actions: {
       type: string;
       label: string;
@@ -235,8 +234,6 @@ const ops: Record<
 > = {
   system: {
     title: "系统运维",
-    description:
-      "管理 systemd 服务、防火墙和常用软件，或执行有审计记录的脚本。",
     actions: [
       { type: "system.info", label: "系统信息", dangerous: false, fields: [] },
       {
@@ -421,7 +418,7 @@ function OperationsForm({
   };
   return (
     <>
-      <PageTitle title={config.title} description={config.description}>
+      <PageTitle title={config.title}>
         {task && (
           <Button variant="outline" onClick={() => setResultOpen(true)}>
             查看最近结果
@@ -559,13 +556,13 @@ function OperationsForm({
     </>
   );
 }
-const titles: Record<string, [string, string]> = {
-  sites: ["站点管理", "管理节点 Nginx 反向代理配置，应用前进行语法检查。"],
-  actions: ["自定义操作", "将常用运维流程保存为带动态参数的快捷操作。"],
-  schedules: ["定时调度", "使用 Cron 定期创建持久化任务，执行记录可追溯。"],
-  alerts: ["告警与通知", "设置指标阈值，接收站内通知或 HTTPS Webhook。"],
-  mcp: ["MCP 与密钥", "为 AI Agent 分配工具范围、节点权限与高危操作限制。"],
-  audit: ["操作审计", "记录用户、API Key 和后台任务的关键操作。"],
+const titles: Record<string, string> = {
+  sites: "站点管理",
+  actions: "自定义操作",
+  schedules: "定时调度",
+  alerts: "告警与通知",
+  mcp: "MCP 与密钥",
+  audit: "操作审计",
 };
 type GenericRow = {
   id: string;
@@ -642,7 +639,7 @@ export function Resources({ mode }: { mode: string }) {
     },
     show || !!secret || !!runAction || !!certificateSite || resultOpen,
   );
-  const [title, description] = titles[mode];
+  const title = titles[mode];
   const nodeOptions = nodes.data
     ?.filter((n) => n.status === "APPROVED")
     .map((n) => ({ value: n.id, label: n.name }));
@@ -853,7 +850,7 @@ export function Resources({ mode }: { mode: string }) {
   };
   return (
     <>
-      <PageTitle title={title} description={description}>
+      <PageTitle title={title}>
         <Button variant="outline" onClick={() => void q.mutate()}>
           <RotateCw size={15} />
           刷新

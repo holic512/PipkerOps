@@ -32,10 +32,7 @@ export function Updates() {
   const targetRoot = root || node?.deployRoot || "";
   return (
     <>
-      <PageTitle
-        title="版本更新"
-        description="手动选择发布版本，更新应用和部署脚本。"
-      >
+      <PageTitle title="版本更新">
         {taskId && (
           <Button variant="outline" onClick={() => setResultOpen(true)}>
             查看最近结果

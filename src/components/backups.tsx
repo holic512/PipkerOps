@@ -47,10 +47,7 @@ export function Backups() {
   );
   return (
     <>
-      <PageTitle
-        title="系统备份"
-        description="备份主应用数据库与 Agent 身份证书，记录执行结果并保存到持久存储。"
-      >
+      <PageTitle title="系统备份">
         <Button
           variant="outline"
           onClick={() => void query.mutate()}

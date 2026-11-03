@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module node-monitoring-ui
  * @description 集群概览、节点信息与分类编辑、实际指标历史及共用节点表格单元。
- * @logic 统一查询真实 API；节点名称、文件夹和标签共用编辑弹窗，未采样显示空态。
+ * @logic 统一查询真实 API；紧凑标题下的信息区保留主机与系统身份；节点名称、文件夹和标签共用编辑弹窗，未采样显示空态。
  * @dependencies React, SWR, node services
  * @index_tags nodes, overview, metrics, ui
  * @author holic512
@@ -55,10 +55,7 @@ export function Overview() {
   const o = q.data;
   return (
     <>
-      <PageTitle
-        title="集群总览"
-        description="了解节点状态，及时发现需要处理的问题。"
-      >
+      <PageTitle title="集群总览">
         <Button variant="outline" onClick={() => void q.mutate()}>
           <RotateCw size={15} />
           刷新
@@ -287,10 +284,7 @@ export function NodeDetail({ id }: { id: string }) {
         <ChevronLeft size={15} />
         节点管理
       </Link>
-      <PageTitle
-        title={node?.name ?? "节点详情"}
-        description={`${node?.hostname ?? id} · ${node?.os ?? "等待采集"} / ${node?.arch ?? "—"}`}
-      >
+      <PageTitle title={node?.name ?? "节点详情"}>
         <Button variant="outline" asChild>
           <Link href={`/terminal?node=${id}`}>打开工作台</Link>
         </Button>
@@ -381,6 +375,10 @@ export function NodeDetail({ id }: { id: string }) {
                     : node.status
                 }
               />
+              <span>主机名 {node.hostname ?? "等待采集"}</span>
+              <span>
+                系统 {node.os ?? "等待采集"} / {node.arch ?? "—"}
+              </span>
               <span>Agent {node.agentVersion ?? "—"}</span>
               <span>最近心跳 {date(node.lastSeenAt)}</span>
               <span>

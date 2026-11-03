@@ -318,10 +318,7 @@ export function Nodes() {
   };
   return (
     <>
-      <PageTitle
-        title="节点管理"
-        description="按文件夹组织节点，通过标签快速定位，集中查看连接和资源状态。"
-      >
+      <PageTitle title="节点管理">
         <Button variant="outline" onClick={() => void refresh()}>
           <RotateCw size={15} />
           刷新
