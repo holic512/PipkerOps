@@ -2,7 +2,7 @@
  * @file console.tsx
  * @project PipkerOps
  * @module manage-shell
- * @description 紧凑分组侧栏、双行顶部导航、登录状态与模块页面的管理端入口。
+ * @description 紧凑分组侧栏、双行顶部导航、主题入口、登录状态与模块页面的管理端入口。
  * @logic 路由选择真实业务及系统备份页面，认证失败转登录；文件旧入口归一至远程工作台；标签保留工作台连接及导航。
  * @dependencies React, Next.js, SWR, Lucide
  * @index_tags ui, navigation, console
@@ -47,6 +47,7 @@ import { Backups } from "./backups";
 import { Updates } from "./updates";
 import { DockerManagement } from "./docker-manager";
 import { RemoteWorkspace } from "./remote-workspace";
+import { ThemeSwitcher } from "./theme-provider";
 const nav = [
   {
     group: "集群",
@@ -166,7 +167,10 @@ export function Console() {
           onClick={() => setMobile(false)}
         />
       )}
-      <aside className={`sidebar ${mobile ? "sidebar-open" : ""}`}>
+      <aside
+        aria-label="管理导航"
+        className={`sidebar ${mobile ? "sidebar-open" : ""}`}
+      >
         <Link className="brand" href="/">
           <Image
             src={logo}
@@ -224,11 +228,13 @@ export function Console() {
               <Menu size={20} />
             </Button>
             <span className="breadcrumb">
-              工作空间 <ChevronRight size={14} />{" "}
+              <span className="breadcrumb-root">工作空间</span>
+              <ChevronRight size={14} className="breadcrumb-divider" />
               <strong>{current?.name ?? "详情"}</strong>
             </span>
           </div>
           <div className="topbar-right">
+            <ThemeSwitcher />
             <Link href="/alerts" aria-label="告警与通知" className="icon-link">
               <Bell size={19} />
             </Link>

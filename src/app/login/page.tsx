@@ -4,6 +4,7 @@ import { useSyncExternalStore, useState } from "react";
 import { ArrowRight, LockKeyhole } from "lucide-react";
 import logo from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
+import { ThemeSwitcher } from "@/components/theme-provider";
 export default function Login() {
   const secure = useSyncExternalStore(
     () => () => {},
@@ -14,6 +15,9 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   return (
     <main className="login-page">
+      <div className="login-theme">
+        <ThemeSwitcher />
+      </div>
       <div className="login-brand">
         <Image
           src={logo}

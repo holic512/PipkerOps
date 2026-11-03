@@ -494,7 +494,7 @@ export function Nodes() {
             aria-label="节点文件夹表格，可横向滚动"
             tabIndex={0}
           >
-            <table>
+            <table className="data-table">
               <thead>
                 <tr>
                   {canWrite && (

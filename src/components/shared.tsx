@@ -143,7 +143,7 @@ export function DataTable({
       aria-label={`${headers[0]}表格，可横向滚动`}
       tabIndex={0}
     >
-      <table>
+      <table className="data-table">
         <thead>
           <tr>
             {headers.map((h) => (

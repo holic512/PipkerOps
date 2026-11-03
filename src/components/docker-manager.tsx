@@ -766,7 +766,7 @@ function NodePicker({
     );
   };
   return (
-    <aside className="docker-node-picker panel">
+    <aside className="docker-node-picker panel" aria-label="节点选择">
       <button
         className="docker-picker-toggle"
         aria-expanded={mobileOpen}

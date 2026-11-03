@@ -485,44 +485,67 @@ function HistoryChart({
           {hourly ? "小时均值" : "采样聚合"} · {data.length} 个点
         </span>
       </div>
-      <svg
-        viewBox="0 0 1000 270"
-        role="img"
-        aria-label="CPU和内存使用率历史折线图"
+      <div
+        className="resource-chart-scroll"
+        role="region"
+        aria-label="CPU和内存历史图表，可横向滚动"
+        tabIndex={0}
       >
-        {[0, 25, 50, 75, 100].map((n) => (
-          <g key={n}>
-            <line
-              x1="40"
-              x2="960"
-              y1={220 - n * 1.8}
-              y2={220 - n * 1.8}
-              stroke="#e5eaf0"
-            />
-            <text x="3" y={224 - n * 1.8} fontSize="12" fill="#526173">
-              {n}%
-            </text>
-          </g>
-        ))}
-        <polyline
-          points={series(hourly ? "cpuAvg" : "cpuPercent")}
-          fill="none"
-          stroke="#1664df"
-          strokeWidth="2"
-        />
-        <polyline
-          points={series(hourly ? "memoryAvg" : "memoryPercent")}
-          fill="none"
-          stroke="#0e8a70"
-          strokeWidth="2"
-        />
-        <text x="40" y="255" fontSize="12" fill="#526173">
-          {date(String(data[0]?.recordedAt ?? data[0]?.bucketAt))}
-        </text>
-        <text x="960" textAnchor="end" y="255" fontSize="12" fill="#526173">
-          {date(String(data.at(-1)?.recordedAt ?? data.at(-1)?.bucketAt))}
-        </text>
-      </svg>
+        <svg
+          viewBox="0 0 1000 270"
+          role="img"
+          aria-label="CPU和内存使用率历史折线图"
+        >
+          {[0, 25, 50, 75, 100].map((n) => (
+            <g key={n}>
+              <line
+                x1="40"
+                x2="960"
+                y1={220 - n * 1.8}
+                y2={220 - n * 1.8}
+                stroke="var(--chart-grid)"
+              />
+              <text
+                x="3"
+                y={224 - n * 1.8}
+                fontSize="var(--font-size-sm)"
+                fill="var(--muted-foreground)"
+              >
+                {n}%
+              </text>
+            </g>
+          ))}
+          <polyline
+            points={series(hourly ? "cpuAvg" : "cpuPercent")}
+            fill="none"
+            stroke="var(--chart-1)"
+            strokeWidth="2"
+          />
+          <polyline
+            points={series(hourly ? "memoryAvg" : "memoryPercent")}
+            fill="none"
+            stroke="var(--chart-2)"
+            strokeWidth="2"
+          />
+          <text
+            x="40"
+            y="255"
+            fontSize="var(--font-size-sm)"
+            fill="var(--muted-foreground)"
+          >
+            {date(String(data[0]?.recordedAt ?? data[0]?.bucketAt))}
+          </text>
+          <text
+            x="960"
+            textAnchor="end"
+            y="255"
+            fontSize="var(--font-size-sm)"
+            fill="var(--muted-foreground)"
+          >
+            {date(String(data.at(-1)?.recordedAt ?? data.at(-1)?.bucketAt))}
+          </text>
+        </svg>
+      </div>
     </div>
   );
 }

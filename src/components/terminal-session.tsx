@@ -4,8 +4,8 @@
  * @project PipkerOps
  * @module remote-terminal-session
  * @description 独立PTY连接、输出保留及受控的命令粘贴入口。
- * @logic xterm按容器尺寸适配；会话关闭后禁用输入；粘贴不添加回车，卸载释放连接。
- * @dependencies React, xterm, WebSocket
+ * @logic xterm按容器尺寸适配，主题热更新保留连接；会话关闭后禁用输入；粘贴不添加回车，卸载释放连接。
+ * @dependencies React, xterm, WebSocket, theme
  * @index_tags terminal, pty, workspace
  * @author holic512
  */
@@ -16,6 +16,9 @@ import {
   useState,
   type Ref,
 } from "react";
+import type { Terminal } from "@xterm/xterm";
+import { terminalTheme } from "@/lib/terminal-theme";
+import { useTheme } from "./theme-provider";
 export type TerminalHandle = { paste: (text: string) => void };
 export type TerminalState = "connecting" | "connected" | "closed";
 export function TerminalSession({
@@ -30,6 +33,8 @@ export function TerminalSession({
   ref?: Ref<TerminalHandle>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const terminal = useRef<Terminal | null>(null);
+  const { resolvedTheme } = useTheme();
   const paste = useRef<((text: string) => void) | null>(null);
   useImperativeHandle(
     handleRef,
@@ -44,6 +49,9 @@ export function TerminalSession({
     onStateChange(sessionId, state);
   }, [onStateChange, sessionId, state]);
   useEffect(() => {
+    if (terminal.current) terminal.current.options.theme = terminalTheme();
+  }, [resolvedTheme]);
+  useEffect(() => {
     let dispose: () => void = () => {};
     let cancelled = false;
     void (async () => {
@@ -52,13 +60,15 @@ export function TerminalSession({
         import("@xterm/addon-fit"),
       ]);
       if (cancelled || !ref.current) return;
+      const styles = getComputedStyle(document.documentElement);
       const term = new Terminal({
         cursorBlink: true,
-        fontSize: 13,
-        fontFamily: "ui-monospace, SFMono-Regular, monospace",
-        theme: { background: "#142033", foreground: "#e6edf5" },
+        fontSize: Number.parseFloat(styles.getPropertyValue("--font-size-md")),
+        fontFamily: styles.getPropertyValue("--font-mono"),
+        theme: terminalTheme(),
         scrollback: 3000,
       });
+      terminal.current = term;
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.open(ref.current);
@@ -129,6 +139,7 @@ export function TerminalSession({
       });
       observer.observe(ref.current);
       dispose = () => {
+        terminal.current = null;
         paste.current = null;
         observer.disconnect();
         onData.dispose();

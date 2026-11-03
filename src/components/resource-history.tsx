@@ -25,7 +25,7 @@ type History = {
     points: { recordedAt: string; value: number | null }[];
   }[];
 };
-const colors = ["#1664df", "#0e8a70"];
+const colors = ["var(--chart-1)", "var(--chart-2)"];
 const valueLabel = (n: number, unit: string) => {
   if (unit === "%") return `${n.toFixed(1)}%`;
   if (n >= 1024 * 1024 * 1024) return `${(n / 1024 ** 3).toFixed(1)} GiB/s`;
@@ -160,14 +160,14 @@ function ResourceChart({ data }: { data: History }) {
                 x2="950"
                 y1={y(max * ratio)}
                 y2={y(max * ratio)}
-                stroke="#e5eaf0"
+                stroke="var(--chart-grid)"
               />
               <text
                 x="80"
                 y={y(max * ratio) + 4}
                 textAnchor="end"
-                fontSize="11"
-                fill="#526173"
+                fontSize="var(--font-size-xs)"
+                fill="var(--muted-foreground)"
               >
                 {valueLabel(max * ratio, data.unit)}
               </text>
@@ -217,10 +217,21 @@ function ResourceChart({ data }: { data: History }) {
               </g>
             );
           })}
-          <text x="90" y="255" fontSize="12" fill="#526173">
+          <text
+            x="90"
+            y="255"
+            fontSize="var(--font-size-sm)"
+            fill="var(--muted-foreground)"
+          >
             {date(new Date(start).toISOString())}
           </text>
-          <text x="950" y="255" textAnchor="end" fontSize="12" fill="#526173">
+          <text
+            x="950"
+            y="255"
+            textAnchor="end"
+            fontSize="var(--font-size-sm)"
+            fill="var(--muted-foreground)"
+          >
             {date(new Date(end).toISOString())}
           </text>
         </svg>

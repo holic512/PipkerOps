@@ -3,8 +3,8 @@
  * @project PipkerOps
  * @module topology-ui
  * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 准确身份关联资源；选择与详情弹窗分离，受控交互锁定保留刷新状态且禁止手工连线；矩阵固定列序并适配画布。
- * @dependencies React Flow, RPC, shared UI
+ * @logic 准确身份关联资源，合并部署仍占布局行以避免应用重叠；选择与详情弹窗分离，受控交互保留刷新状态；矩阵固定列序并适配画布。
+ * @dependencies React Flow, RPC, shared UI, theme
  * @index_tags topology, connectivity, ui
  * @author holic512
  */
@@ -22,7 +22,6 @@ import {
   type ReactFlowInstance,
   MarkerType,
 } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import { Plus, RotateCw } from "lucide-react";
 import {
   probeHealth,
@@ -42,6 +41,7 @@ import { Button } from "./ui/button";
 import { BusinessDialog } from "./ui/dialog";
 import { rpc } from "@/lib/client";
 import { topologyLinks } from "@/lib/topology-links";
+import { useTheme } from "./theme-provider";
 type GraphData = {
   applications: AppData[];
   nodes: NodeData[];
@@ -62,6 +62,7 @@ type GraphData = {
   }[];
 };
 export function Topology() {
+  const { resolvedTheme } = useTheme();
   const q = useQuery<GraphData>("topology");
   const [tab, setTab] = useState("graph");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -130,6 +131,8 @@ export function Topology() {
             },
             className: "graph-entity",
           });
+        // 合并到容器的部署仍占一行，下一应用不能复用当前位置。
+        if (merged) deploymentRow++;
         edges.push({
           id: `app-deploy:${deployment.id}`,
           source: `app:${a.id}`,
@@ -229,7 +232,9 @@ export function Topology() {
         target: `app:${dep.toApplicationId}`,
         label: dep.type,
         animated: unhealthy,
-        style: { stroke: unhealthy ? "#b42318" : "#8597ac" },
+        style: {
+          stroke: unhealthy ? "var(--destructive)" : "var(--graph-edge)",
+        },
         markerEnd: { type: MarkerType.ArrowClosed },
       });
     });
@@ -390,6 +395,7 @@ export function Topology() {
           >
             <section className="topology-canvas" ref={canvasRef}>
               <ReactFlow
+                colorMode={resolvedTheme}
                 onInit={setFlow}
                 nodes={graph.nodes.map((n) => ({
                   ...n,
@@ -434,18 +440,25 @@ export function Topology() {
                 onPaneClick={() => setSelectedId(null)}
                 aria-label="应用与节点拓扑"
                 ariaLabelConfig={{
-                  "controls.ariaLabel": "拓扑视图操作",
                   "controls.zoomIn.ariaLabel": "放大拓扑",
                   "controls.zoomOut.ariaLabel": "缩小拓扑",
                   "controls.fitView.ariaLabel": "适配全部资源",
                   "controls.interactive.ariaLabel": "切换拓扑交互",
                 }}
               >
-                <Background color="#dce3eb" gap={24} />
-                <Controls onInteractiveChange={setInteractive} />
+                <Background color="var(--chart-grid)" gap={24} />
+                <div role="group" aria-label="拓扑视图操作">
+                  {/* Controls 容器无语义角色，名称由外层分组提供。 */}
+                  <Controls
+                    aria-label=""
+                    onInteractiveChange={setInteractive}
+                  />
+                </div>
                 <MiniMap
                   nodeColor={(n) =>
-                    String(n.data.state) === "UNHEALTHY" ? "#e69a9a" : "#b5cbeb"
+                    String(n.data.state) === "UNHEALTHY"
+                      ? "var(--danger-border)"
+                      : "var(--graph-node)"
                   }
                   pannable
                   zoomable
@@ -545,7 +558,7 @@ export function Topology() {
                 aria-label="探针来源与目标矩阵，可横向滚动"
                 tabIndex={0}
               >
-                <table>
+                <table className="data-table">
                   <thead>
                     <tr>
                       <th>来源</th>
