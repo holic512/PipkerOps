@@ -1,7 +1,7 @@
 // @file schema.prisma
 // @project PipkerOps
 // @module persistence
-// @description 平台身份、节点文件夹分类、监控、应用、探针、持久化任务、独立 Docker 操作日志及运维资源的数据契约。
+// @description 平台身份、节点文件夹分类、监控、稳定资源身份、多应用引用、探针、持久化任务和 Docker 实例操作的数据契约。
 // @logic 管理端/Worker/Gateway 共用模型；原始指标按记录时间分区；任务默认仅执行一次。
 // @dependencies PostgreSQL, Prisma ORM 7
 // @index_tags database, auth, agent, metrics, tasks
@@ -174,6 +174,7 @@ model Node {
   hourlyMetrics          MetricHourly[]
   deviceHourlyMetrics    MetricDeviceHourly[]
   deployments            Deployment[]
+  resources              Resource[]
   probes                 Probe[]          @relation("ProbeSource")
   probeResults           ProbeResult[]    @relation("ProbeResultSource")
   tasks                  Task[]
@@ -250,6 +251,7 @@ model Application {
   createdAt            DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
   deployments          Deployment[]
+  resources            ApplicationResource[]
   probes               Probe[]
   outgoingDependencies Dependency[] @relation("DependencyFrom")
   incomingDependencies Dependency[] @relation("DependencyTo")
@@ -259,6 +261,8 @@ model Deployment {
   id            String      @id @default(cuid())
   applicationId String
   nodeId        String
+  resourceId    String?
+  resource      Resource?   @relation(fields: [resourceId], references: [id], onDelete: Restrict)
   name          String
   type          String
   target        String
@@ -273,6 +277,48 @@ model Deployment {
   @@index([applicationId])
   @@index([nodeId, type])
   @@unique([applicationId, nodeId, type, target])
+}
+
+// Resource identity survives discovery gaps and replacement containers.
+model Resource {
+  id               String   @id @default(uuid())
+  nodeId           String
+  name             String
+  type             String
+  strategy         String
+  locatorKey       String?
+  project          String?
+  service          String?
+  containerName    String?
+  labelValue       String?
+  identification   String   @default("UNCONFIRMED")
+  runtimeState     String   @default("UNKNOWN")
+  instances        Json     @default("[]")
+  metadata         Json     @default("{}")
+  discoveryError   String?
+  lastDiscoveredAt DateTime? @db.Timestamptz(3)
+  lastAttemptedAt  DateTime? @db.Timestamptz(3)
+  lastSeenAt       DateTime? @db.Timestamptz(3)
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+  node             Node     @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  applications     ApplicationResource[]
+  deployments      Deployment[]
+  dockerOperations DockerOperation[]
+
+  @@unique([nodeId, locatorKey])
+  @@index([nodeId, type])
+}
+
+model ApplicationResource {
+  applicationId String
+  resourceId    String
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  resource      Resource @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+
+  @@id([applicationId, resourceId])
+  @@index([resourceId])
 }
 
 model Dependency {
@@ -388,7 +434,10 @@ model TaskLog {
 }
 
 model DockerOperation {
+  resolvedContainerIds String[] @default([])
   id             String @id @default(uuid())
+  resourceId     String?
+  resource       Resource? @relation(fields: [resourceId], references: [id], onDelete: Restrict)
   method         String
   nodeId         String
   actorId        String?

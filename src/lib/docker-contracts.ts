@@ -31,11 +31,13 @@ export const dockerMethodSchemas = {
     id: containerId,
     action: z.enum(["start", "stop", "restart", "remove"]),
     confirmed,
+    resourceId: z.uuid().optional(),
   }),
   "docker.pull": write.extend({
     image: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9./:@_-]{0,254}$/),
   }),
   "compose.deploy": write.extend({
+    resourceId: z.uuid().optional(),
     project,
     yaml: z.string().min(1).max(131072),
     confirmed,
@@ -80,6 +82,8 @@ export const dockerSnapshotSchema = z.object({
 });
 export const dockerOperationSchema = dockerSnapshotSchema.extend({
   nodeId,
+  resourceId: z.string().nullable().optional(),
+  resolvedContainerIds: z.array(z.string()).optional(),
   target: z.string(),
   action: z.string().nullable(),
   source: z.string(),
@@ -95,9 +99,11 @@ export const dockerContainerSchema = z.object({
   name: z.string(),
   image: z.string(),
   state: z.string(),
+  exitCode: z.number().int().optional(),
   status: z.string(),
   ports: z.string().nullable(),
   createdAt: z.string().nullable(),
+  labels: z.record(z.string(), z.string()).default({}),
 });
 export type DockerContainer = z.infer<typeof dockerContainerSchema>;
 export const composeProjectSchema = z.object({

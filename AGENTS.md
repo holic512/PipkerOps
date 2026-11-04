@@ -24,6 +24,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 交付前执行 `npm run lint`、`npm run check`、相关测试；公共组件变化执行构建，并查看代表页面的亮/暗主题、窄屏与键盘交互。现有 CI 会执行 ESLint 组件规则及其回归测试；遇到违规应修复组件选择，不增加全局豁免。审查清单见组件索引末尾。
 
+## 长期资源身份
+
+`Resource.id` 为平台 UUID，应用通过 `ApplicationResource` 多对多引用。容器 ID 只表示实例；新增应用关联使用资源选择器。资源定位仅使用已确认的 Compose 项目/服务、`pipkerops.resource-id` 标签或固定完整名称；禁止失败后降级或猜测。资源写操作先重新发现并核对已确认实例，操作与终端会话保留执行时的实例身份。旧 Deployment 记录保留并经资源页确认规则。详见 `docs/RESOURCES.md`。
+
 ## 组件版本
 
 每次提交前按实际影响维护独立版本：Ops 为 `package.json`（同时同步 `package-lock.json`），Agent 为 `agent/VERSION`，部署脚本为 `deploy/VERSION`，PipkerOpsSkill 为 `skills/VERSION`。受影响组件通常递增补丁号；大版本或次版本依用户要求调整。跨组件或共享接口修改时评估并递增所有受影响组件的版本，不修改无关组件版本。

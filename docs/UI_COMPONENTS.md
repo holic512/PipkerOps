@@ -2,6 +2,8 @@
 
 本文件是页面开发入口，须与组件源码一起阅读。颜色、密度、亮暗主题见 [DESIGN.md](../DESIGN.md)；审计依据见 [UI_AUDIT.md](UI_AUDIT.md)。组件源码本地维护，`components.json` 只是生成配置，不代表 registry 中的所有组件已安装；当前没有可追溯的 shadcn CLI 版本记录。禁止为更新样式批量运行 CLI 覆盖本地业务契约。
 
+资源业务入口：`managed-resources.tsx` 的 `ManagedResources` 使用 `/resources` 和 `/resources/:resourceId`，组合公共表格、表单与业务弹窗，负责筛选、登记预览、共享关联及重新指定；容器登记从 `docker-manager.tsx` 进入。应用通过 `resources.associate/unlink` 选择稳定资源，禁止新增手填容器 ID 的应用关联。Docker 的 `OperationDialog` 供资源页复用，展示原操作固定的资源和实例 ID。定位及迁移约定见 [RESOURCES.md](RESOURCES.md)。
+
 ## 基础层完整清单
 
 导入路径均为 `@/components/ui/<文件名>`。下列为实际导出能力，未列出的属性以源码类型为准。

@@ -10,12 +10,15 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | --- | --- |
 | 全部工具 | `*` |
 | 节点 | `nodes:read`、`nodes:write`、`nodes:approve` |
+| 长期资源 | `resources:read`、`resources:write` |
 | 应用/探针 | `apps:read`、`apps:write`、`probes:read`、`probes:write` |
 | 容器/文件/系统 | `docker:read`、`docker:write`、`files:read`、`files:write`、`system:read`、`system:write` |
 | 站点/动作 | `sites:read`、`sites:write`、`actions:read`、`actions:write` |
 | 计划/告警 | `schedules:read`、`schedules:write`、`alerts:read`、`alerts:write` |
 | 任务/终端 | `tasks:read`、`tasks:write`、`terminal:write` |
 | 密钥/平台 | `keys:write`、`admin:write` |
+
+长期资源方法见 [RESOURCES.md](RESOURCES.md)：`resources.list/get/preview/register/update/rebind/associate/unlink/discover/resolve/logs/action`。Resource UUID 与实例 containerId 独立，应用通过共享资源选择器建立关系。
 
 ## 资源方法
 
@@ -37,7 +40,7 @@ Web/RPC：`POST /api/rpc`，JSON `{method,params}`，成功 `{data}`，失败 `{
 | updates.releases | 无 | nodes:approve；手动查询有新版更新清单的正式发布 |
 | updates.create | nodeId,component,releaseTag,deployRoot,confirmed:true,idempotencyKey | nodes:approve高危（Ops更新另需admin:write）；返回持久更新父任务，result.executionTaskId关联实际宿主任务 |
 | applications.list / save / delete | save:{id?,name,description?,labels?,businessData?}；delete:{id,confirmed:true} | apps:read/write；应用独立于节点 |
-| deployments.save | id?,applicationId,nodeId,name,type,target,healthUrl?,metadata? | apps:write+目标节点；type为docker/compose/systemd/process/database/nginx；healthUrl另需probes:write并自动建立节点健康探针，null清除 |
+| deployments.save | id?,applicationId,nodeId,name,type,target,healthUrl?,metadata? | apps:write+目标节点；容器/Compose 关联改用resources.associate，此旧接口保留systemd/process/database/nginx；healthUrl另需probes:write并自动建立节点健康探针，null清除 |
 | deployments.delete | id,confirmed:true | apps:write高危+目标节点；解除关联并删除自动健康探针，不删除实际服务 |
 | dependencies.delete | id,confirmed:true | apps:write高危；删除依赖边 |
 | dependencies.save | fromApplicationId,toApplicationId,type?,description? | apps:write；有向依赖 |
@@ -143,7 +146,7 @@ Gateway 接收 `docker.operation.started/log/result`，日志按 `(operationId,s
 
 ## 拓扑资源身份
 
-`topology` 继续返回授权范围内原始资源；界面用共用 `topologyLinks` 计算关系，不新增持久化猜测边。Docker 仅匹配同节点完整 ID 或准确名称（可去除名称前导 `/`）；Compose 使用 `com.docker.compose.project` 的准确标签。Docker 匹配后共用发现容器顶点，Compose 保留项目顶点和成员边。容器数据使用最新采样，最多沿用 Agent 的200容器采集上限，不再只显示前12个。
+`topology` 返回授权范围内长期 resources 和应用的 resources 引用，持久顶点使用 resourceId；运行实例变化不改变应用边。尚未登记的发现容器与 systemd 服务仍由 `topologyLinks` 使用准确身份展示。已登记资源只使用明确固定策略，不以采样中的容器身份替代长期身份。
 
 Nginx 上游仅在同代理节点发起的已启用 HTTP 探针中，找到唯一应用的相同 URL origin 才关联到应用；不使用名称、DNS 猜测或跨来源回环端点匹配。此关系证明配置指向相同端点，不等于确认实际 Nginx 生效配置。无匹配或多个应用共享端点时详情显示“上游未关联”。
 

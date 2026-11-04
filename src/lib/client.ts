@@ -86,6 +86,10 @@ export type AppData = {
   labels: string[];
   businessData: Record<string, unknown>;
   deployments: DeploymentData[];
+  resources?: {
+    resourceId: string;
+    resource: import("./resource-contracts").ResourceData;
+  }[];
   probes: {
     id: string;
     name: string;
@@ -101,6 +105,7 @@ export type AppData = {
 };
 export type DeploymentData = {
   id: string;
+  resourceId?: string | null;
   name: string;
   type: string;
   target: string;

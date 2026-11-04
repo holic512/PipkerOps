@@ -123,7 +123,7 @@ func (e *Executor) Execute(ctx context.Context, task Task, log logFunc) (string,
 		if !objectName.MatchString(p.ID) {
 			return "", nil, errors.New("invalid container id or name")
 		}
-		return dockerJSON(ctx, log, "containers", []string{"inspect", "--type=container", "--format", `{"Id":{{json .Id}},"Name":{{json .Name}},"Created":{{json .Created}},"State":{{json .State}},"Image":{{json .Config.Image}},"RestartCount":{{json .RestartCount}},"Mounts":{{json .Mounts}},"Ports":{{json .NetworkSettings.Ports}}}`, "--", p.ID})
+		return dockerJSON(ctx, log, "containers", []string{"inspect", "--type=container", "--format", `{"Id":{{json .Id}},"Name":{{json .Name}},"Config":{"Labels":{{json .Config.Labels}}},"Created":{{json .Created}},"State":{{json .State}},"Image":{{json .Config.Image}},"RestartCount":{{json .RestartCount}},"Mounts":{{json .Mounts}},"Ports":{{json .NetworkSettings.Ports}}}`, "--", p.ID})
 	case "docker.stats":
 		return dockerStats(ctx, p, log)
 	case "docker.action":

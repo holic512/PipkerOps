@@ -2,8 +2,8 @@
  * @file topology.tsx
  * @project PipkerOps
  * @module topology-ui
- * @description 真实应用、部署、节点、站点和探针关系的交互式图与连通性矩阵。
- * @logic 准确身份关联资源，合并部署仍占布局行以避免应用重叠；选择与详情弹窗分离，受控交互保留刷新状态；矩阵固定列序并适配画布。
+ * @description 应用、长期资源、节点、发现实例、站点与探针的交互式图及连通性矩阵。
+ * @logic 应用边使用稳定resourceId，共享资源合并为单顶点；未登记实例按准确身份展示，刷新保留布局与选择。
  * @dependencies React Flow, RPC, shared UI, theme
  * @index_tags topology, connectivity, ui
  * @author holic512
@@ -42,9 +42,11 @@ import { Button } from "./ui/button";
 import { ViewTabs } from "./ui/tabs";
 import { BusinessDialog } from "./ui/dialog";
 import { rpc } from "@/lib/client";
+import type { ResourceData } from "@/lib/resource-contracts";
 import { topologyLinks } from "@/lib/topology-links";
 import { useTheme } from "./theme-provider";
 type GraphData = {
+  resources?: ResourceData[];
   applications: AppData[];
   nodes: NodeData[];
   dependencies: {
@@ -101,57 +103,102 @@ export function Topology() {
         },
         className: `graph-entity graph-${state.toLowerCase()}`,
       });
-      a.deployments.forEach((deployment) => {
-        const matched = links.deploymentLinks.filter(
-          (l) => l.deploymentId === deployment.id,
-        );
-        const merged =
-          ["docker", "systemd"].includes(deployment.type) &&
-          matched.length === 1;
-        const deploymentGraphId = merged
-          ? matched[0].resourceId
-          : `deployment:${deployment.id}`;
-        if (!merged)
-          nodes.push({
-            id: deploymentGraphId,
-            position: { x: 350, y: deploymentRow++ * 105 },
-            data: {
-              label: `${deployment.type} · ${deployment.name}`,
-              kind: "部署实例",
-              target: deployment.target,
-              association: matched.length
-                ? `已关联 ${matched.length} 个资源`
-                : "运行目标未关联到已发现资源",
-              state: matched.length
-                ? matched.every((l) => l.state === "HEALTHY")
-                  ? "HEALTHY"
-                  : "UNHEALTHY"
-                : d.nodes.find((n) => n.id === deployment.nodeId)?.connected ===
-                    false
-                  ? "UNHEALTHY"
-                  : deployment.status,
-            },
-            className: "graph-entity",
-          });
-        // 合并到容器的部署仍占一行，下一应用不能复用当前位置。
-        if (merged) deploymentRow++;
+      (a.resources ?? []).forEach((link) => {
         edges.push({
-          id: `app-deploy:${deployment.id}`,
+          id: `app-resource:${a.id}:${link.resourceId}`,
           source: `app:${a.id}`,
-          target: deploymentGraphId,
-          label: `部署 · ${deployment.name}`,
+          target: link.resourceId,
+          label: "关联资源",
           markerEnd: { type: MarkerType.ArrowClosed },
         });
-        if (!merged)
+      });
+      a.deployments
+        .filter((deployment) => !deployment.resourceId)
+        .forEach((deployment) => {
+          const matched = links.deploymentLinks.filter(
+            (l) => l.deploymentId === deployment.id,
+          );
+          const merged =
+            ["docker", "systemd"].includes(deployment.type) &&
+            matched.length === 1;
+          const deploymentGraphId = merged
+            ? matched[0].resourceId
+            : `deployment:${deployment.id}`;
+          if (!merged)
+            nodes.push({
+              id: deploymentGraphId,
+              position: { x: 350, y: deploymentRow++ * 105 },
+              data: {
+                label: `${deployment.type} · ${deployment.name}`,
+                kind: "部署实例",
+                target: deployment.target,
+                association: matched.length
+                  ? `已关联 ${matched.length} 个资源`
+                  : "运行目标未关联到已发现资源",
+                state: matched.length
+                  ? matched.every((l) => l.state === "HEALTHY")
+                    ? "HEALTHY"
+                    : "UNHEALTHY"
+                  : d.nodes.find((n) => n.id === deployment.nodeId)
+                        ?.connected === false
+                    ? "UNHEALTHY"
+                    : deployment.status,
+              },
+              className: "graph-entity",
+            });
+          // 合并到容器的部署仍占一行，下一应用不能复用当前位置。
+          if (merged) deploymentRow++;
           edges.push({
-            id: `deploy-node:${deployment.id}`,
-            source: `deployment:${deployment.id}`,
-            target: `node:${deployment.nodeId}`,
-            label: "运行于",
+            id: `app-deploy:${deployment.id}`,
+            source: `app:${a.id}`,
+            target: deploymentGraphId,
+            label: `部署 · ${deployment.name}`,
             markerEnd: { type: MarkerType.ArrowClosed },
           });
+          if (!merged)
+            edges.push({
+              id: `deploy-node:${deployment.id}`,
+              source: `deployment:${deployment.id}`,
+              target: `node:${deployment.nodeId}`,
+              label: "运行于",
+              markerEnd: { type: MarkerType.ArrowClosed },
+            });
+        });
+      if (!a.deployments.some((deployment) => !deployment.resourceId))
+        deploymentRow++;
+    });
+    const managed = new Map(
+      [
+        ...(d.resources ?? []),
+        ...d.applications.flatMap((a) =>
+          (a.resources ?? []).map((l) => l.resource),
+        ),
+      ].map((r) => [r.id, r] as const),
+    );
+    let resourceRow = nodes.some((n) => n.position.x === 350)
+      ? deploymentRow
+      : 0;
+    managed.forEach((resource, id) => {
+      nodes.push({
+        id,
+        position: { x: 350, y: resourceRow++ * 105 },
+        data: {
+          label: `资源 · ${resource.name}`,
+          kind: "长期资源",
+          resourceId: id,
+          state: resource.identification,
+          instanceCount: resource.instances.length,
+          association: `${resource.type} · ${resource.strategy} · ${resource.runtimeState}`,
+        },
+        className: "graph-entity",
       });
-      if (!a.deployments.length) deploymentRow++;
+      edges.push({
+        id: `resource-node:${id}`,
+        source: id,
+        target: `node:${resource.nodeId}`,
+        label: "所属节点",
+        markerEnd: { type: MarkerType.ArrowClosed },
+      });
     });
     let nodeRow = 0;
     d.nodes.forEach((n) => {
@@ -172,6 +219,9 @@ export function Topology() {
         .filter(
           (r) =>
             r.nodeId === n.id &&
+            ![...managed.values()].some((resource) =>
+              resource.instances.some((c) => c.id === r.target),
+            ) &&
             (r.kind === "docker" ||
               links.deploymentLinks.some((l) => l.resourceId === r.id)),
         )
@@ -202,7 +252,11 @@ export function Topology() {
       const deployment = d.applications
         .flatMap((a) => a.deployments)
         .find((item) => item.id === link.deploymentId)!;
-      if (["docker", "systemd"].includes(deployment.type)) return;
+      if (
+        deployment.resourceId ||
+        ["docker", "systemd"].includes(deployment.type)
+      )
+        return;
       edges.push({
         id: `deployment-resource:${link.deploymentId}:${link.resourceId}`,
         source: `deployment:${link.deploymentId}`,
@@ -462,7 +516,7 @@ export function Topology() {
                   />
                 </ReactFlow>
                 <div className="graph-legend">
-                  <span>应用 → 部署 → 节点 → 容器</span>
+                  <span>应用 → 长期资源 → 节点；容器为可变化实例</span>
                   <span className="error-text">红色表示故障或离线</span>
                 </div>
               </section>
@@ -516,6 +570,15 @@ export function Topology() {
                   readOnly
                   onClose={() => setDetailsOpen(false)}
                 >
+                  {selected.data.kind === "长期资源" && (
+                    <Button variant="link" asChild>
+                      <Link
+                        href={`/resources/${String(selected.data.resourceId)}`}
+                      >
+                        进入资源详情
+                      </Link>
+                    </Button>
+                  )}
                   <h2>{String(selected.data.kind)}</h2>
                   <strong>{String(selected.data.label)}</strong>
                   <Status value={String(selected.data.state ?? "UNKNOWN")} />

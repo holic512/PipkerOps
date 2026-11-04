@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { db } from "../src/lib/db";
+import type { ResourceData } from "../src/lib/resource-contracts";
 import { topologyLinks } from "../src/lib/topology-links";
 const origin = integrationOrigin;
 const docker = (...args: string[]) =>
@@ -45,6 +46,7 @@ test(
     let nodeId = "";
     let siteId = "";
     let applicationId = "";
+    let resourceId = "";
     let probeId = "";
     const login = await fetch(origin + "/api/auth/login", {
       method: "POST",
@@ -344,20 +346,28 @@ test(
       siteId = site.id;
       const app = await rpc<{ id: string }>("applications.save", { name: run });
       applicationId = app.id;
-      const deployment = await rpc<{ id: string }>("deployments.save", {
-        applicationId,
+      const resource = await rpc<ResourceData>("resources.register", {
         nodeId,
+        containerId: id.trim(),
         name: run,
-        type: "docker",
-        target: run + "-sleeper-1",
+        strategy: "compose",
+        confirmed: true,
       });
-      const composeDeployment = await rpc<{ id: string }>("deployments.save", {
+      resourceId = resource.id;
+      await rpc("resources.associate", {
+        resourceId: resource.id,
         applicationId,
-        nodeId,
-        name: run + "-compose",
-        type: "compose",
-        target: run,
       });
+      await assert.rejects(
+        rpc("resources.register", {
+          nodeId,
+          containerId: id.trim(),
+          name: run + "-duplicate",
+          strategy: "name",
+          confirmed: true,
+        }),
+        /已登记/,
+      );
       const probe = await rpc<{ id: string }>("probes.save", {
         name: run,
         type: "HTTP",
@@ -367,31 +377,52 @@ test(
       });
       probeId = probe.id;
       const related = await wait(
-        async () =>
-          topologyLinks(
-            await rpc<Parameters<typeof topologyLinks>[0]>("topology"),
+        () =>
+          rpc<
+            Omit<Parameters<typeof topologyLinks>[0], "applications"> & {
+              resources: ResourceData[];
+              applications: {
+                id: string;
+                deployments: {
+                  id: string;
+                  nodeId: string;
+                  type: string;
+                  target: string;
+                }[];
+                resources: { resourceId: string }[];
+              }[];
+            }
+          >("topology"),
+        (r) =>
+          r.resources.some(
+            (item) =>
+              item.id === resource.id &&
+              item.instances.some((c) => c.id === id.trim()),
           ),
-        (r) => r.deploymentLinks.some((l) => l.deploymentId === deployment.id),
-        "discovered topology container",
+        "stable topology service resource",
       );
       assert.ok(
-        related.deploymentLinks.some(
-          (l) => l.deploymentId === composeDeployment.id,
-        ),
+        related.applications
+          .find((a) => a.id === applicationId)
+          ?.resources.some((l) => l.resourceId === resource.id),
       );
       assert.ok(
-        related.siteLinks.some(
+        topologyLinks(related).siteLinks.some(
           (l) => l.siteId === siteId && l.applicationId === applicationId,
         ),
       );
-      await rpc("deployments.delete", { id: deployment.id, confirmed: true });
-      assert.ok(
-        !topologyLinks(
-          await rpc<Parameters<typeof topologyLinks>[0]>("topology"),
-        ).deploymentLinks.some((l) => l.deploymentId === deployment.id),
-      );
+      await rpc("resources.unlink", {
+        resourceId: resource.id,
+        applicationId,
+        confirmed: true,
+      });
+      const unlinked = await rpc<ResourceData>("resources.get", {
+        resourceId: resource.id,
+      });
+      assert.equal(unlinked.id, resource.id);
+      assert.equal(unlinked.applications.length, 0);
       console.log(
-        "Verified actual topology container identity, Compose labels, configured Nginx upstream and deployment removal",
+        "Verified stable topology resource identity, Compose service labels, Nginx upstream and independent unlink",
       );
       const applied = await rpc<{ id: string }>("sites.apply", {
         id: siteId,
@@ -510,6 +541,8 @@ test(
       if (probeId) await db().probe.deleteMany({ where: { id: probeId } });
       if (applicationId)
         await db().application.deleteMany({ where: { id: applicationId } });
+      if (resourceId)
+        await db().resource.deleteMany({ where: { id: resourceId } });
       if (nodeId) {
         await db().task.deleteMany({ where: { nodeId } });
         await db().node.deleteMany({ where: { id: nodeId } });

@@ -17,6 +17,8 @@ import * as nodes from "./nodes";
 import * as organization from "./node-organization";
 import * as backups from "./backups";
 import { executeDocker } from "./docker";
+import { executeResource, resolveResource } from "./resources";
+import { resourceMethodSchemas } from "../resource-contracts";
 import { dockerMethodSchemas, type DockerMethod } from "../docker-contracts";
 import { listReleases, queueUpdate } from "./updates";
 import { metricDetails } from "./metric-details";
@@ -114,6 +116,38 @@ export async function execute(
   if (!Object.hasOwn(methodSchemas, method))
     throw new ApiError(404, "未知业务方法");
   const schema = methodSchemas[method as keyof typeof methodSchemas];
+  if (method === "resources.action" || method === "resources.logs") {
+    const p = schema.parse(input) as Record<string, unknown>;
+    const resource = await db().resource.findUnique({
+      where: { id: p.resourceId as string },
+    });
+    if (!resource) throw new ApiError(404, "资源不存在");
+    if (method === "resources.action")
+      return executeDocker(actor, "docker.action", {
+        nodeId: resource.nodeId,
+        resourceId: resource.id,
+        id: p.expectedContainerId,
+        action: p.action,
+        confirmed: p.confirmed,
+        idempotencyKey: p.idempotencyKey,
+      });
+    const resolved = await resolveResource(
+      actor,
+      resource.id,
+      p.expectedContainerId as string,
+    );
+    return executeDocker(actor, "docker.logs", {
+      nodeId: resource.nodeId,
+      id: resolved.containerId,
+      tail: p.tail,
+    });
+  }
+  if (Object.hasOwn(resourceMethodSchemas, method))
+    return executeResource(
+      actor,
+      method as keyof typeof resourceMethodSchemas,
+      schema.parse(input),
+    );
   if (Object.hasOwn(dockerMethodSchemas, method))
     return executeDocker(actor, method as DockerMethod, schema.parse(input));
   const p = schema.passthrough().parse(input);
@@ -259,6 +293,14 @@ export async function execute(
       authorize(actor, "apps:read");
       return db().application.findMany({
         include: {
+          resources: {
+            where: { resource: nodeWhere(actor) },
+            include: {
+              resource: {
+                include: { node: { select: { id: true, name: true } } },
+              },
+            },
+          },
           deployments: {
             where: nodeWhere(actor),
             include: {
@@ -313,6 +355,12 @@ export async function execute(
         });
         for (const deployment of deployments)
           authorize(actor, "apps:write", deployment.nodeId, true);
+        const links = await tx.applicationResource.findMany({
+          where: { applicationId: appId },
+          include: { resource: { select: { nodeId: true } } },
+        });
+        for (const link of links)
+          authorize(actor, "apps:write", link.resource.nodeId, true);
         await tx.probe.deleteMany({
           where: {
             id: { in: deployments.map((d) => `deployment-health:${d.id}`) },
@@ -326,6 +374,11 @@ export async function execute(
     case "deployments.save": {
       const d = methodSchemas["deployments.save"].parse(p);
       authorize(actor, "apps:write", d.nodeId);
+      if (["docker", "compose"].includes(d.type))
+        throw new ApiError(
+          400,
+          "请先登记资源，再通过资源选择器关联应用；旧部署记录继续保留",
+        );
       if (d.id) {
         const old = await db().deployment.findUnique({ where: { id: d.id } });
         if (!old) throw new ApiError(404, "部署不存在");
@@ -527,10 +580,16 @@ export async function execute(
     case "topology": {
       authorize(actor, "apps:read");
       authorize(actor, "nodes:read");
-      const [applications, nodeList, dependencies, probes, sites] =
+      const [applications, nodeList, dependencies, probes, sites, resources] =
         await Promise.all([
           db().application.findMany({
-            include: { deployments: { where: nodeWhere(actor) } },
+            include: {
+              deployments: { where: nodeWhere(actor) },
+              resources: {
+                where: { resource: nodeWhere(actor) },
+                include: { resource: true },
+              },
+            },
           }),
           nodes.listNodes(actor),
           db().dependency.findMany(),
@@ -540,8 +599,18 @@ export async function execute(
           can(actor, "sites:read")
             ? db().site.findMany({ where: nodeWhere(actor) })
             : Promise.resolve([]),
+          can(actor, "resources:read")
+            ? executeResource(actor, "resources.list", {})
+            : Promise.resolve([]),
         ]);
-      return { applications, nodes: nodeList, dependencies, probes, sites };
+      return {
+        applications,
+        nodes: nodeList,
+        dependencies,
+        probes,
+        sites,
+        resources,
+      };
     }
     case "sites.list":
       authorize(actor, "sites:read");
@@ -1023,6 +1092,15 @@ export async function execute(
       authorize(actor, "terminal:write", nodeId, true);
       if (containerId) authorize(actor, "docker:write", nodeId, true);
       confirm(p.confirmed);
+      if (p.resourceId) {
+        const resolved = await resolveResource(
+          actor,
+          p.resourceId as string,
+          containerId,
+        );
+        if (resolved.nodeId !== nodeId || !containerId)
+          throw new ApiError(409, "请重新核对资源终端的节点和当前实例");
+      }
       const node = await db().node.findUnique({ where: { id: nodeId } });
       if (!node || node.status !== "APPROVED")
         throw new ApiError(409, "节点不可用");
@@ -1031,10 +1109,25 @@ export async function execute(
         await redis()
       ).set(
         `pko:terminal:${hashToken(ticket)}`,
-        JSON.stringify({ actor, nodeId, containerId }),
+        JSON.stringify({
+          actor,
+          nodeId,
+          containerId,
+          resourceId: p.resourceId,
+        }),
         { EX: 60 },
       );
-      await audit(actor, method, "Node", nodeId);
+      await db().auditEvent.create({
+        data: {
+          actorId: actor.userId,
+          apiKeyId: actor.apiKeyId,
+          action: method,
+          resourceType: p.resourceId ? "Resource" : "Node",
+          resourceId: (p.resourceId as string | undefined) ?? nodeId,
+          nodeId,
+          detail: { containerId: containerId ?? null },
+        },
+      });
       return { path: `/api/terminal/ws?ticket=${ticket}` };
     }
     default:

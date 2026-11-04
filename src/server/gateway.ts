@@ -185,6 +185,7 @@ enrollment.on("upgrade", async (req, socket, head) => {
     ).getDel(`pko:terminal:${hashToken(ticket)}`);
     if (!raw) throw new Error("expired ticket");
     const ticketData = JSON.parse(raw) as {
+      resourceId?: string;
       containerId?: string;
       actor: Actor;
       nodeId: string;
@@ -246,9 +247,10 @@ enrollment.on("upgrade", async (req, socket, head) => {
               actorId: actor.userId,
               apiKeyId: actor.apiKeyId,
               action: "terminal.close",
-              resourceType: "Node",
-              resourceId: nodeId,
+              resourceType: ticketData.resourceId ? "Resource" : "Node",
+              resourceId: ticketData.resourceId ?? nodeId,
               nodeId,
+              detail: { containerId: ticketData.containerId ?? null },
             },
           })
           .catch(() => {});

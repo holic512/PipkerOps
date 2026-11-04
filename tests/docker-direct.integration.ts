@@ -27,6 +27,7 @@ import {
   type Method,
 } from "../src/lib/services/contracts";
 import { canonicalJson, hashToken, randomToken } from "../src/lib/crypto";
+import type { ResourceData } from "../src/lib/resource-contracts";
 import type {
   DockerOperation,
   DockerContainer,
@@ -906,6 +907,143 @@ test(
           await task("files.remove", { path: root });
         },
       );
+      let managedResourceId = "";
+      await t.test(
+        "长期资源：保存部署标签、登记A、两应用共享、重建B及操作实例不漂移",
+        async () => {
+          const stableProject = "resource-identity-fixture";
+          const label = randomUUID();
+          const yamlFor = (revision: string) => `services:
+  api:
+    image: localhost:5000/direct-fixture:latest
+    labels:
+      pipkerops.resource-id: "${label}"
+    command: [sh, -c, "echo ${revision}; sleep 10800"]
+`;
+          const deployed = await start("compose.deploy", {
+            project: stableProject,
+            yaml: yamlFor("A"),
+          });
+          assert.equal((await finished(deployed.id)).status, "SUCCEEDED");
+          const getInstance = async () =>
+            (
+              await call<{ containers: DockerContainer[] }>("docker.list", {
+                nodeId: node.id,
+              })
+            ).containers.find((c) => c.name === stableProject + "-api-1")!;
+          const a = await getInstance();
+          assert.ok(a);
+          const resource = await call<ResourceData>("resources.register", {
+            nodeId: node.id,
+            containerId: a.id,
+            strategy: "label",
+            name: "共享 API 资源",
+            confirmed: true,
+            persistenceConfirmed: true,
+          });
+          managedResourceId = resource.id;
+          assert.notEqual(resource.id, a.id);
+          const apps = await Promise.all(
+            ["资源验收应用 A", "资源验收应用 B"].map((name) =>
+              call<{ id: string }>("applications.save", { name }),
+            ),
+          );
+          for (const app of apps)
+            await call("resources.associate", {
+              resourceId: resource.id,
+              applicationId: app.id,
+            });
+          const oldKey = randomUUID();
+          const oldOperation = await call<DockerOperation>("resources.action", {
+            resourceId: resource.id,
+            expectedContainerId: a.id,
+            action: "restart",
+            confirmed: true,
+            idempotencyKey: oldKey,
+          });
+          assert.equal((await finished(oldOperation.id)).status, "SUCCEEDED");
+          const saved = await call<{ yaml: string }>("compose.read", {
+            nodeId: node.id,
+            project: stableProject,
+          });
+          assert.match(saved.yaml, new RegExp(label));
+          const rebuilt = await start("compose.deploy", {
+            project: stableProject,
+            yaml: yamlFor("B"),
+          });
+          assert.equal((await finished(rebuilt.id)).status, "SUCCEEDED");
+          assert.equal(rebuilt.resourceId, resource.id);
+          assert.ok(rebuilt.resolvedContainerIds?.includes(a.id));
+          const b = await getInstance();
+          assert.notEqual(a.id, b.id);
+          assert.equal(b.labels["pipkerops.resource-id"], label);
+          const rawOperation = await start("docker.action", {
+            id: b.id,
+            action: "restart",
+          });
+          assert.equal(
+            rawOperation.resourceId,
+            resource.id,
+            "裸容器入口也必须在B重建后解析资源身份",
+          );
+          assert.equal((await finished(rawOperation.id)).status, "SUCCEEDED");
+          const discovered = await call<ResourceData>("resources.discover", {
+            resourceId: resource.id,
+          });
+          assert.equal(discovered.id, resource.id);
+          assert.deepEqual(
+            discovered.instances.map((c) => c.id),
+            [b.id],
+          );
+          assert.equal(discovered.applications.length, 2);
+          await assert.rejects(
+            call("resources.action", {
+              resourceId: resource.id,
+              expectedContainerId: a.id,
+              action: "stop",
+              confirmed: true,
+              idempotencyKey: randomUUID(),
+            }),
+            /实例已变化/,
+          );
+          const replay = await call<DockerOperation>("resources.action", {
+            resourceId: resource.id,
+            expectedContainerId: a.id,
+            action: "restart",
+            confirmed: true,
+            idempotencyKey: oldKey,
+          });
+          assert.equal(replay.id, oldOperation.id);
+          assert.equal(replay.target, a.id);
+          const newOperation = await call<DockerOperation>("resources.action", {
+            resourceId: resource.id,
+            expectedContainerId: b.id,
+            action: "restart",
+            confirmed: true,
+            idempotencyKey: randomUUID(),
+          });
+          assert.equal((await finished(newOperation.id)).status, "SUCCEEDED");
+          assert.equal(newOperation.resourceId, resource.id);
+          assert.equal(newOperation.target, b.id);
+          assert.deepEqual(newOperation.resolvedContainerIds, [b.id]);
+          await call("resources.unlink", {
+            resourceId: resource.id,
+            applicationId: apps[0].id,
+            confirmed: true,
+          });
+          const shared = await call<ResourceData>("resources.get", {
+            resourceId: resource.id,
+          });
+          assert.deepEqual(
+            shared.applications.map((link) => link.applicationId),
+            [apps[1].id],
+          );
+          await call("resources.associate", {
+            resourceId: resource.id,
+            applicationId: apps[0].id,
+          });
+        },
+      );
       if (process.env.DOCKER_UI_TEST === "true") {
         docker("exec", name, "mkdir", "-p", "/tmp/workspace-ui/sub");
         dockerWrite(name, "/tmp/workspace-ui/sample.txt", "host-ui-original");
@@ -979,6 +1117,7 @@ test(
             port: proxy.port,
             origin: proxy.origin,
             agentContainer: name,
+            managedResourceId,
             nodeId: node.id,
             containerId,
             project,

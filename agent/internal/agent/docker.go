@@ -371,7 +371,15 @@ func (e *Executor) queryDocker(ctx context.Context, method string, params json.R
 		}
 		containers := []map[string]any{}
 		for _, row := range result.(map[string]any)["containers"].([]map[string]any) {
-			containers = append(containers, map[string]any{"id": row["ID"], "name": row["Names"], "image": row["Image"], "state": row["State"], "status": row["Status"], "ports": row["Ports"], "createdAt": row["CreatedAt"]})
+			labels := map[string]string{}
+			if raw, ok := row["Labels"].(string); ok {
+				for _, pair := range strings.Split(raw, ",") {
+					if key, value, found := strings.Cut(pair, "="); found {
+						labels[key] = value
+					}
+				}
+			}
+			containers = append(containers, map[string]any{"id": row["ID"], "name": row["Names"], "image": row["Image"], "state": row["State"], "status": row["Status"], "ports": row["Ports"], "createdAt": row["CreatedAt"], "labels": labels})
 		}
 		return map[string]any{"containers": containers}, nil
 	}

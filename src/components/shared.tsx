@@ -83,6 +83,13 @@ export function QueryState({
   return children;
 }
 const states: Record<string, [string, string]> = {
+  LOCATED: ["已定位", "good"],
+  MISSING: ["缺失 / 待确认", "warn"],
+  CONFLICT: ["定位冲突", "bad"],
+  STALE: ["数据过期", "warn"],
+  UNCONFIRMED: ["待确认", "neutral"],
+  STOPPED: ["已停止", "neutral"],
+  PARTIAL: ["部分运行", "warn"],
   APPROVED: ["已批准", "good"],
   PENDING: ["待重新接入", "warn"],
   REJECTED: ["已拒绝", "bad"],

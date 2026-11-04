@@ -288,6 +288,9 @@ export function NodeDetail({ id }: { id: string }) {
       </Link>
       <PageTitle title={node?.name ?? "节点详情"}>
         <Button variant="outline" asChild>
+          <Link href={`/resources?node=${id}`}>节点资源</Link>
+        </Button>
+        <Button variant="outline" asChild>
           <Link href={`/terminal?node=${id}`}>打开工作台</Link>
         </Button>
         {canWrite && (

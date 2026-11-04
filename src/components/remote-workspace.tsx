@@ -237,6 +237,11 @@ export function RemoteWorkspace({ visible }: { visible: boolean }) {
                     {
                       nodeId: current.nodeId,
                       containerId: current.containerId || undefined,
+                      ...(search.get("resourceId") &&
+                      current.nodeId === requested.nodeId &&
+                      current.containerId === requested.containerId
+                        ? { resourceId: search.get("resourceId") }
+                        : {}),
                       confirmed: true,
                     },
                   );

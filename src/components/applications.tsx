@@ -2,14 +2,16 @@
  * @file applications.tsx
  * @project PipkerOps
  * @module application-and-probe-ui
- * @description 应用独立建模、多实例关联和多源探针的创建、执行与历史查询。
- * @logic 应用和探针使用弹窗创建及管理，核对保留输入；实例入口携带准确节点和目标，历史查询不改变列表布局。
+ * @description 应用独立建模、长期资源多应用共享及多源探针的创建与历史查询。
+ * @logic 通过资源选择器建立稳定关联；历史部署保留并链接resourceId，业务健康依据探针。
  * @dependencies React, shared UI, RPC
  * @index_tags apps, deployments, probes, ui
  * @author holic512
  */
 "use client";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import type { ResourceData } from "@/lib/resource-contracts";
 import { useState } from "react";
 import {
   Plus,
@@ -43,9 +45,12 @@ import { ViewTabs } from "./ui/tabs";
 import { BusinessDialog } from "./ui/dialog";
 export function Applications() {
   const q = useQuery<AppData[]>("applications.list");
-  const nodes = useQuery<NodeData[]>("nodes.list");
+  const resources = useQuery<ResourceData[]>("resources.list");
+  const search = useSearchParams();
   const [show, setShow] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    search.get("applicationId"),
+  );
   const selected = q.data?.find((a) => a.id === selectedId);
   const [view, setView] = useState<"cards" | "table">("cards");
   const op = useOperation(() => {
@@ -169,9 +174,15 @@ export function Applications() {
                 <div className="app-card-footer">
                   <span>
                     <Server size={14} />
-                    {new Set(a.deployments.map((d) => d.nodeId)).size} 个节点
+                    {
+                      new Set([
+                        ...(a.resources ?? []).map((l) => l.resource.nodeId),
+                        ...a.deployments.map((d) => d.nodeId),
+                      ]).size
+                    }{" "}
+                    个节点
                   </span>
-                  <span>{a.deployments.length} 个实例</span>
+                  <span>{a.resources?.length ?? 0} 个资源</span>
                 </div>
               </button>
             ))}
@@ -182,7 +193,10 @@ export function Applications() {
               <tr key={a.id}>
                 <td className="entity-link">{a.name}</td>
                 <td>{a.description ?? "—"}</td>
-                <td>{a.deployments.length}</td>
+                <td>
+                  {a.resources?.length ?? 0} 个资源 / {a.deployments.length}{" "}
+                  条历史部署
+                </td>
                 <td>{a.probes.length}</td>
                 <td>
                   <Button
@@ -248,8 +262,8 @@ export function Applications() {
             value={tab}
             onValueChange={setTab}
             items={[
-              { value: "instances", label: "部署实例" },
-              { value: "associate", label: "关联实例" },
+              { value: "instances", label: "已关联资源" },
+              { value: "associate", label: "选择资源" },
               { value: "business", label: "业务数据" },
               { value: "edit", label: "编辑应用" },
             ]}
@@ -258,141 +272,165 @@ export function Applications() {
               <QueryState
                 loading={false}
                 empty={
-                  !q.data?.find((a) => a.id === selected.id)?.deployments.length
+                  !selected.deployments.length && !selected.resources?.length
                 }
                 retry={() => void q.mutate()}
-                emptyTitle="还未关联部署实例"
-                emptyText="点击“关联实例”，选择节点上的实际运行目标。"
+                emptyTitle="还未关联资源"
+                emptyText="点击“选择资源”，关联节点上已登记的长期资源。"
               >
-                <DataTable
-                  headers={["实例", "类型", "节点", "运行目标", "状态", "操作"]}
-                >
-                  {q.data
-                    ?.find((a) => a.id === selected.id)
-                    ?.deployments.map((d) => (
-                      <tr key={d.id}>
-                        <td>{d.name}</td>
-                        <td>{d.type}</td>
+                <>
+                  <DataTable headers={["资源", "节点", "识别 / 运行", "操作"]}>
+                    {selected.resources?.map((link) => (
+                      <tr key={link.resourceId}>
                         <td>
-                          <Link href={`/nodes/${d.nodeId}`}>
-                            {d.node?.name ?? d.nodeId}
-                          </Link>
+                          <Button variant="link" asChild>
+                            <Link href={`/resources/${link.resourceId}`}>
+                              {link.resource.name}
+                            </Link>
+                          </Button>
+                          <small>{link.resourceId}</small>
                         </td>
                         <td>
-                          <code>{d.target}</code>
+                          {link.resource.node?.name ?? link.resource.nodeId}
                         </td>
                         <td>
-                          <Status value={d.status} />
+                          <Status value={link.resource.identification} />{" "}
+                          <Status
+                            value={
+                              link.resource.runtimeState === "RUNNING"
+                                ? "running"
+                                : link.resource.runtimeState
+                            }
+                          />
                         </td>
                         <td>
-                          <div className="inline-actions">
-                            {(d.type === "docker"
-                              ? [
-                                  ["容器详情", "/docker", "docker.inspect"],
-                                  ["日志", "/docker", "docker.logs"],
-                                  ["生命周期", "/docker", "docker.action"],
-                                  ["远程工作台", "/terminal", ""],
-                                ]
-                              : d.type === "compose"
-                                ? [
-                                    ["项目状态", "/docker", "compose.status"],
-                                    ["配置", "/docker", "compose.read"],
-                                    ["部署更新", "/docker", "compose.deploy"],
-                                  ]
-                                : d.type === "systemd"
-                                  ? [
-                                      ["服务状态", "/system", "systemd.list"],
-                                      ["管理服务", "/system", "systemd.action"],
-                                    ]
-                                  : []
-                            ).map(([label, path, action]) => (
-                              <Button
-                                key={label}
-                                size="sm"
-                                variant="outline"
-                                asChild
-                              >
-                                <Link
-                                  href={`${path}?${new URLSearchParams({ node: d.nodeId, target: d.target, action })}`}
-                                >
-                                  {label}
-                                </Link>
-                              </Button>
-                            ))}
-                            <Button size="sm" variant="outline" asChild>
-                              <Link
-                                href={`/actions?${new URLSearchParams({ node: d.nodeId, target: d.target, applicationId: selected.id, deploymentId: d.id })}`}
-                              >
-                                自定义动作
-                              </Link>
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() =>
-                                op.ask(
-                                  "解除实例关联？",
-                                  `应用：${selected.name}；实例：${d.name}；节点：${d.node?.name ?? d.nodeId}；类型：${d.type}；运行目标：${d.target}。只删除平台关联记录，节点上的资源继续保留。`,
-                                  () =>
-                                    rpc("deployments.delete", {
-                                      id: d.id,
-                                      confirmed: true,
-                                    }),
-                                )
-                              }
-                            >
-                              解除关联
-                            </Button>
-                          </div>
+                          <Button
+                            variant="ghost"
+                            onClick={() =>
+                              op.ask(
+                                "解除资源关联？",
+                                `应用：${selected.name}；资源：${link.resource.name}。仅解除此应用关联，资源及其他应用引用保留。`,
+                                () =>
+                                  rpc("resources.unlink", {
+                                    resourceId: link.resourceId,
+                                    applicationId: selected.id,
+                                    confirmed: true,
+                                  }),
+                              )
+                            }
+                          >
+                            解除关联
+                          </Button>
                         </td>
                       </tr>
                     ))}
-                </DataTable>
+                  </DataTable>
+                  <h2>历史部署记录</h2>
+                  <DataTable
+                    headers={[
+                      "实例",
+                      "类型",
+                      "节点",
+                      "历史运行目标",
+                      "状态",
+                      "操作",
+                    ]}
+                  >
+                    {q.data
+                      ?.find((a) => a.id === selected.id)
+                      ?.deployments.map((d) => (
+                        <tr key={d.id}>
+                          <td>{d.name}</td>
+                          <td>{d.type}</td>
+                          <td>
+                            <Link href={`/nodes/${d.nodeId}`}>
+                              {d.node?.name ?? d.nodeId}
+                            </Link>
+                          </td>
+                          <td>
+                            <code>{d.target}</code>
+                          </td>
+                          <td>
+                            <Status value={d.status} />
+                          </td>
+                          <td>
+                            <div className="inline-actions">
+                              {d.resourceId ? (
+                                <Button variant="outline" size="sm" asChild>
+                                  <Link href={`/resources/${d.resourceId}`}>
+                                    核对并管理资源
+                                  </Link>
+                                </Button>
+                              ) : (
+                                <span className="muted">
+                                  旧记录保留，请从资源页确认实例
+                                </span>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() =>
+                                  op.ask(
+                                    "删除历史部署记录？",
+                                    `应用：${selected.name}；实例：${d.name}；节点：${d.node?.name ?? d.nodeId}；类型：${d.type}；运行目标：${d.target}。只删除此旧部署记录，长期资源及其应用关联保留；解除资源关联请使用上方资源列表。`,
+                                    () =>
+                                      rpc("deployments.delete", {
+                                        id: d.id,
+                                        confirmed: true,
+                                      }),
+                                  )
+                                }
+                              >
+                                解除关联
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </DataTable>
+                </>
               </QueryState>
             ) : tab === "associate" ? (
               <div className="form-panel">
+                <p>
+                  选择长期资源，可与其他应用共享。新容器请先在 Docker 列表登记。
+                </p>
+                <Button variant="link" asChild>
+                  <Link href="/resources">前往资源管理</Link>
+                </Button>
+                <QueryState
+                  loading={resources.isLoading}
+                  error={resources.error}
+                  retry={() => void resources.mutate()}
+                >
+                  {null}
+                </QueryState>
                 <ResourceForm
                   id="associate-instance"
                   hideSubmit
                   busy={op.busy}
                   fields={[
-                    { name: "name", label: "实例名称", required: true },
                     {
-                      name: "nodeId",
-                      label: "部署节点",
-                      required: true,
-                      type: "select",
-                      options: nodes.data
-                        ?.filter((n) => n.status === "APPROVED")
-                        .map((n) => ({ value: n.id, label: n.name })),
-                    },
-                    {
-                      name: "type",
-                      label: "实例类型",
+                      name: "resourceId",
+                      label: "选择已登记资源",
                       type: "select",
                       required: true,
-                      options: [
-                        "docker",
-                        "compose",
-                        "systemd",
-                        "process",
-                        "database",
-                        "nginx",
-                      ].map((v) => ({ value: v, label: v })),
-                    },
-                    {
-                      name: "target",
-                      label: "容器 ID / 服务名 / 运行目标",
-                      required: true,
-                    },
-                    {
-                      name: "healthUrl",
-                      label: "健康 URL（可选，由该节点每60秒探测）",
+                      options: resources.data
+                        ?.filter(
+                          (r) =>
+                            !selected.resources?.some(
+                              (l) => l.resourceId === r.id,
+                            ),
+                        )
+                        .map((r) => ({
+                          value: r.id,
+                          label: `${r.name} · ${r.node.name} · ${r.identification}`,
+                        })),
                     },
                   ]}
                   onSubmit={(d) =>
                     op.run(() =>
-                      rpc("deployments.save", {
+                      rpc("resources.associate", {
                         ...d,
                         applicationId: selected.id,
                       }),

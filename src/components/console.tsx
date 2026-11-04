@@ -46,6 +46,7 @@ import { Topology } from "./topology";
 import { Backups } from "./backups";
 import { Updates } from "./updates";
 import { DockerManagement } from "./docker-manager";
+import { ManagedResources } from "./managed-resources";
 import { RemoteWorkspace } from "./remote-workspace";
 import { ThemeSwitcher } from "./theme-provider";
 const nav = [
@@ -55,6 +56,7 @@ const nav = [
       { path: "/", name: "集群总览", icon: LayoutDashboard },
       { path: "/nodes", name: "节点管理", icon: Server },
       { path: "/applications", name: "应用中心", icon: Boxes },
+      { path: "/resources", name: "资源管理", icon: Container },
       { path: "/topology", name: "应用拓扑", icon: Waypoints },
       { path: "/probes", name: "多源探针", icon: Activity },
     ],
@@ -126,6 +128,8 @@ export function Console() {
       return <NodeDetail id={path.split("/")[2]} />;
     if (path === "/nodes") return <Nodes />;
     if (path === "/applications") return <Applications />;
+    if (path === "/resources" || path.startsWith("/resources/"))
+      return <ManagedResources key={path} resourceId={path.split("/")[2]} />;
     if (path === "/probes") return <Probes />;
     if (path === "/topology") return <Topology />;
     if (path.startsWith("/tasks/"))

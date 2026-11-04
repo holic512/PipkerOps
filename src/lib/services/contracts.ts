@@ -12,6 +12,10 @@ import { z } from "zod";
 import { taskInput, taskSpecs } from "./tasks";
 import { connectionBundle } from "../agent-connection";
 import {
+  resourceMethodSchemas,
+  resourceOutputSchemas,
+} from "../resource-contracts";
+import {
   dockerMethodSchemas,
   dockerReadMethods,
   dockerResultSchemas,
@@ -34,6 +38,9 @@ export const httpProbeConfig = z.object({
   expectedStatus: z.number().int().min(100).max(599).optional(),
 });
 export const METHODS = [
+  ...(Object.keys(
+    resourceMethodSchemas,
+  ) as (keyof typeof resourceMethodSchemas)[]),
   ...(Object.keys(dockerMethodSchemas) as (keyof typeof dockerMethodSchemas)[]),
   "overview",
   "nodes.list",
@@ -99,6 +106,9 @@ export const METHODS = [
 ] as const;
 export type Method = (typeof METHODS)[number];
 export const mutation = (method: string) =>
+  !["resources.preview", "resources.resolve", "resources.logs"].includes(
+    method,
+  ) &&
   !dockerReadMethods.includes(method) &&
   !["overview", "topology"].includes(method) &&
   !method.endsWith(".list") &&
@@ -107,6 +117,7 @@ export const mutation = (method: string) =>
   !method.endsWith(".metrics") &&
   method !== "users.me";
 export const methodSchemas = {
+  ...resourceMethodSchemas,
   ...dockerMethodSchemas,
   overview: z.object({}),
   "nodes.list": z.object({}),
@@ -326,6 +337,8 @@ export const methodSchemas = {
               "nodes:approve",
               "apps:read",
               "apps:write",
+              "resources:read",
+              "resources:write",
               "probes:read",
               "probes:write",
               "docker:read",
@@ -368,6 +381,7 @@ export const methodSchemas = {
   }),
   "backups.delete": z.object({ id: z.uuid(), confirmed: confirmation }),
   "terminal.ticket": z.object({
+    resourceId: z.uuid().optional(),
     nodeId: id,
     containerId: z
       .string()
@@ -538,6 +552,7 @@ const wireDeviceHistory = z.object({
 
 /** Wire contracts after the shared business result's normal JSON serialization. */
 export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
+  ...resourceOutputSchemas,
   ...Object.fromEntries(
     Object.entries(dockerResultSchemas).map(([method, schema]) => [
       method,

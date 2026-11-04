@@ -35,6 +35,9 @@ import {
 } from "lucide-react";
 import { rpc, date, type NodeData, type NodeFolderData } from "@/lib/client";
 import { buildNodeTree, type FolderBranch } from "@/lib/node-tree";
+import { matchResource } from "@/lib/resource-discovery";
+import type { ResourceLocator } from "@/lib/resource-contracts";
+import type { ResourceData } from "@/lib/resource-contracts";
 import type {
   DockerContainer,
   ComposeProject,
@@ -82,11 +85,28 @@ const methodNames: Record<string, string> = {
 
 export function DockerManagement() {
   const search = useSearchParams();
+  const resourceId = search.get("resourceId") ?? "";
+  const resource = useQuery<ResourceData>(
+    resourceId ? "resources.get" : null,
+    { resourceId },
+    0,
+  );
+  if (resourceId && !resource.data)
+    return (
+      <QueryState
+        loading={resource.isLoading}
+        error={resource.error}
+        retry={() => void resource.mutate()}
+      >
+        {null}
+      </QueryState>
+    );
   return (
     <DockerWorkspace
       key={search.toString()}
-      requestedNode={search.get("node") ?? ""}
-      target={search.get("target") ?? ""}
+      requestedNode={resource.data?.nodeId ?? search.get("node") ?? ""}
+      resourceId={resourceId}
+      target={resource.data?.project ?? search.get("target") ?? ""}
       action={search.get("action") ?? ""}
     />
   );
@@ -94,10 +114,12 @@ export function DockerManagement() {
 
 function DockerWorkspace({
   requestedNode,
+  resourceId,
   target,
   action,
 }: {
   requestedNode: string;
+  resourceId: string;
   target: string;
   action: string;
 }) {
@@ -114,6 +136,10 @@ function DockerWorkspace({
     "";
   const node = approved.find((item) => item.id === nodeId);
   const online = !!node?.connected;
+  const registered = useQuery<ResourceData[]>(
+    nodeId ? "resources.list" : null,
+    { nodeId },
+  );
   const canWrite = online && !!user.data && user.data.role !== "VIEWER";
   const [filter, setFilter] = useState("");
   const [popup, setPopup] = useState<Popup | null>(() => {
@@ -165,7 +191,29 @@ function DockerWorkspace({
     ]);
   const op = useOperation();
   const start: Start = async (method, payload) => {
-    const params = { nodeId, ...payload };
+    const managed =
+      method === "docker.action"
+        ? registered.data?.find(
+            (r) =>
+              r.instances.some((c) => c.id === payload.id) ||
+              !!containers.data?.containers.some(
+                (c) =>
+                  c.id === payload.id &&
+                  matchResource(r as ResourceLocator, [c]).instances.length > 0,
+              ),
+          )
+        : method === "compose.deploy"
+          ? registered.data?.find(
+              (r) => r.strategy === "compose" && r.project === payload.project,
+            )
+          : undefined;
+    const params = {
+      nodeId,
+      ...((managed || (resourceId && method === "compose.deploy")) && {
+        resourceId: managed?.id ?? resourceId,
+      }),
+      ...payload,
+    };
     const fingerprint = JSON.stringify({ method, params });
     const key = pending.current.get(fingerprint) ?? crypto.randomUUID();
     pending.current.set(fingerprint, key);
@@ -344,6 +392,15 @@ function DockerWorkspace({
                               row.Container === item.id ||
                               row.Name === item.name,
                           );
+                          const managed = registered.data?.find(
+                            (r) =>
+                              matchResource(r as ResourceLocator, [item])
+                                .instances.length > 0,
+                          );
+                          const impacted =
+                            managed?.applications
+                              .map((a) => a.application.name)
+                              .join("、") || "无已知关联应用";
                           const isRunning = item.state === "running";
                           return (
                             <tr
@@ -409,6 +466,22 @@ function DockerWorkspace({
                                   >
                                     日志
                                   </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!canWrite}
+                                    asChild
+                                  >
+                                    <Link
+                                      href={
+                                        managed
+                                          ? `/resources/${managed.id}`
+                                          : `/resources?${new URLSearchParams({ node: nodeId, register: item.id })}`
+                                      }
+                                    >
+                                      {managed ? "管理资源" : "登记为资源"}
+                                    </Link>
+                                  </Button>
                                   {(isRunning
                                     ? ["stop", "restart"]
                                     : ["start"]
@@ -421,7 +494,7 @@ function DockerWorkspace({
                                       onClick={() =>
                                         op.ask(
                                           `${actionNames[command]}容器？`,
-                                          `节点：${node.name}；容器：${item.name}（${item.id}）。确认后直接请求 Agent，执行过程写入操作日志。`,
+                                          `节点：${node.name}；容器：${item.name}（${item.id}）；受影响应用：${impacted}。确认后直接请求 Agent，执行过程写入操作日志。`,
                                           () =>
                                             start("docker.action", {
                                               id: item.id,
@@ -485,7 +558,7 @@ function DockerWorkspace({
                                         onSelect={() =>
                                           op.ask(
                                             "删除容器？",
-                                            `节点：${node.name}；容器：${item.name}（${item.id}）。删除后无法恢复容器；挂载卷保留。运行中的容器请先停止。`,
+                                            `节点：${node.name}；容器：${item.name}（${item.id}）；受影响应用：${impacted}。删除后无法恢复容器；挂载卷保留。运行中的容器请先停止。`,
                                             () =>
                                               start("docker.action", {
                                                 id: item.id,
@@ -662,6 +735,25 @@ function DockerWorkspace({
             popup={popup}
             nodeId={nodeId}
             nodeName={node?.name ?? nodeId}
+            affectedApplications={[
+              ...new Set(
+                registered.data
+                  ?.filter(
+                    (r) =>
+                      r.project === ("project" in popup ? popup.project : "") ||
+                      containers.data?.containers.some(
+                        (c) =>
+                          c.labels["com.docker.compose.project"] ===
+                            ("project" in popup ? popup.project : "") &&
+                          matchResource(r as ResourceLocator, [c]).instances
+                            .length > 0,
+                      ),
+                  )
+                  .flatMap((r) =>
+                    r.applications.map((a) => a.application.name),
+                  ) ?? [],
+              ),
+            ]}
             canWrite={canWrite}
             start={start}
             onClose={close}
@@ -977,6 +1069,7 @@ function ContainerDialog({
 }
 
 function ComposeDialog({
+  affectedApplications,
   popup,
   nodeId,
   nodeName,
@@ -985,6 +1078,7 @@ function ComposeDialog({
   onClose,
 }: {
   popup: Popup;
+  affectedApplications: string[];
   nodeId: string;
   nodeName: string;
   canWrite: boolean;
@@ -1075,7 +1169,7 @@ function ComposeDialog({
               const name = creating ? String(data.project) : project;
               op.ask(
                 "确认部署 Compose？",
-                `节点：${nodeName}；项目：${name}。将校验并保存配置，然后更新运行资源；失败时运行资源可能已部分改变，请查看状态与日志。`,
+                `节点：${nodeName}；项目：${name}；受影响应用：${affectedApplications.join("、") || "无已知关联应用"}。将校验并保存配置，然后更新运行资源；失败时运行资源可能已部分改变，请查看状态与日志。`,
                 () =>
                   start("compose.deploy", {
                     project: name,
@@ -1203,7 +1297,7 @@ function OperationHistory({
   );
 }
 
-function OperationDialog({
+export function OperationDialog({
   id,
   onClose,
   onStatus,
@@ -1259,6 +1353,22 @@ function OperationDialog({
               <span>开始 {date(operation.startedAt)}</span>
               <span>完成 {date(operation.finishedAt)}</span>
             </div>
+            {operation.resourceId && (
+              <p>
+                长期资源：
+                <Button variant="link" asChild>
+                  <Link href={`/resources/${operation.resourceId}`}>
+                    {operation.resourceId}
+                  </Link>
+                </Button>
+              </p>
+            )}
+            {!!operation.resolvedContainerIds?.length && (
+              <p>
+                执行时实例：
+                <code>{operation.resolvedContainerIds.join("、")}</code>
+              </p>
+            )}
             {operation.connectionError && (
               <p className="inline-error" role="alert">
                 {operation.connectionError}

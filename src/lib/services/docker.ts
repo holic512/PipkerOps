@@ -2,8 +2,8 @@
  * @file docker.ts
  * @project PipkerOps
  * @module docker-direct-service
- * @description Web/MCP 共享的 Docker 直连、操作记录及 Agent 结果对账。
- * @logic 权限在入口校验；写请求只发送一次，重复请求查询原记录，Gateway 和快照按序号合并日志。
+ * @description Web/MCP 共享的 Docker 直连、稳定资源目标解析、实例操作记录及 Agent 结果对账。
+ * @logic 执行前核对当前实例与共享影响；写请求只发送一次，重放保持原目标，Gateway 和快照按序号合并日志。
  * @dependencies Prisma, pinned Agent HTTPS, Docker contracts, authorization
  * @index_tags docker, compose, direct, audit, operation-log
  * @author holic512
@@ -14,6 +14,10 @@ import { ApiError, authorize, confirm, type Actor } from "../auth";
 import { agentDockerRequest, readCredential } from "../agent-connection";
 import { canonicalJson, hashToken } from "../crypto";
 import { db } from "../db";
+import { matchResource } from "../resource-discovery";
+import type { ResourceLocator } from "../resource-contracts";
+import type { DockerContainer } from "../docker-contracts";
+import { discoverResource, resolveResource } from "./resources";
 import {
   dockerResultSchemas,
   dockerSnapshotSchema,
@@ -25,6 +29,8 @@ const operationSelect = {
   id: true,
   method: true,
   nodeId: true,
+  resourceId: true,
+  resolvedContainerIds: true,
   source: true,
   target: true,
   action: true,
@@ -53,6 +59,8 @@ export async function executeDocker(
         id: true,
         method: true,
         nodeId: true,
+        resourceId: true,
+        resolvedContainerIds: true,
         source: true,
         target: true,
         action: true,
@@ -68,7 +76,7 @@ export async function executeDocker(
   }
   if (method === "docker.operations.get")
     return getDockerOperation(actor, params.id as string);
-  const { nodeId, idempotencyKey, confirmed, ...payload } = params;
+  const { nodeId, idempotencyKey, confirmed, resourceId, ...payload } = params;
   const writing = ["docker.action", "docker.pull", "compose.deploy"].includes(
     method,
   );
@@ -80,6 +88,81 @@ export async function executeDocker(
     dangerous,
   );
   if (dangerous) confirm(confirmed);
+  const requestHash = hashToken(
+    canonicalJson({
+      method,
+      nodeId,
+      payload,
+      actorId: actor.userId,
+      apiKeyId: actor.apiKeyId ?? null,
+      ...(resourceId ? { resourceId } : {}),
+    }),
+  );
+  if (writing) {
+    const original = await db().dockerOperation.findUnique({
+      where: { idempotencyKey: idempotencyKey as string },
+    });
+    if (original) {
+      if (original.requestHash !== requestHash)
+        throw new ApiError(409, "请求标识已用于其他 Docker 操作，请核对原请求");
+      return getDockerOperation(actor, original.id);
+    }
+  }
+  let operationResourceId = resourceId as string | undefined;
+  let resolvedContainerIds: string[] = [];
+  if (method === "docker.action" && !operationResourceId) {
+    const first = await db().resource.findFirst({
+      where: { nodeId: nodeId as string, strategy: { not: "unconfirmed" } },
+    });
+    if (
+      first &&
+      (await discoverResource(actor, first.id)).identification === "STALE"
+    )
+      throw new ApiError(409, "节点资源发现失败，请恢复采集后重试");
+    const resources = await db().resource.findMany({
+      where: { nodeId: nodeId as string },
+    });
+    const found = resources.filter(
+      (r) =>
+        Array.isArray(r.instances) &&
+        r.instances.some(
+          (c) =>
+            c &&
+            typeof c === "object" &&
+            !Array.isArray(c) &&
+            (c.id === payload.id || c.name === payload.id),
+        ),
+    );
+    if (found.length > 1)
+      throw new ApiError(409, "该实例关联多个资源，请在资源页面核对");
+    operationResourceId = found[0]?.id;
+  }
+  if (operationResourceId) {
+    if (method === "compose.deploy") {
+      const resource = await discoverResource(actor, operationResourceId);
+      if (
+        resource.nodeId !== nodeId ||
+        resource.strategy !== "compose" ||
+        resource.project !== payload.project ||
+        resource.identification !== "LOCATED"
+      )
+        throw new ApiError(409, "Compose 资源或项目已变化，请刷新后重新核对");
+      resolvedContainerIds = (resource.instances as { id: string }[]).map(
+        (c) => c.id,
+      );
+    } else {
+      const resolved = await resolveResource(
+        actor,
+        operationResourceId,
+        payload.id as string,
+      );
+      if (resolved.nodeId !== nodeId)
+        throw new ApiError(409, "资源所属节点与请求不匹配");
+      payload.id = resolved.containerId;
+      resolvedContainerIds = [resolved.containerId];
+    }
+  } else if (method === "docker.action")
+    resolvedContainerIds = [payload.id as string];
   const bundle = await dockerConnection(nodeId as string);
   if (!writing) {
     const raw = await agentDockerRequest(bundle, "/v1/docker/query", {
@@ -90,15 +173,69 @@ export async function executeDocker(
       method as keyof typeof dockerResultSchemas
     ].parse(raw);
   }
-  const requestHash = hashToken(
-    canonicalJson({
-      method,
-      nodeId,
-      payload,
-      actorId: actor.userId,
-      apiKeyId: actor.apiKeyId ?? null,
-    }),
-  );
+  let affectedResources =
+    method === "compose.deploy"
+      ? await db().resource.findMany({
+          where: {
+            nodeId: nodeId as string,
+          },
+          include: {
+            applications: {
+              include: { application: { select: { name: true } } },
+            },
+          },
+        })
+      : operationResourceId
+        ? await db().resource.findMany({
+            where: { id: operationResourceId },
+            include: {
+              applications: {
+                include: { application: { select: { name: true } } },
+              },
+            },
+          })
+        : [];
+  if (method === "compose.deploy") {
+    const listed = dockerResultSchemas["docker.list"].parse(
+      await agentDockerRequest(bundle, "/v1/docker/query", {
+        method: "docker.list",
+        params: {},
+      }),
+    );
+    const ids: string[] = [];
+    const projectContainers: DockerContainer[] = [];
+    for (const container of listed.containers) {
+      const inspected = dockerResultSchemas["docker.inspect"].parse(
+        await agentDockerRequest(bundle, "/v1/docker/query", {
+          method: "docker.inspect",
+          params: { id: container.id },
+        }),
+      );
+      const detail = inspected.containers[0] as
+        | { Id?: string; Config?: { Labels?: Record<string, string> } }
+        | undefined;
+      if (!detail || detail.Id !== container.id)
+        throw new ApiError(409, "项目实例发现不完整，请重新核对");
+      if (
+        detail.Config?.Labels?.["com.docker.compose.project"] ===
+        payload.project
+      ) {
+        ids.push(container.id);
+        projectContainers.push({
+          ...container,
+          labels: detail.Config!.Labels!,
+        });
+      }
+    }
+    affectedResources = affectedResources.filter(
+      (r) =>
+        r.project === payload.project ||
+        matchResource(r as ResourceLocator, projectContainers).instances
+          .length > 0,
+    );
+    resolvedContainerIds = ids;
+    operationResourceId ??= affectedResources[0]?.id;
+  }
   const candidateId = randomUUID();
   const operation = await db().$transaction(async (tx) => {
     const stored = await tx.dockerOperation.upsert({
@@ -108,6 +245,8 @@ export async function executeDocker(
         id: candidateId,
         method,
         nodeId: nodeId as string,
+        resourceId: operationResourceId,
+        resolvedContainerIds,
         actorId: actor.userId,
         apiKeyId: actor.apiKeyId,
         source: actor.apiKeyId ? "MCP" : "WEB",
@@ -128,7 +267,16 @@ export async function executeDocker(
           resourceType: "DockerOperation",
           resourceId: stored.id,
           nodeId: stored.nodeId,
-          detail: { target: stored.target, action: stored.action },
+          detail: {
+            target: stored.target,
+            action: stored.action,
+            resourceId: stored.resourceId,
+            containerIds: resolvedContainerIds,
+            affectedResourceIds: affectedResources.map((r) => r.id),
+            affectedApplications: affectedResources.flatMap((r) =>
+              r.applications.map((a) => a.application.name),
+            ),
+          },
         },
       });
     return stored;
