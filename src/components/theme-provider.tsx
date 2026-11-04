@@ -9,6 +9,7 @@
  * @index_tags theme, context, preference, ui
  * @author holic512
  */
+import { NativeSelect } from "@/components/ui/native-select";
 import {
   createContext,
   useContext,
@@ -71,7 +72,7 @@ export function ThemeSwitcher() {
   return (
     <div className="theme-switcher">
       <Icon size={15} aria-hidden="true" />
-      <select
+      <NativeSelect
         aria-label="界面主题"
         value={preference}
         onChange={(event) =>
@@ -81,7 +82,7 @@ export function ThemeSwitcher() {
         <option value="system">跟随系统</option>
         <option value="light">亮色</option>
         <option value="dark">暗色</option>
-      </select>
+      </NativeSelect>
     </div>
   );
 }

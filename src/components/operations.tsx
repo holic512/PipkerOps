@@ -9,6 +9,8 @@
  * @author holic512
  */
 "use client";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -26,6 +28,7 @@ import {
   type Field,
 } from "./shared";
 import { Button } from "./ui/button";
+import { ViewTabs } from "./ui/tabs";
 import { BusinessDialog } from "./ui/dialog";
 import { createTaskSubmission } from "@/lib/task-submission";
 const taskLogMessages: Record<string, string> = {
@@ -84,7 +87,7 @@ export function Tasks() {
       )}
       {op.ui}
       <div className="list-toolbar">
-        <input
+        <Input
           aria-label="搜索任务"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -438,7 +441,7 @@ function OperationsForm({
           <div className="panel-header">
             <label className="node-selector">
               执行节点
-              <select
+              <NativeSelect
                 aria-label="执行节点"
                 value={node}
                 onChange={(e) => {
@@ -455,68 +458,67 @@ function OperationsForm({
                       {n.name}
                     </option>
                   ))}
-              </select>
+              </NativeSelect>
             </label>
             <Link href="/tasks">查看所有任务</Link>
           </div>
-          <div className="inner-tabs">
-            {config.actions.map((a) => (
-              <button
-                className={action === a.type ? "active" : ""}
-                onClick={() => {
-                  if (action === a.type) return;
-                  setAction(a.type);
-                  setTask("");
-                  op.clear();
-                }}
-                key={a.type}
-              >
-                {a.label}
-              </button>
-            ))}
-          </div>
-          <div className="form-panel">
-            <h2>{current.label}</h2>
-            {node && !selectedNode?.connected && !q.isLoading && (
-              <p role="alert" className="error-text">
-                {selectedNode
-                  ? "节点离线，请恢复连接后执行。"
-                  : "节点不存在或无权访问，请重新选择节点。"}
-              </p>
-            )}
-            {node ? (
-              <ResourceForm
-                key={`${action}:${node}`}
-                busy={op.busy}
-                disabled={!selectedNode?.connected}
-                fields={current.fields.map((f) =>
-                  ["id", "project", "name"].includes(f.name) &&
-                  target &&
-                  node === requestedNode &&
-                  action.split(".")[0] === requestedAction.split(".")[0]
-                    ? { ...f, defaultValue: target }
-                    : f,
-                )}
-                submit={current.dangerous ? "确认并执行" : "执行"}
-                onSubmit={async (data) => {
-                  if (current.dangerous) {
-                    op.ask(
-                      `${current.label}？`,
-                      `此操作将在 ${selectedNode?.name} 上执行，参数：${JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => ["id", "name", "project", "path", "action"].includes(key))))}。操作将被审计。`,
-                      () => launch(data),
-                      "任务已记录，请查看状态与结果",
-                    );
-                  } else
-                    await op.run(
-                      () => launch(data),
-                      "任务已记录，请查看状态与结果",
-                    );
-                }}
-              />
-            ) : (
-              <p className="panel-empty">请先选择执行节点。</p>
-            )}
-          </div>
+          <ViewTabs
+            label="节点运维操作"
+            value={action}
+            onValueChange={(value) => {
+              if (action === value) return;
+              setAction(value);
+              setTask("");
+              op.clear();
+            }}
+            items={config.actions.map((item) => ({
+              value: item.type,
+              label: item.label,
+            }))}
+          >
+            <div className="form-panel">
+              <h2>{current.label}</h2>
+              {node && !selectedNode?.connected && !q.isLoading && (
+                <p role="alert" className="error-text">
+                  {selectedNode
+                    ? "节点离线，请恢复连接后执行。"
+                    : "节点不存在或无权访问，请重新选择节点。"}
+                </p>
+              )}
+              {node ? (
+                <ResourceForm
+                  key={`${action}:${node}`}
+                  busy={op.busy}
+                  disabled={!selectedNode?.connected}
+                  fields={current.fields.map((f) =>
+                    ["id", "project", "name"].includes(f.name) &&
+                    target &&
+                    node === requestedNode &&
+                    action.split(".")[0] === requestedAction.split(".")[0]
+                      ? { ...f, defaultValue: target }
+                      : f,
+                  )}
+                  submit={current.dangerous ? "确认并执行" : "执行"}
+                  onSubmit={async (data) => {
+                    if (current.dangerous) {
+                      op.ask(
+                        `${current.label}？`,
+                        `此操作将在 ${selectedNode?.name} 上执行，参数：${JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => ["id", "name", "project", "path", "action"].includes(key))))}。操作将被审计。`,
+                        () => launch(data),
+                        "任务已记录，请查看状态与结果",
+                      );
+                    } else
+                      await op.run(
+                        () => launch(data),
+                        "任务已记录，请查看状态与结果",
+                      );
+                  }}
+                />
+              ) : (
+                <p className="panel-empty">请先选择执行节点。</p>
+              )}
+            </div>
+          </ViewTabs>
         </section>
         {task && resultOpen && (
           <BusinessDialog

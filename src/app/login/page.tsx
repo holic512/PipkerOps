@@ -1,4 +1,5 @@
 "use client";
+import { Input } from "@/components/ui/input";
 import Image from "next/image";
 import { useSyncExternalStore, useState } from "react";
 import { ArrowRight, LockKeyhole } from "lucide-react";
@@ -72,7 +73,7 @@ export default function Login() {
           )}
           <label>
             邮箱
-            <input
+            <Input
               name="email"
               disabled={!secure}
               type="email"
@@ -83,7 +84,7 @@ export default function Login() {
           </label>
           <label>
             密码
-            <input
+            <Input
               name="password"
               disabled={!secure}
               type="password"

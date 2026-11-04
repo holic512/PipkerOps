@@ -9,6 +9,8 @@
  * @author holic512
  */
 "use client";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import { useState } from "react";
 import { rpc, type NodeData } from "@/lib/client";
@@ -66,7 +68,7 @@ export function Updates() {
             </p>
             <label>
               组件
-              <select
+              <NativeSelect
                 value={component}
                 onChange={(e) => {
                   setComponent(e.target.value);
@@ -76,11 +78,11 @@ export function Updates() {
                 <option value="agent">Agent 程序</option>
                 <option value="scripts">部署脚本</option>
                 <option value="ops">Ops 应用（同机 Agent 执行）</option>
-              </select>
+              </NativeSelect>
             </label>
             <label>
               执行节点
-              <select
+              <NativeSelect
                 value={nodeId}
                 onChange={(e) => {
                   setNodeId(e.target.value);
@@ -96,11 +98,11 @@ export function Updates() {
                       {n.name} · Agent {n.agentVersion ?? "未知"}
                     </option>
                   ))}
-              </select>
+              </NativeSelect>
             </label>
             <label>
               原部署目录（目标主机上的绝对路径）
-              <input
+              <Input
                 value={targetRoot}
                 placeholder="例如 /opt/pipkerops/deploy"
                 onChange={(e) => {
@@ -133,14 +135,17 @@ export function Updates() {
             </Button>
             <label>
               发布版本
-              <select value={tag} onChange={(e) => setTag(e.target.value)}>
+              <NativeSelect
+                value={tag}
+                onChange={(e) => setTag(e.target.value)}
+              >
                 <option value="">请先检查更新并选择版本</option>
                 {releases.map((release) => (
                   <option key={release.tag} value={release.tag}>
                     {release.name}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </label>
             <div className="inline-actions">
               <Button

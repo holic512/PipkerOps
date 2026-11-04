@@ -23,18 +23,19 @@
 
 ## 公共组件与样式
 
-| 用途                   | 复用入口                                                                                                                                      |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| 页面标题与操作         | `PageTitle`，`.page-title` / `.page-actions`                                                                                                  |
-| 有边框的内容表面       | `.panel` / `.surface`，`.panel-header` / `.form-panel`                                                                                        |
-| 可换行的操作栏         | `.toolbar`，操作组使用 `.inline-actions`                                                                                                      |
-| 按钮与链接按钮         | `Button` 的默认、outline、ghost、destructive 及 sm / icon 变体                                                                                |
-| 表单                   | `ResourceForm`、`.form-grid` / `.field-wide`；管理外壳、登录页和弹窗内原生表单控件统一样式，排除 xterm 内部输入                               |
-| 数据表格               | `DataTable`；手写表格同样添加 `.data-table` 并置于 `.table-wrap` 内                                                                           |
-| 分页                   | `.toolbar` 内复用 `Button size="sm"`；当前页用主按钮或 `aria-current="page"`，页数用 `.muted`，首尾禁用对应按钮，容器标注 `aria-label="分页"` |
-| 弹窗与确认             | `BusinessDialog` / `ConfirmDialog`                                                                                                            |
-| 加载、错误、空态与反馈 | `QueryState` / `Feedback` / `.inline-error`                                                                                                   |
-| 状态与指标             | `Status` / `.status-*` / `.metric-bar`                                                                                                        |
+| 用途                     | 复用入口                                                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 页面标题与操作           | `PageTitle`，`.page-title` / `.page-actions`                                                                                             |
+| 有边框的内容表面         | `.panel` / `.surface`，`.panel-header` / `.form-panel`                                                                                   |
+| 可换行的操作栏           | `.toolbar`，操作组使用 `.inline-actions`                                                                                                 |
+| 按钮与链接按钮           | `Button` 的默认、outline、ghost、destructive 及 sm / icon 变体                                                                           |
+| 表单                     | `ResourceForm`，复杂表单组合 `Input` / `Textarea` / `NativeSelect` / `Checkbox`；原生 form/label/fieldset 保留语义，不在业务层写基础控件 |
+| 数据表格                 | `DataTable` 统一外壳、滚动与列标题；`headers` 支持 ReactNode，业务保留 tr/td 和带 scope 的行标题                                         |
+| 分页                     | 当前没有分页业务；新增时先组合 Button 与语义 nav，提炼复用后登记索引，不复制页面内分页方案                                               |
+| 弹窗与确认               | `BusinessDialog` / `ConfirmDialog`                                                                                                       |
+| 标签视图、筛选与动作菜单 | `ViewTabs` / `Popover` / `DropdownMenu`；终端持久会话保留分组按钮与多面板行为                                                            |
+| 加载、错误、空态与反馈   | `QueryState` / `Feedback` / `.inline-error`                                                                                              |
+| 状态与指标               | `Status` / `.status-*` / `.metric-bar`                                                                                                   |
 
 仅将重复的视觉职责下沉到公共层。节点树缩进、图表坐标和工作台分栏等业务布局保留在对应类中；不通过全局 `table` 等选择器影响第三方组件，不为主题增加逐页覆盖或新的 UI 框架。
 
@@ -63,4 +64,4 @@
 
 ## 后续修改检查
 
-新增页面优先复用上述组件和类。颜色不得写在组件或页面 CSS 中；Token 的颜色覆盖、常用文字及控件对比度、首屏恢复和存储受限行为由 `tests/theme.test.ts` 验证。交付前仍需查看实际亮暗主题、窄屏、加载 / 空态 / 错误态、弹窗、键盘焦点及第三方组件；自动检查不能代替渲染检查。
+新增页面先读 [组件索引与示例](docs/UI_COMPONENTS.md)，按 AGENTS.md 的复用流程开发。原生基础交互、业务层直接使用 Radix、额外 UI 体系及 Tailwind 非语义色板由本地 ESLint 规则检查；必要原生业务按钮逐个填写 `data-ui-native` 理由并审查。颜色不得写在组件或页面 CSS 中；Token 的颜色覆盖、常用文字及控件对比度、首屏恢复和存储受限行为由 `tests/theme.test.ts` 验证。交付前仍需查看实际亮暗主题、窄屏、加载 / 空态 / 错误态、弹窗、键盘焦点及第三方组件；自动检查不能代替渲染检查。

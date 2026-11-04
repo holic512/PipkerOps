@@ -39,6 +39,7 @@ import {
   JsonView,
 } from "./shared";
 import { Button } from "./ui/button";
+import { ViewTabs } from "./ui/tabs";
 import { BusinessDialog } from "./ui/dialog";
 export function Applications() {
   const q = useQuery<AppData[]>("applications.list");
@@ -148,6 +149,7 @@ export function Applications() {
           <div className="app-grid">
             {q.data?.map((a) => (
               <button
+                data-ui-native="应用资源卡片使用块布局，保留整卡点击区域"
                 key={a.id}
                 className={`app-card ${selected?.id === a.id ? "app-selected" : ""}`}
                 onClick={() => {
@@ -241,232 +243,231 @@ export function Applications() {
               删除应用
             </Button>
           </div>
-          <div className="inner-tabs">
-            {[
-              ["instances", "部署实例"],
-              ["associate", "关联实例"],
-              ["business", "业务数据"],
-              ["edit", "编辑应用"],
-            ].map(([key, label]) => (
-              <button
-                key={key}
-                className={tab === key ? "active" : ""}
-                onClick={() => setTab(key)}
+          <ViewTabs
+            label="应用详情"
+            value={tab}
+            onValueChange={setTab}
+            items={[
+              { value: "instances", label: "部署实例" },
+              { value: "associate", label: "关联实例" },
+              { value: "business", label: "业务数据" },
+              { value: "edit", label: "编辑应用" },
+            ]}
+          >
+            {tab === "instances" ? (
+              <QueryState
+                loading={false}
+                empty={
+                  !q.data?.find((a) => a.id === selected.id)?.deployments.length
+                }
+                retry={() => void q.mutate()}
+                emptyTitle="还未关联部署实例"
+                emptyText="点击“关联实例”，选择节点上的实际运行目标。"
               >
-                {label}
-              </button>
-            ))}
-          </div>
-          {tab === "instances" ? (
-            <QueryState
-              loading={false}
-              empty={
-                !q.data?.find((a) => a.id === selected.id)?.deployments.length
-              }
-              retry={() => void q.mutate()}
-              emptyTitle="还未关联部署实例"
-              emptyText="点击“关联实例”，选择节点上的实际运行目标。"
-            >
-              <DataTable
-                headers={["实例", "类型", "节点", "运行目标", "状态", "操作"]}
-              >
-                {q.data
-                  ?.find((a) => a.id === selected.id)
-                  ?.deployments.map((d) => (
-                    <tr key={d.id}>
-                      <td>{d.name}</td>
-                      <td>{d.type}</td>
-                      <td>
-                        <Link href={`/nodes/${d.nodeId}`}>
-                          {d.node?.name ?? d.nodeId}
-                        </Link>
-                      </td>
-                      <td>
-                        <code>{d.target}</code>
-                      </td>
-                      <td>
-                        <Status value={d.status} />
-                      </td>
-                      <td>
-                        <div className="inline-actions">
-                          {(d.type === "docker"
-                            ? [
-                                ["容器详情", "/docker", "docker.inspect"],
-                                ["日志", "/docker", "docker.logs"],
-                                ["生命周期", "/docker", "docker.action"],
-                                ["远程工作台", "/terminal", ""],
-                              ]
-                            : d.type === "compose"
+                <DataTable
+                  headers={["实例", "类型", "节点", "运行目标", "状态", "操作"]}
+                >
+                  {q.data
+                    ?.find((a) => a.id === selected.id)
+                    ?.deployments.map((d) => (
+                      <tr key={d.id}>
+                        <td>{d.name}</td>
+                        <td>{d.type}</td>
+                        <td>
+                          <Link href={`/nodes/${d.nodeId}`}>
+                            {d.node?.name ?? d.nodeId}
+                          </Link>
+                        </td>
+                        <td>
+                          <code>{d.target}</code>
+                        </td>
+                        <td>
+                          <Status value={d.status} />
+                        </td>
+                        <td>
+                          <div className="inline-actions">
+                            {(d.type === "docker"
                               ? [
-                                  ["项目状态", "/docker", "compose.status"],
-                                  ["配置", "/docker", "compose.read"],
-                                  ["部署更新", "/docker", "compose.deploy"],
+                                  ["容器详情", "/docker", "docker.inspect"],
+                                  ["日志", "/docker", "docker.logs"],
+                                  ["生命周期", "/docker", "docker.action"],
+                                  ["远程工作台", "/terminal", ""],
                                 ]
-                              : d.type === "systemd"
+                              : d.type === "compose"
                                 ? [
-                                    ["服务状态", "/system", "systemd.list"],
-                                    ["管理服务", "/system", "systemd.action"],
+                                    ["项目状态", "/docker", "compose.status"],
+                                    ["配置", "/docker", "compose.read"],
+                                    ["部署更新", "/docker", "compose.deploy"],
                                   ]
-                                : []
-                          ).map(([label, path, action]) => (
-                            <Button
-                              key={label}
-                              size="sm"
-                              variant="outline"
-                              asChild
-                            >
-                              <Link
-                                href={`${path}?${new URLSearchParams({ node: d.nodeId, target: d.target, action })}`}
+                                : d.type === "systemd"
+                                  ? [
+                                      ["服务状态", "/system", "systemd.list"],
+                                      ["管理服务", "/system", "systemd.action"],
+                                    ]
+                                  : []
+                            ).map(([label, path, action]) => (
+                              <Button
+                                key={label}
+                                size="sm"
+                                variant="outline"
+                                asChild
                               >
-                                {label}
+                                <Link
+                                  href={`${path}?${new URLSearchParams({ node: d.nodeId, target: d.target, action })}`}
+                                >
+                                  {label}
+                                </Link>
+                              </Button>
+                            ))}
+                            <Button size="sm" variant="outline" asChild>
+                              <Link
+                                href={`/actions?${new URLSearchParams({ node: d.nodeId, target: d.target, applicationId: selected.id, deploymentId: d.id })}`}
+                              >
+                                自定义动作
                               </Link>
                             </Button>
-                          ))}
-                          <Button size="sm" variant="outline" asChild>
-                            <Link
-                              href={`/actions?${new URLSearchParams({ node: d.nodeId, target: d.target, applicationId: selected.id, deploymentId: d.id })}`}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                op.ask(
+                                  "解除实例关联？",
+                                  `应用：${selected.name}；实例：${d.name}；节点：${d.node?.name ?? d.nodeId}；类型：${d.type}；运行目标：${d.target}。只删除平台关联记录，节点上的资源继续保留。`,
+                                  () =>
+                                    rpc("deployments.delete", {
+                                      id: d.id,
+                                      confirmed: true,
+                                    }),
+                                )
+                              }
                             >
-                              自定义动作
-                            </Link>
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() =>
-                              op.ask(
-                                "解除实例关联？",
-                                `应用：${selected.name}；实例：${d.name}；节点：${d.node?.name ?? d.nodeId}；类型：${d.type}；运行目标：${d.target}。只删除平台关联记录，节点上的资源继续保留。`,
-                                () =>
-                                  rpc("deployments.delete", {
-                                    id: d.id,
-                                    confirmed: true,
-                                  }),
-                              )
-                            }
-                          >
-                            解除关联
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
+                              解除关联
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </DataTable>
+              </QueryState>
+            ) : tab === "associate" ? (
+              <div className="form-panel">
+                <ResourceForm
+                  id="associate-instance"
+                  hideSubmit
+                  busy={op.busy}
+                  fields={[
+                    { name: "name", label: "实例名称", required: true },
+                    {
+                      name: "nodeId",
+                      label: "部署节点",
+                      required: true,
+                      type: "select",
+                      options: nodes.data
+                        ?.filter((n) => n.status === "APPROVED")
+                        .map((n) => ({ value: n.id, label: n.name })),
+                    },
+                    {
+                      name: "type",
+                      label: "实例类型",
+                      type: "select",
+                      required: true,
+                      options: [
+                        "docker",
+                        "compose",
+                        "systemd",
+                        "process",
+                        "database",
+                        "nginx",
+                      ].map((v) => ({ value: v, label: v })),
+                    },
+                    {
+                      name: "target",
+                      label: "容器 ID / 服务名 / 运行目标",
+                      required: true,
+                    },
+                    {
+                      name: "healthUrl",
+                      label: "健康 URL（可选，由该节点每60秒探测）",
+                    },
+                  ]}
+                  onSubmit={(d) =>
+                    op.run(() =>
+                      rpc("deployments.save", {
+                        ...d,
+                        applicationId: selected.id,
+                      }),
+                    )
+                  }
+                />
+              </div>
+            ) : tab === "edit" ? (
+              <div className="form-panel">
+                <ResourceForm
+                  id="edit-app"
+                  hideSubmit
+                  key={selected.id}
+                  busy={op.busy}
+                  fields={[
+                    {
+                      name: "name",
+                      label: "应用名称",
+                      required: true,
+                      defaultValue: selected.name,
+                    },
+                    {
+                      name: "description",
+                      label: "描述",
+                      type: "textarea",
+                      defaultValue: selected.description ?? "",
+                    },
+                    {
+                      name: "businessData",
+                      label: "业务数据",
+                      type: "json",
+                      defaultValue: JSON.stringify(
+                        selected.businessData,
+                        null,
+                        2,
+                      ),
+                    },
+                  ]}
+                  onSubmit={(d) =>
+                    op.run(() =>
+                      rpc("applications.save", { ...d, id: selected.id }),
+                    )
+                  }
+                />
+              </div>
+            ) : (
+              <div className="form-panel">
+                <h2>自定义业务数据</h2>
+                <JsonView
+                  data={
+                    q.data?.find((a) => a.id === selected.id)?.businessData ??
+                    {}
+                  }
+                />
+                <h2>探针业务字段</h2>
+                {q.data
+                  ?.find((a) => a.id === selected.id)
+                  ?.probes.map((probe) => (
+                    <section key={probe.id}>
+                      <h3>
+                        {probe.name} ·{" "}
+                        <Status
+                          value={probe.enabled ? probe.status : "PAUSED"}
+                        />
+                      </h3>
+                      <small>
+                        {date(probe.results?.[0]?.recordedAt)} ·{" "}
+                        {probe.results?.[0]?.latencyMs.toFixed(1) ?? "—"} ms
+                      </small>
+                      <JsonView data={probe.results?.[0]?.data ?? {}} />
+                    </section>
                   ))}
-              </DataTable>
-            </QueryState>
-          ) : tab === "associate" ? (
-            <div className="form-panel">
-              <ResourceForm
-                id="associate-instance"
-                hideSubmit
-                busy={op.busy}
-                fields={[
-                  { name: "name", label: "实例名称", required: true },
-                  {
-                    name: "nodeId",
-                    label: "部署节点",
-                    required: true,
-                    type: "select",
-                    options: nodes.data
-                      ?.filter((n) => n.status === "APPROVED")
-                      .map((n) => ({ value: n.id, label: n.name })),
-                  },
-                  {
-                    name: "type",
-                    label: "实例类型",
-                    type: "select",
-                    required: true,
-                    options: [
-                      "docker",
-                      "compose",
-                      "systemd",
-                      "process",
-                      "database",
-                      "nginx",
-                    ].map((v) => ({ value: v, label: v })),
-                  },
-                  {
-                    name: "target",
-                    label: "容器 ID / 服务名 / 运行目标",
-                    required: true,
-                  },
-                  {
-                    name: "healthUrl",
-                    label: "健康 URL（可选，由该节点每60秒探测）",
-                  },
-                ]}
-                onSubmit={(d) =>
-                  op.run(() =>
-                    rpc("deployments.save", {
-                      ...d,
-                      applicationId: selected.id,
-                    }),
-                  )
-                }
-              />
-            </div>
-          ) : tab === "edit" ? (
-            <div className="form-panel">
-              <ResourceForm
-                id="edit-app"
-                hideSubmit
-                key={selected.id}
-                busy={op.busy}
-                fields={[
-                  {
-                    name: "name",
-                    label: "应用名称",
-                    required: true,
-                    defaultValue: selected.name,
-                  },
-                  {
-                    name: "description",
-                    label: "描述",
-                    type: "textarea",
-                    defaultValue: selected.description ?? "",
-                  },
-                  {
-                    name: "businessData",
-                    label: "业务数据",
-                    type: "json",
-                    defaultValue: JSON.stringify(
-                      selected.businessData,
-                      null,
-                      2,
-                    ),
-                  },
-                ]}
-                onSubmit={(d) =>
-                  op.run(() =>
-                    rpc("applications.save", { ...d, id: selected.id }),
-                  )
-                }
-              />
-            </div>
-          ) : (
-            <div className="form-panel">
-              <h2>自定义业务数据</h2>
-              <JsonView
-                data={
-                  q.data?.find((a) => a.id === selected.id)?.businessData ?? {}
-                }
-              />
-              <h2>探针业务字段</h2>
-              {q.data
-                ?.find((a) => a.id === selected.id)
-                ?.probes.map((probe) => (
-                  <section key={probe.id}>
-                    <h3>
-                      {probe.name} ·{" "}
-                      <Status value={probe.enabled ? probe.status : "PAUSED"} />
-                    </h3>
-                    <small>
-                      {date(probe.results?.[0]?.recordedAt)} ·{" "}
-                      {probe.results?.[0]?.latencyMs.toFixed(1) ?? "—"} ms
-                    </small>
-                    <JsonView data={probe.results?.[0]?.data ?? {}} />
-                  </section>
-                ))}
-            </div>
-          )}
+              </div>
+            )}
+          </ViewTabs>
         </BusinessDialog>
       )}
     </>
@@ -662,15 +663,16 @@ export function Probes() {
           {q.data?.map((p) => (
             <tr key={p.id}>
               <td>
-                <button
-                  className="text-button entity-link"
+                <Button
+                  variant="link"
+                  className="entity-link"
                   onClick={() => {
                     op.clear();
                     setSelected(p.id);
                   }}
                 >
                   {p.name}
-                </button>
+                </Button>
                 <small>
                   {p.type} · {p.target}
                 </small>

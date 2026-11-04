@@ -9,6 +9,7 @@
  * @author holic512
  */
 "use client";
+import { DataTable } from "./shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -38,6 +39,7 @@ import {
   Status,
 } from "./shared";
 import { Button } from "./ui/button";
+import { ViewTabs } from "./ui/tabs";
 import { BusinessDialog } from "./ui/dialog";
 import { rpc } from "@/lib/client";
 import { topologyLinks } from "@/lib/topology-links";
@@ -350,264 +352,246 @@ export function Topology() {
           />
         </BusinessDialog>
       )}
-      <div className="inner-tabs">
-        <button
-          className={tab === "graph" ? "active" : ""}
-          onClick={() => setTab("graph")}
-        >
-          交互拓扑
-        </button>
-        <button
-          className={tab === "matrix" ? "active" : ""}
-          onClick={() => setTab("matrix")}
-        >
-          连通性矩阵
-        </button>
-      </div>
-      <QueryState
-        error={q.error}
-        loading={q.isLoading}
-        empty={!graph.nodes.length}
-        retry={() => void q.mutate()}
-        emptyTitle="还没有可以展示的资源"
-        emptyText="接入节点、创建应用或关联部署实例后，拓扑将自动生成。"
+      <ViewTabs
+        label="拓扑视图"
+        value={tab}
+        onValueChange={setTab}
+        items={[
+          { value: "graph", label: "交互拓扑" },
+          { value: "matrix", label: "连通性矩阵" },
+        ]}
       >
-        {tab === "graph" ? (
-          <div
-            className="topology-layout"
-            onKeyDownCapture={(event) => {
-              if (
-                (event.key === "Enter" || event.key === " ") &&
-                event.target instanceof HTMLElement &&
-                event.target.closest(".react-flow__node")
-              ) {
-                event.preventDefault();
-                event.stopPropagation();
-                const id = event.target
-                  .closest(".react-flow__node")
-                  ?.getAttribute("data-id");
-                if (id) {
-                  setSelectedId(id);
-                  setDetailsOpen(true);
+        <QueryState
+          error={q.error}
+          loading={q.isLoading}
+          empty={!graph.nodes.length}
+          retry={() => void q.mutate()}
+          emptyTitle="还没有可以展示的资源"
+          emptyText="接入节点、创建应用或关联部署实例后，拓扑将自动生成。"
+        >
+          {tab === "graph" ? (
+            <div
+              className="topology-layout"
+              onKeyDownCapture={(event) => {
+                if (
+                  (event.key === "Enter" || event.key === " ") &&
+                  event.target instanceof HTMLElement &&
+                  event.target.closest(".react-flow__node")
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const id = event.target
+                    .closest(".react-flow__node")
+                    ?.getAttribute("data-id");
+                  if (id) {
+                    setSelectedId(id);
+                    setDetailsOpen(true);
+                  }
                 }
-              }
-            }}
-          >
-            <section className="topology-canvas" ref={canvasRef}>
-              <ReactFlow
-                colorMode={resolvedTheme}
-                onInit={setFlow}
-                nodes={graph.nodes.map((n) => ({
-                  ...n,
-                  ...layout[n.id],
-                  connectable: false,
-                }))}
-                onNodesChange={(changes) => {
-                  for (const change of changes) {
-                    if (change.type === "select")
-                      setSelectedId((previous) =>
-                        change.selected
-                          ? change.id
-                          : previous === change.id
-                            ? null
-                            : previous,
-                      );
-                  }
-                  setLayout((previous) =>
-                    Object.fromEntries(
-                      applyNodeChanges(
-                        changes,
-                        graph.nodes.map((n) => ({ ...n, ...previous[n.id] })),
-                      ).map(({ id, position, measured, selected }) => [
-                        id,
-                        { position, measured, selected },
-                      ]),
-                    ),
-                  );
-                }}
-                deleteKeyCode={null}
-                edges={graph.edges}
-                fitView
-                minZoom={0.2}
-                maxZoom={1.8}
-                nodesDraggable={interactive}
-                elementsSelectable={interactive}
-                nodesConnectable={false}
-                onNodeClick={(_, node) => {
-                  setSelectedId(node.id);
-                  setDetailsOpen(true);
-                }}
-                onPaneClick={() => setSelectedId(null)}
-                aria-label="应用与节点拓扑"
-                ariaLabelConfig={{
-                  "controls.zoomIn.ariaLabel": "放大拓扑",
-                  "controls.zoomOut.ariaLabel": "缩小拓扑",
-                  "controls.fitView.ariaLabel": "适配全部资源",
-                  "controls.interactive.ariaLabel": "切换拓扑交互",
-                }}
-              >
-                <Background color="var(--chart-grid)" gap={24} />
-                <div role="group" aria-label="拓扑视图操作">
-                  {/* Controls 容器无语义角色，名称由外层分组提供。 */}
-                  <Controls
-                    aria-label=""
-                    onInteractiveChange={setInteractive}
+              }}
+            >
+              <section className="topology-canvas" ref={canvasRef}>
+                <ReactFlow
+                  colorMode={resolvedTheme}
+                  onInit={setFlow}
+                  nodes={graph.nodes.map((n) => ({
+                    ...n,
+                    ...layout[n.id],
+                    connectable: false,
+                  }))}
+                  onNodesChange={(changes) => {
+                    for (const change of changes) {
+                      if (change.type === "select")
+                        setSelectedId((previous) =>
+                          change.selected
+                            ? change.id
+                            : previous === change.id
+                              ? null
+                              : previous,
+                        );
+                    }
+                    setLayout((previous) =>
+                      Object.fromEntries(
+                        applyNodeChanges(
+                          changes,
+                          graph.nodes.map((n) => ({ ...n, ...previous[n.id] })),
+                        ).map(({ id, position, measured, selected }) => [
+                          id,
+                          { position, measured, selected },
+                        ]),
+                      ),
+                    );
+                  }}
+                  deleteKeyCode={null}
+                  edges={graph.edges}
+                  fitView
+                  minZoom={0.2}
+                  maxZoom={1.8}
+                  nodesDraggable={interactive}
+                  elementsSelectable={interactive}
+                  nodesConnectable={false}
+                  onNodeClick={(_, node) => {
+                    setSelectedId(node.id);
+                    setDetailsOpen(true);
+                  }}
+                  onPaneClick={() => setSelectedId(null)}
+                  aria-label="应用与节点拓扑"
+                  ariaLabelConfig={{
+                    "controls.zoomIn.ariaLabel": "放大拓扑",
+                    "controls.zoomOut.ariaLabel": "缩小拓扑",
+                    "controls.fitView.ariaLabel": "适配全部资源",
+                    "controls.interactive.ariaLabel": "切换拓扑交互",
+                  }}
+                >
+                  <Background color="var(--chart-grid)" gap={24} />
+                  <div role="group" aria-label="拓扑视图操作">
+                    {/* Controls 容器无语义角色，名称由外层分组提供。 */}
+                    <Controls
+                      aria-label=""
+                      onInteractiveChange={setInteractive}
+                    />
+                  </div>
+                  <MiniMap
+                    nodeColor={(n) =>
+                      String(n.data.state) === "UNHEALTHY"
+                        ? "var(--danger-border)"
+                        : "var(--graph-node)"
+                    }
+                    pannable
+                    zoomable
                   />
-                </div>
-                <MiniMap
-                  nodeColor={(n) =>
-                    String(n.data.state) === "UNHEALTHY"
-                      ? "var(--danger-border)"
-                      : "var(--graph-node)"
-                  }
-                  pannable
-                  zoomable
-                />
-              </ReactFlow>
-              <div className="graph-legend">
-                <span>应用 → 部署 → 节点 → 容器</span>
-                <span className="error-text">红色表示故障或离线</span>
-              </div>
-            </section>
-            {!!q.data?.dependencies.length && (
-              <section className="panel detail-panel">
-                <div className="panel-header">
-                  <h2>依赖关系</h2>
-                </div>
-                <div className="form-panel">
-                  {q.data.dependencies.map((dep) => (
-                    <div className="inline-actions" key={dep.id}>
-                      <span>
-                        {
-                          q.data?.applications.find(
-                            (a) => a.id === dep.fromApplicationId,
-                          )?.name
-                        }{" "}
-                        →{" "}
-                        {
-                          q.data?.applications.find(
-                            (a) => a.id === dep.toApplicationId,
-                          )?.name
-                        }{" "}
-                        · {dep.type}
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() =>
-                          op.ask(
-                            "删除依赖关系？",
-                            "只删除平台记录，不改变应用实际网络连接。",
-                            () =>
-                              rpc("dependencies.delete", {
-                                id: dep.id,
-                                confirmed: true,
-                              }),
-                          )
-                        }
-                      >
-                        删除
-                      </Button>
-                    </div>
-                  ))}
+                </ReactFlow>
+                <div className="graph-legend">
+                  <span>应用 → 部署 → 节点 → 容器</span>
+                  <span className="error-text">红色表示故障或离线</span>
                 </div>
               </section>
-            )}
-            {selected && detailsOpen && (
-              <BusinessDialog
-                title={String(selected.data.label)}
-                readOnly
-                onClose={() => setDetailsOpen(false)}
-              >
-                <h2>{String(selected.data.kind)}</h2>
-                <strong>{String(selected.data.label)}</strong>
-                <Status value={String(selected.data.state ?? "UNKNOWN")} />
-                {selected.data.association ? (
-                  <p>{String(selected.data.association)}</p>
-                ) : null}
-                {selected.data.target ? (
-                  <code>{String(selected.data.target)}</code>
-                ) : null}
-                {selected.data.kind === "节点" && (
-                  <Link href={`/nodes/${selected.data.resourceId}`}>
-                    节点详情
-                  </Link>
-                )}
-                <p className="muted">
-                  关闭弹窗后可继续拖动或缩放画布；点击或按 Enter/空格查看详情。
-                </p>
-              </BusinessDialog>
-            )}
-          </div>
-        ) : (
-          <section className="panel">
-            <div className="panel-header">
-              <h2>探针来源 × 实际目标</h2>
-              <Link href="/probes">配置跨节点探针</Link>
-            </div>
-            <QueryState
-              loading={false}
-              empty={!targets.length}
-              retry={() => {}}
-              emptyTitle="暂无连通性结果"
-              emptyText="创建从指定节点到其他节点端口的 TCP/HTTP 探针后，矩阵会显示真实结果。"
-            >
-              <div
-                className="table-wrap"
-                role="region"
-                aria-label="探针来源与目标矩阵，可横向滚动"
-                tabIndex={0}
-              >
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>来源</th>
-                      {targets.map((t) => (
-                        <th key={t}>{t}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      { id: null, name: "主控" },
-                      ...(q.data?.nodes.map((n) => ({
-                        id: n.id,
-                        name: n.name,
-                      })) ?? []),
-                    ].map((source) => (
-                      <tr key={source.id ?? "control"}>
-                        <th>{source.name}</th>
-                        {targets.map((target) => {
-                          const probes = q.data?.probes.filter(
-                            (p) =>
-                              p.sourceNodeId === source.id &&
-                              p.target === target,
-                          );
-                          return (
-                            <td key={target}>
-                              {probes?.length ? (
-                                <Status
-                                  value={
-                                    probes.some((p) => p.enabled)
-                                      ? probeHealth(probes)
-                                      : "PAUSED"
-                                  }
-                                />
-                              ) : (
-                                <span className="muted">未检测</span>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
+              {!!q.data?.dependencies.length && (
+                <section className="panel detail-panel">
+                  <div className="panel-header">
+                    <h2>依赖关系</h2>
+                  </div>
+                  <div className="form-panel">
+                    {q.data.dependencies.map((dep) => (
+                      <div className="inline-actions" key={dep.id}>
+                        <span>
+                          {
+                            q.data?.applications.find(
+                              (a) => a.id === dep.fromApplicationId,
+                            )?.name
+                          }{" "}
+                          →{" "}
+                          {
+                            q.data?.applications.find(
+                              (a) => a.id === dep.toApplicationId,
+                            )?.name
+                          }{" "}
+                          · {dep.type}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            op.ask(
+                              "删除依赖关系？",
+                              "只删除平台记录，不改变应用实际网络连接。",
+                              () =>
+                                rpc("dependencies.delete", {
+                                  id: dep.id,
+                                  confirmed: true,
+                                }),
+                            )
+                          }
+                        >
+                          删除
+                        </Button>
+                      </div>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                </section>
+              )}
+              {selected && detailsOpen && (
+                <BusinessDialog
+                  title={String(selected.data.label)}
+                  readOnly
+                  onClose={() => setDetailsOpen(false)}
+                >
+                  <h2>{String(selected.data.kind)}</h2>
+                  <strong>{String(selected.data.label)}</strong>
+                  <Status value={String(selected.data.state ?? "UNKNOWN")} />
+                  {selected.data.association ? (
+                    <p>{String(selected.data.association)}</p>
+                  ) : null}
+                  {selected.data.target ? (
+                    <code>{String(selected.data.target)}</code>
+                  ) : null}
+                  {selected.data.kind === "节点" && (
+                    <Link href={`/nodes/${selected.data.resourceId}`}>
+                      节点详情
+                    </Link>
+                  )}
+                  <p className="muted">
+                    关闭弹窗后可继续拖动或缩放画布；点击或按
+                    Enter/空格查看详情。
+                  </p>
+                </BusinessDialog>
+              )}
+            </div>
+          ) : (
+            <section className="panel">
+              <div className="panel-header">
+                <h2>探针来源 × 实际目标</h2>
+                <Link href="/probes">配置跨节点探针</Link>
               </div>
-            </QueryState>
-          </section>
-        )}
-      </QueryState>
+              <QueryState
+                loading={false}
+                empty={!targets.length}
+                retry={() => {}}
+                emptyTitle="暂无连通性结果"
+                emptyText="创建从指定节点到其他节点端口的 TCP/HTTP 探针后，矩阵会显示真实结果。"
+              >
+                <DataTable
+                  label="探针来源与目标矩阵"
+                  headers={["来源", ...targets]}
+                >
+                  {[
+                    { id: null, name: "主控" },
+                    ...(q.data?.nodes.map((n) => ({
+                      id: n.id,
+                      name: n.name,
+                    })) ?? []),
+                  ].map((source) => (
+                    <tr key={source.id ?? "control"}>
+                      <th scope="row">{source.name}</th>
+                      {targets.map((target) => {
+                        const probes = q.data?.probes.filter(
+                          (p) =>
+                            p.sourceNodeId === source.id && p.target === target,
+                        );
+                        return (
+                          <td key={target}>
+                            {probes?.length ? (
+                              <Status
+                                value={
+                                  probes.some((p) => p.enabled)
+                                    ? probeHealth(probes)
+                                    : "PAUSED"
+                                }
+                              />
+                            ) : (
+                              <span className="muted">未检测</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </DataTable>
+              </QueryState>
+            </section>
+          )}
+        </QueryState>
+      </ViewTabs>
     </>
   );
 }

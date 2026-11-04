@@ -9,6 +9,8 @@
  * @index_tags workspace, terminal, files, container
  * @author holic512
  */
+import { NativeSelect } from "@/components/ui/native-select";
+import { Input } from "@/components/ui/input";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import {
@@ -165,7 +167,7 @@ export function RemoteWorkspace({ visible }: { visible: boolean }) {
         <div className="remote-workspace-toolbar">
           <label>
             节点
-            <select
+            <NativeSelect
               aria-label="工作台节点"
               value={target.nodeId}
               onChange={(event) =>
@@ -181,7 +183,7 @@ export function RemoteWorkspace({ visible }: { visible: boolean }) {
                     {node.connected ? "" : "（离线）"}
                   </option>
                 ))}
-            </select>
+            </NativeSelect>
           </label>
           <form
             className="remote-target-form"
@@ -195,7 +197,7 @@ export function RemoteWorkspace({ visible }: { visible: boolean }) {
           >
             <label>
               目标
-              <input
+              <Input
                 aria-label="容器名称或 ID（留空为宿主机）"
                 placeholder="容器名称或 ID，留空为宿主机"
                 value={containerInput}
@@ -367,13 +369,16 @@ export function RemoteWorkspace({ visible }: { visible: boolean }) {
               {sessions.map((session) => (
                 <div key={session.id} className="terminal-tab">
                   <button
+                    data-ui-native="持久终端会话选择支持分屏多面板，保留分组按钮语义"
                     className={active === session.id ? "active" : ""}
                     aria-pressed={active === session.id}
                     onClick={() => activate(session)}
                   >
                     {session.name}
                   </button>
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     aria-label={`关闭${session.name}会话`}
                     onClick={() => {
                       const remaining = sessions.filter(
@@ -391,7 +396,7 @@ export function RemoteWorkspace({ visible }: { visible: boolean }) {
                     }}
                   >
                     <X size={13} />
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>

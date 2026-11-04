@@ -2,6 +2,10 @@
 
 PipkerOps 由 Next.js Web/API、主动连接 Gateway、后台 Worker 和 Go Agent 组成。Web、MCP、Cron 复用 `src/lib/services` 的输入契约、授权与持久化任务；PostgreSQL 为任务事实来源，Redis 仅作协调与限流。非幂等任务最多尝试一次，结果不明保留 UNKNOWN，依赖 Agent journal 对账。
 
+## 前端组件开发入口
+
+页面开发先阅读 [组件索引、属性与示例](UI_COMPONENTS.md)、[界面规范](../DESIGN.md) 及根 AGENTS.md。组件能力审计、根因与改造边界见 [UI 审计](UI_AUDIT.md)。`npm run lint` 已接入业务控件、原语依赖方向、第二 UI 体系及主题颜色规则；`npm test` 包含规则正反例和组件契约验证。`docs/examples/resource-page.tsx` 与项目一起接受类型检查，展示标准组合流程，不注册生产路由。
+
 ## 本地启动
 
 需要 Node.js 24（项目最低22.12）、Go 1.26、PostgreSQL 17、Redis 7。开发时自行准备可达的隔离数据库与 Redis；不使用生产凭据。

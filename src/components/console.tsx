@@ -162,6 +162,7 @@ export function Console() {
       </a>
       {mobile && (
         <button
+          data-ui-native="移动导航遮罩需覆盖视口，保留独立关闭区域"
           className="sidebar-backdrop"
           aria-label="关闭菜单"
           onClick={() => setMobile(false)}
@@ -269,7 +270,9 @@ export function Console() {
               >
                 <Link href={tab}>{label}</Link>
                 {tab !== "/" && (
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     aria-label={`关闭${label}标签`}
                     onClick={() => {
                       setTabs((t) => t.filter((v) => v !== tab));
@@ -277,7 +280,7 @@ export function Console() {
                     }}
                   >
                     <X size={12} />
-                  </button>
+                  </Button>
                 )}
               </div>
             );

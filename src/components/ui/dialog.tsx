@@ -86,9 +86,15 @@ export function BusinessDialog({
             : {})}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
-            trigger.current =
-              document.activeElement instanceof HTMLElement
-                ? document.activeElement
+            const active = document.activeElement;
+            // 菜单项会随弹窗打开而卸载，返回焦点应指向该菜单的持久触发按钮。
+            const menuTrigger = active
+              ?.closest('[role="menu"]')
+              ?.getAttribute("aria-labelledby");
+            trigger.current = menuTrigger
+              ? document.getElementById(menuTrigger)
+              : active instanceof HTMLElement
+                ? active
                 : null;
             const input = content.current?.querySelector<HTMLElement>(
               "input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
@@ -114,7 +120,9 @@ export function BusinessDialog({
             <Dialog.Title ref={heading} tabIndex={-1}>
               {confirmation?.title ?? title}
             </Dialog.Title>
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               type="button"
               aria-label={confirmation ? "返回修改" : "关闭弹窗"}
               className="dialog-close"
@@ -122,7 +130,7 @@ export function BusinessDialog({
               onClick={close}
             >
               <X size={18} />
-            </button>
+            </Button>
           </header>
           <div className="dialog-body">
             {(confirmation || description) && (

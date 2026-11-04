@@ -9,6 +9,8 @@
  * @author holic512
  */
 "use client";
+import { DataTable } from "./shared";
+import { NativeSelect } from "@/components/ui/native-select";
 import { useState } from "react";
 import { date } from "@/lib/client";
 import { QueryState, useQuery } from "./shared";
@@ -47,7 +49,7 @@ export function ResourceHistory({ nodeId }: { nodeId: string }) {
     <section className="panel">
       <div className="panel-header resource-history-controls">
         <h2>资源历史</h2>
-        <select
+        <NativeSelect
           aria-label="历史指标"
           value={kind}
           onChange={(e) => {
@@ -58,8 +60,8 @@ export function ResourceHistory({ nodeId }: { nodeId: string }) {
           <option value="disk">磁盘使用率</option>
           <option value="network">网络流量</option>
           <option value="io">磁盘 IO</option>
-        </select>
-        <select
+        </NativeSelect>
+        <NativeSelect
           aria-label="资源历史时间范围"
           value={hours}
           onChange={(e) => setHours(Number(e.target.value))}
@@ -69,8 +71,8 @@ export function ResourceHistory({ nodeId }: { nodeId: string }) {
               最近{h >= 168 ? `${Math.round(h / 24)}天` : `${h}小时`}
             </option>
           ))}
-        </select>
-        <select
+        </NativeSelect>
+        <NativeSelect
           aria-label="历史指标设备"
           disabled={!data?.devices.length}
           value={data?.device ?? ""}
@@ -86,7 +88,7 @@ export function ResourceHistory({ nodeId }: { nodeId: string }) {
               {name}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
       <QueryState
         error={q.error}
@@ -246,37 +248,21 @@ function ResourceChart({ data }: { data: History }) {
           readOnly
           onClose={() => setValuesOpen(false)}
         >
-          <div
-            className="table-wrap"
-            role="region"
-            aria-label="最近资源采样值，可横向滚动"
-            tabIndex={0}
-          >
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>指标</th>
-                  <th>均值</th>
+          <DataTable label="最近资源采样值" headers={["时间", "指标", "均值"]}>
+            {data.series.flatMap((s) =>
+              s.points.slice(-10).map((p) => (
+                <tr key={`${s.name}-${p.recordedAt}`}>
+                  <td>{date(p.recordedAt)}</td>
+                  <td>{s.name}</td>
+                  <td>
+                    {p.value === null
+                      ? "采样中断 / 计数重置"
+                      : valueLabel(p.value, data.unit)}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {data.series.flatMap((s) =>
-                  s.points.slice(-10).map((p) => (
-                    <tr key={`${s.name}-${p.recordedAt}`}>
-                      <td>{date(p.recordedAt)}</td>
-                      <td>{s.name}</td>
-                      <td>
-                        {p.value === null
-                          ? "采样中断 / 计数重置"
-                          : valueLabel(p.value, data.unit)}
-                      </td>
-                    </tr>
-                  )),
-                )}
-              </tbody>
-            </table>
-          </div>
+              )),
+            )}
+          </DataTable>
         </BusinessDialog>
       )}
     </div>

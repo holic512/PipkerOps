@@ -9,6 +9,8 @@
  * @index_tags files, tree, container, workspace
  * @author holic512
  */
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import Link from "next/link";
 import {
   useCallback,
@@ -335,7 +337,7 @@ export function RemoteFiles({
           navigate(pathInput);
         }}
       >
-        <input
+        <Input
           aria-label="绝对目录路径"
           value={pathInput}
           onChange={(event) => setPathInput(event.target.value)}
@@ -625,7 +627,7 @@ function RemoteFileDialog({
       >
         <label>
           完整路径
-          <input
+          <Input
             value={path}
             onChange={(event) => setPath(event.target.value)}
             readOnly={action === "read" || action === "remove"}
@@ -669,7 +671,7 @@ function RemoteFileDialog({
         {(action === "write" || action === "read") && !readResult.binary && (
           <label>
             文件内容
-            <textarea
+            <Textarea
               className="remote-file-content"
               value={content}
               onChange={(event) => setContent(event.target.value)}

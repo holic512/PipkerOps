@@ -9,6 +9,7 @@ const buttonVariants = cva("button", {
       outline: "button-outline",
       ghost: "button-ghost",
       destructive: "button-danger",
+      link: "button-link",
     },
     size: { default: "", sm: "button-sm", icon: "button-icon" },
   },
@@ -19,6 +20,7 @@ export function Button({
   variant,
   size,
   asChild = false,
+  type = "button",
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & { asChild?: boolean }) {
@@ -27,6 +29,7 @@ export function Button({
     <Comp
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      {...(!asChild ? { type } : {})}
       {...props}
     />
   );

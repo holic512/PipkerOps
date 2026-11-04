@@ -9,6 +9,7 @@
  * @author holic512
  */
 "use client";
+import { NativeSelect } from "@/components/ui/native-select";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import {
@@ -38,6 +39,7 @@ import {
   JsonView,
 } from "./shared";
 import { Button } from "./ui/button";
+import { ViewTabs } from "./ui/tabs";
 import { NodeEditor, NodeLabels } from "./node-editor";
 import { folderPath } from "@/lib/node-tree";
 import { ResourceHistory } from "./resource-history";
@@ -385,71 +387,67 @@ export function NodeDetail({ id }: { id: string }) {
                 节点 ID <code>{node.id}</code>
               </span>
             </div>
-            <div className="inner-tabs">
-              {[
-                ["metrics", "历史监控"],
-                ["resources", "磁盘 / 网络 / IO"],
-                ["details", "采集详情"],
-              ].map(([key, name]) => (
-                <button
-                  key={key}
-                  className={tab === key ? "active" : ""}
-                  onClick={() => setTab(key)}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
-            {tab === "metrics" ? (
-              <section className="panel">
-                <div className="panel-header">
-                  <h2>CPU 与内存</h2>
-                  <select
-                    aria-label="监控时间范围"
-                    value={hours}
-                    onChange={(e) => setHours(Number(e.target.value))}
+            <ViewTabs
+              label="节点监控"
+              value={tab}
+              onValueChange={setTab}
+              items={[
+                { value: "metrics", label: "历史监控" },
+                { value: "resources", label: "磁盘 / 网络 / IO" },
+                { value: "details", label: "采集详情" },
+              ]}
+            >
+              {tab === "metrics" ? (
+                <section className="panel">
+                  <div className="panel-header">
+                    <h2>CPU 与内存</h2>
+                    <NativeSelect
+                      aria-label="监控时间范围"
+                      value={hours}
+                      onChange={(e) => setHours(Number(e.target.value))}
+                    >
+                      {[
+                        [1, "最近1小时"],
+                        [24, "最近24小时"],
+                        [168, "最近7天（小时聚合）"],
+                        [720, "最近30天（小时聚合）"],
+                      ].map(([v, l]) => (
+                        <option key={v} value={v}>
+                          {l}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  </div>
+                  <QueryState
+                    error={h.error}
+                    loading={h.isLoading}
+                    empty={!h.data?.samples.length}
+                    retry={() => void h.mutate()}
+                    emptyTitle="暂无历史采样"
+                    emptyText="节点批准并连接后，Agent 会定期采集资源指标。"
                   >
-                    {[
-                      [1, "最近1小时"],
-                      [24, "最近24小时"],
-                      [168, "最近7天（小时聚合）"],
-                      [720, "最近30天（小时聚合）"],
-                    ].map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <QueryState
-                  error={h.error}
-                  loading={h.isLoading}
-                  empty={!h.data?.samples.length}
-                  retry={() => void h.mutate()}
-                  emptyTitle="暂无历史采样"
-                  emptyText="节点批准并连接后，Agent 会定期采集资源指标。"
-                >
-                  <HistoryChart
-                    samples={h.data?.samples ?? []}
-                    hourly={h.data?.resolution === "hour"}
-                  />
-                </QueryState>
-              </section>
-            ) : tab === "resources" ? (
-              <ResourceHistory nodeId={id} />
-            ) : (
-              <section className="panel form-panel">
-                <h2>最近一次完整采样</h2>
-                <p className="muted">
-                  磁盘、网卡、IO、进程、端口及容器来自 Agent 真实采集。
-                </p>
-                {node.metrics[0] ? (
-                  <JsonView data={node.metrics[0].payload} />
-                ) : (
-                  <p className="panel-empty">尚未收到采样。</p>
-                )}
-              </section>
-            )}
+                    <HistoryChart
+                      samples={h.data?.samples ?? []}
+                      hourly={h.data?.resolution === "hour"}
+                    />
+                  </QueryState>
+                </section>
+              ) : tab === "resources" ? (
+                <ResourceHistory nodeId={id} />
+              ) : (
+                <section className="panel form-panel">
+                  <h2>最近一次完整采样</h2>
+                  <p className="muted">
+                    磁盘、网卡、IO、进程、端口及容器来自 Agent 真实采集。
+                  </p>
+                  {node.metrics[0] ? (
+                    <JsonView data={node.metrics[0].payload} />
+                  ) : (
+                    <p className="panel-empty">尚未收到采样。</p>
+                  )}
+                </section>
+              )}
+            </ViewTabs>
           </>
         )}
       </QueryState>

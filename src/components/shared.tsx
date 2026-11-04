@@ -3,18 +3,23 @@
  * @file shared.tsx
  * @project PipkerOps
  * @module shared-ui
- * @description 紧凑页面标题、业务查询、表单、状态与操作确认的共用组件。
- * @logic 标题与操作共用紧凑行；查询呈现加载与失败状态；表单支持弹窗底部提交，表格支持键盘滚动；操作确认按所在工作区使用内嵌或独立弹窗。
+ * @description 业务查询、标题、公共表单组合、状态与操作确认；兼容导出统一表格。
+ * @logic 查询呈现加载与失败状态；表单组合 UI 控件并支持底部提交；表格由 UI 层实现；操作确认按工作区使用内嵌或独立弹窗。
  * @dependencies React, SWR, RPC, UI components
  * @index_tags forms, queries, confirmation, feedback
  * @author holic512
  */
+
 import { useState } from "react";
 import useSWR from "swr";
 import { Inbox, RotateCw, AlertCircle, Check, X } from "lucide-react";
 import { rpc, RequestError } from "@/lib/client";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { NativeSelect } from "./ui/native-select";
+import { Checkbox } from "./ui/checkbox";
 export function useQuery<T>(
   method: string | null,
   params: Record<string, unknown> = {},
@@ -129,33 +134,7 @@ export function PageTitle({
     </div>
   );
 }
-export function DataTable({
-  headers,
-  children,
-}: {
-  headers: string[];
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="table-wrap"
-      role="region"
-      aria-label={`${headers[0]}表格，可横向滚动`}
-      tabIndex={0}
-    >
-      <table className="data-table">
-        <thead>
-          <tr>
-            {headers.map((h) => (
-              <th key={h}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
-    </div>
-  );
-}
+export { DataTable } from "./ui/table";
 export function JsonView({ data }: { data: unknown }) {
   return <pre className="code-block">{JSON.stringify(data, null, 2)}</pre>;
 }
@@ -174,9 +153,14 @@ export function Feedback({
     >
       {value.error ? <AlertCircle size={18} /> : <Check size={18} />}
       <span>{value.message}</span>
-      <button aria-label="关闭提示" onClick={onClose}>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="关闭提示"
+        onClick={onClose}
+      >
         <X size={16} />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -327,7 +311,7 @@ export function ResourceForm({
           >
             {f.label}
             {f.type === "select" ? (
-              <select
+              <NativeSelect
                 name={f.name}
                 defaultValue={String(f.defaultValue ?? "")}
                 required={f.required}
@@ -338,9 +322,9 @@ export function ResourceForm({
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             ) : f.type === "textarea" || f.type === "json" ? (
-              <textarea
+              <Textarea
                 name={f.name}
                 defaultValue={String(
                   f.defaultValue ?? (f.type === "json" ? "{}" : ""),
@@ -349,26 +333,23 @@ export function ResourceForm({
                 rows={f.type === "json" ? 5 : 4}
                 required={f.required}
               />
+            ) : f.type === "checkbox" ? (
+              <Checkbox
+                name={f.name}
+                defaultChecked={Boolean(f.defaultValue)}
+                required={f.required}
+              />
             ) : (
-              <input
+              <Input
                 name={f.name}
                 type={
                   f.type === "number"
                     ? "number"
                     : ["password", "email"].includes(f.type ?? "")
                       ? f.type
-                      : f.type === "checkbox"
-                        ? "checkbox"
-                        : "text"
+                      : "text"
                 }
-                defaultValue={
-                  f.type === "checkbox"
-                    ? undefined
-                    : String(f.defaultValue ?? "")
-                }
-                defaultChecked={
-                  f.type === "checkbox" ? Boolean(f.defaultValue) : undefined
-                }
+                defaultValue={String(f.defaultValue ?? "")}
                 placeholder={f.placeholder}
                 required={f.required}
                 min={f.min}

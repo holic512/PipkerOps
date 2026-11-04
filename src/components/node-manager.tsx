@@ -9,6 +9,10 @@
  * @author holic512
  */
 "use client";
+import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
+import { DataTable } from "./shared";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Fragment, useState, type DragEvent } from "react";
 import {
   ChevronRight,
@@ -138,8 +142,7 @@ export function Nodes() {
     >
       {canWrite && (
         <td className="node-check">
-          <input
-            type="checkbox"
+          <Checkbox
             aria-label={`选择节点 ${node.name}`}
             checked={selected.has(node.id)}
             disabled={op.busy}
@@ -162,6 +165,7 @@ export function Nodes() {
         >
           {canWrite && (
             <button
+              data-ui-native="节点树拖拽手柄承载原生拖放事件和紧凑行布局"
               type="button"
               className="node-drag-handle"
               draggable={!op.busy}
@@ -225,6 +229,7 @@ export function Nodes() {
             >
               {canWrite && (
                 <button
+                  data-ui-native="节点树拖拽手柄承载原生拖放事件和紧凑行布局"
                   type="button"
                   className="node-drag-handle"
                   draggable={!op.busy}
@@ -239,6 +244,7 @@ export function Nodes() {
                 </button>
               )}
               <button
+                data-ui-native="文件夹树展开按钮保留树缩进和展开状态"
                 type="button"
                 className="node-folder-toggle"
                 aria-label={`${expanded ? "折叠" : "展开"}文件夹 ${branch.path}`}
@@ -342,7 +348,7 @@ export function Nodes() {
       </PageTitle>
       {op.ui}
       <div className="node-toolbar">
-        <input
+        <Input
           aria-label="搜索节点或文件夹"
           placeholder="搜索节点、主机名、标签或文件夹"
           value={query}
@@ -351,26 +357,19 @@ export function Nodes() {
             setSelected(new Set());
           }}
         />
-        <details
-          className="node-tag-filter"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.currentTarget.open = false;
-              event.currentTarget.querySelector("summary")?.focus();
-            }
-          }}
-        >
-          <summary>
-            <Tag size={15} />
-            标签筛选{labels.length ? `（${labels.length}）` : ""}
-          </summary>
-          <div className="node-tag-menu">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline">
+              <Tag size={15} />
+              标签筛选{labels.length ? `（${labels.length}）` : ""}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="node-tag-menu" aria-label="标签筛选">
             <p className="muted">同时包含所选标签</p>
             {suggestions.length ? (
               suggestions.map((label) => (
                 <label key={label}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={labels.includes(label)}
                     onChange={(event) => {
                       setLabels(
@@ -387,8 +386,8 @@ export function Nodes() {
             ) : (
               <p className="muted">为节点添加标签后可在此筛选。</p>
             )}
-          </div>
-        </details>
+          </PopoverContent>
+        </Popover>
         {tree.searching && (
           <Button
             variant="ghost"
@@ -488,64 +487,50 @@ export function Nodes() {
               : "导入 Agent 接入文件，或先创建文件夹组织节点。"
           }
         >
-          <div
-            className="table-wrap node-tree-table"
-            role="region"
-            aria-label="节点文件夹表格，可横向滚动"
-            tabIndex={0}
+          <DataTable
+            label="节点文件夹表格"
+            headers={[
+              ...(canWrite
+                ? [
+                    <Checkbox
+                      key="selection"
+                      aria-label="全选筛选结果中的节点"
+                      disabled={!tree.matched.length || op.busy}
+                      checked={
+                        !!tree.matched.length &&
+                        selectedNodes.length === tree.matched.length
+                      }
+                      ref={(element) => {
+                        if (element)
+                          element.indeterminate =
+                            selectedNodes.length > 0 &&
+                            selectedNodes.length < tree.matched.length;
+                      }}
+                      onChange={(event) =>
+                        setSelected(
+                          new Set(
+                            event.target.checked
+                              ? tree.matched.map((node) => node.id)
+                              : [],
+                          ),
+                        )
+                      }
+                    />,
+                  ]
+                : []),
+              "节点 / 主机",
+              "连接状态",
+              "CPU",
+              "内存",
+              "系统",
+              "最近心跳",
+              "操作",
+            ]}
+            className="node-tree-table"
           >
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {canWrite && (
-                    <th className="node-check">
-                      <input
-                        type="checkbox"
-                        aria-label="全选筛选结果中的节点"
-                        disabled={!tree.matched.length || op.busy}
-                        checked={
-                          !!tree.matched.length &&
-                          selectedNodes.length === tree.matched.length
-                        }
-                        ref={(element) => {
-                          if (element)
-                            element.indeterminate =
-                              selectedNodes.length > 0 &&
-                              selectedNodes.length < tree.matched.length;
-                        }}
-                        onChange={(event) =>
-                          setSelected(
-                            new Set(
-                              event.target.checked
-                                ? tree.matched.map((node) => node.id)
-                                : [],
-                            ),
-                          )
-                        }
-                      />
-                    </th>
-                  )}
-                  {[
-                    "节点 / 主机",
-                    "连接状态",
-                    "CPU",
-                    "内存",
-                    "系统",
-                    "最近心跳",
-                    "操作",
-                  ].map((header) => (
-                    <th scope="col" key={header}>
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {tree.folders.map((folder) => renderFolder(folder, 0))}
-                {tree.nodes.map((node) => renderNode(node, 0))}
-              </tbody>
-            </table>
-          </div>
+            {tree.folders.map((folder) => renderFolder(folder, 0))}
+            {tree.nodes.map((node) => renderNode(node, 0))}
+          </DataTable>
         </QueryState>
       </QueryState>
       {editor?.kind === "node" && (
@@ -674,7 +659,7 @@ function FolderDialog({
         <fieldset className="dialog-fields" disabled={op.busy}>
           <label>
             文件夹名称
-            <input
+            <Input
               required
               maxLength={120}
               value={name}

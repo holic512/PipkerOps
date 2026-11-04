@@ -9,6 +9,9 @@
  * @author holic512
  */
 "use client";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useId, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { rpc, type NodeData, type NodeFolderData } from "@/lib/client";
@@ -48,7 +51,7 @@ export function FolderSelect({
   return (
     <label>
       {label}
-      <select
+      <NativeSelect
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value || null)}
       >
@@ -58,7 +61,7 @@ export function FolderSelect({
             {option.path}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </label>
   );
 }
@@ -90,18 +93,19 @@ function LabelsField({
         {value.map((label) => (
           <span className="node-label" key={label}>
             {label}
-            <button
+            <Button
+              variant="link"
               type="button"
               aria-label={`移除标签 ${label}`}
               onClick={() => onChange(value.filter((item) => item !== label))}
             >
               <X size={13} />
-            </button>
+            </Button>
           </span>
         ))}
       </div>
       <div className="label-input-row">
-        <input
+        <Input
           id={id}
           name="labelDraft"
           list={`${id}-suggestions`}
@@ -190,7 +194,7 @@ export function NodeEditor({
         <fieldset className="dialog-fields" disabled={op.busy}>
           <label>
             节点名称
-            <input
+            <Input
               required
               maxLength={120}
               value={name}
@@ -300,7 +304,7 @@ export function NodeImportDialog({
         <fieldset className="dialog-fields" disabled={op.busy}>
           <label>
             接入文件（JSON）
-            <input
+            <Input
               type="file"
               accept=".json,application/json"
               onChange={(event) => {
@@ -323,7 +327,7 @@ export function NodeImportDialog({
           </label>
           <label>
             或粘贴接入内容
-            <textarea
+            <Textarea
               rows={6}
               autoComplete="off"
               spellCheck={false}
@@ -338,7 +342,7 @@ export function NodeImportDialog({
           </label>
           <label>
             关联已有节点
-            <select
+            <NativeSelect
               value={existing}
               onChange={(event) => {
                 setExisting(event.target.value);
@@ -356,11 +360,11 @@ export function NodeImportDialog({
                   {node.name} — 重新接入并保留历史
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </label>
           <label>
             节点名称（可选）
-            <input
+            <Input
               value={name}
               maxLength={120}
               placeholder="留空使用 Agent 名称"

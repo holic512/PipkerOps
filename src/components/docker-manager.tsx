@@ -9,6 +9,15 @@
  * @author holic512
  */
 "use client";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "./ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Textarea } from "@/components/ui/textarea";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useRef, useState, type ReactNode } from "react";
@@ -257,7 +266,7 @@ function DockerWorkspace({
               ) : (
                 <>
                   <div className="list-toolbar">
-                    <input
+                    <Input
                       aria-label="搜索容器或 Compose 项目"
                       placeholder="搜索名称、镜像或状态"
                       value={filter}
@@ -348,8 +357,9 @@ function DockerWorkspace({
                               }
                             >
                               <td>
-                                <button
-                                  className="entity-link docker-resource-link"
+                                <Button
+                                  variant="link"
+                                  className="entity-link"
                                   onClick={() =>
                                     setPopup({
                                       kind: "inspect",
@@ -359,7 +369,7 @@ function DockerWorkspace({
                                   }
                                 >
                                   {item.name}
-                                </button>
+                                </Button>
                                 <small title={item.id}>
                                   {item.id.slice(0, 12)}
                                 </small>
@@ -425,13 +435,15 @@ function DockerWorkspace({
                                       {actionNames[command]}
                                     </Button>
                                   ))}
-                                  <details className="docker-row-menu">
-                                    <summary>更多操作</summary>
-                                    <div>
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() =>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button size="sm" variant="ghost">
+                                        更多操作
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent>
+                                      <DropdownMenuItem
+                                        onSelect={() =>
                                           setPopup({
                                             kind: "inspect",
                                             id: item.id,
@@ -440,11 +452,9 @@ function DockerWorkspace({
                                         }
                                       >
                                         详情
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() =>
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onSelect={() =>
                                           setPopup({
                                             kind: "stats",
                                             id: item.id,
@@ -453,35 +463,26 @@ function DockerWorkspace({
                                         }
                                       >
                                         监控
-                                      </Button>
+                                      </DropdownMenuItem>
                                       {canWrite && isRunning ? (
-                                        <Button
-                                          size="sm"
-                                          variant="ghost"
-                                          asChild
-                                        >
+                                        <DropdownMenuItem asChild>
                                           <Link
                                             href={`/terminal?${new URLSearchParams({ node: nodeId, target: item.id })}`}
                                           >
                                             终端
                                           </Link>
-                                        </Button>
+                                        </DropdownMenuItem>
                                       ) : (
-                                        <Button
-                                          size="sm"
-                                          variant="ghost"
-                                          disabled
-                                        >
+                                        <DropdownMenuItem disabled>
                                           终端
-                                        </Button>
+                                        </DropdownMenuItem>
                                       )}
-                                      <Button
-                                        size="sm"
-                                        variant="destructive"
+                                      <DropdownMenuItem
+                                        destructive
                                         disabled={
                                           !canWrite || isRunning || op.busy
                                         }
-                                        onClick={() =>
+                                        onSelect={() =>
                                           op.ask(
                                             "删除容器？",
                                             `节点：${node.name}；容器：${item.name}（${item.id}）。删除后无法恢复容器；挂载卷保留。运行中的容器请先停止。`,
@@ -496,9 +497,9 @@ function DockerWorkspace({
                                         }
                                       >
                                         删除
-                                      </Button>
-                                    </div>
-                                  </details>
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </div>
                               </td>
                             </tr>
@@ -553,8 +554,9 @@ function DockerWorkspace({
                             }
                           >
                             <td>
-                              <button
-                                className="entity-link docker-resource-link"
+                              <Button
+                                variant="link"
+                                className="entity-link"
                                 onClick={() =>
                                   setPopup({
                                     kind: "compose-status",
@@ -563,7 +565,7 @@ function DockerWorkspace({
                                 }
                               >
                                 {project.name}
-                              </button>
+                              </Button>
                             </td>
                             <td>
                               {project.status === "not deployed"
@@ -717,6 +719,7 @@ function NodePicker({
   const renderNode = (node: NodeData) => (
     <li key={node.id}>
       <button
+        data-ui-native="节点树选择及展开控件沿用树层级布局和键盘焦点"
         className={`docker-picker-node${value === node.id ? " active" : ""}`}
         aria-current={value === node.id ? "true" : undefined}
         onClick={() => {
@@ -737,6 +740,7 @@ function NodePicker({
     return (
       <li key={branch.folder.id}>
         <button
+          data-ui-native="节点树选择及展开控件沿用树层级布局和键盘焦点"
           className="docker-picker-folder"
           aria-expanded={expanded}
           onClick={() =>
@@ -768,6 +772,7 @@ function NodePicker({
   return (
     <aside className="docker-node-picker panel" aria-label="节点选择">
       <button
+        data-ui-native="节点树选择及展开控件沿用树层级布局和键盘焦点"
         className="docker-picker-toggle"
         aria-expanded={mobileOpen}
         aria-controls="docker-picker-body"
@@ -788,7 +793,7 @@ function NodePicker({
         </div>
         <label className="docker-picker-search">
           <span className="sr-only">搜索节点或文件夹</span>
-          <input
+          <Input
             placeholder="搜索节点或文件夹"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -855,14 +860,14 @@ function ContainerDialog({
         {popup.kind === "logs" && (
           <label>
             日志行数{" "}
-            <select
+            <NativeSelect
               value={tail}
               onChange={(event) => setTail(Number(event.target.value))}
             >
               {[100, 200, 500, 1000, 2000].map((count) => (
                 <option key={count}>{count}</option>
               ))}
-            </select>
+            </NativeSelect>
           </label>
         )}
       </div>
@@ -1084,7 +1089,7 @@ function ComposeDialog({
         ) : (
           <label className="docker-yaml">
             Compose YAML
-            <textarea readOnly rows={18} value={query.data?.yaml ?? ""} />
+            <Textarea readOnly rows={18} value={query.data?.yaml ?? ""} />
           </label>
         )}
       </QueryState>
