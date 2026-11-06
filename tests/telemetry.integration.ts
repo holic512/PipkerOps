@@ -54,13 +54,15 @@ test(
     let observer: ReturnType<typeof createClient> | undefined;
     const aborters: AbortController[] = [];
     try {
+      // Keep the published endpoint stable across the Redis restart below.
+      const redisPort = await availablePort();
       await writeFile(envFile, `REDIS_PASSWORD=${password}\n`, { mode: 0o600 });
       await run("docker", [
         "create",
         "--name",
         redisName,
         "--publish",
-        "127.0.0.1::6379",
+        `127.0.0.1:${redisPort}:6379`,
         "--env-file",
         envFile,
         "redis:7-alpine",
@@ -81,6 +83,7 @@ test(
         ).stdout,
       );
       const port = Number(inspect["6379/tcp"][0].HostPort);
+      assert.equal(port, redisPort);
       observer = createClient({
         url: `redis://:${password}@127.0.0.1:${port}`,
       });
@@ -308,6 +311,16 @@ test(
       const fallback = await nodeSummary(administrator);
       assert.equal(fallback.find((n) => n.id === node.id)?.stale, true);
       await run("docker", ["start", redisName]);
+      assert.equal(
+        Number(
+          (await run("docker", ["port", redisName, "6379/tcp"]))
+            .stdout.trim()
+            .split(":")
+            .at(-1),
+        ),
+        port,
+        "Redis restart must preserve the endpoint used by reconnecting clients",
+      );
       await until(
         async () => {
           try {
