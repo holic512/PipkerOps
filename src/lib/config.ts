@@ -30,6 +30,13 @@ export function required(name: string) {
   if (!value) throw new Error(`缺少配置 ${name}`);
   return value;
 }
+/** 缺省强制 HTTPS；仅接受显式布尔值，避免配置拼写错误意外放开。 */
+export function httpsRequired() {
+  const value = configValues.REQUIRE_HTTPS ?? "true";
+  if (!["true", "false"].includes(value))
+    throw new Error("REQUIRE_HTTPS 必须为 true 或 false");
+  return value === "true";
+}
 export function privateHost(host: string) {
   const name = host.toLowerCase().replace(/^\[|\]$/g, "");
   if (
@@ -105,6 +112,7 @@ export const credentialsDir = () =>
   configValues.NODE_CREDENTIALS_DIR ?? "./.data/credentials";
 
 export function validateRuntime(initializing = false) {
+  httpsRequired();
   backendUrl("DATABASE_URL");
   backendUrl("REDIS_URL");
   if (initializing) {

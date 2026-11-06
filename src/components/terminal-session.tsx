@@ -112,7 +112,7 @@ export function TerminalSession({
       };
       ws.onerror = () =>
         setError(
-          "终端连接失败。请检查节点在线状态，以及 HTTPS 反向代理是否支持 WebSocket。",
+          "终端连接失败。请检查节点在线状态，以及反向代理是否支持 WebSocket。",
         );
       ws.onclose = () => {
         term.options.disableStdin = true;

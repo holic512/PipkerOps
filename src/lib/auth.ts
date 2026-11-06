@@ -10,7 +10,7 @@
  */
 import { db } from "./db";
 import { hashToken } from "./crypto";
-import { appOrigin } from "./config";
+import { appOrigin, httpsRequired } from "./config";
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -115,9 +115,18 @@ export function requireHttps(request: Pick<Request, "headers" | "url">) {
   } catch {
     throw new ApiError(400, "代理请求头无效");
   }
-  if (!origin.startsWith("https://"))
+  if (httpsRequired() && !origin.startsWith("https://"))
     throw new ApiError(403, "请以 HTTPS 访问");
   return origin;
+}
+/** HTTPS 会话始终使用 Secure；显式允许的 HTTP 会话才能省略。 */
+export function sessionCookieHeader(
+  request: Request,
+  token: string,
+  maxAge: number,
+) {
+  const secure = requireHttps(request).startsWith("https://");
+  return `${sessionCookie}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
 }
 export function confirm(value: unknown) {
   if (value !== true) throw new ApiError(400, "此操作需要显式确认");

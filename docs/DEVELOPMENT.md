@@ -25,7 +25,7 @@ npm run bootstrap
 npm run dev
 ```
 
-另开两个终端运行 `npm run gateway`、`npm run worker`。本地页面为 `http://127.0.0.1:3000`；HTTP 页面可打开；登录和业务接口需通过本机 HTTPS 反向代理访问。初始化不会覆盖已有管理员。Agent 本地编译和配置见 [Agent 文档](../agent/README.md)。生产配置目录和部署菜单见[部署文档](DEPLOYMENT.md)。
+另开两个终端运行 `npm run gateway`、`npm run worker`。本地页面为 `http://127.0.0.1:3000`。在环境变量格式的 `config/app.conf` 中设置 `REQUIRE_HTTPS=false`，重启 Web、Gateway 和 Worker 后即可通过 HTTP 登录及调用业务接口；此时会话 Cookie 保留 HttpOnly、SameSite=Strict，省略 Secure，同源和权限检查保持启用。未设置时默认为 `true`，只接受小写 `true`/`false`，要求 HTTPS 访问；通过 HTTPS 访问时 Cookie 始终带 Secure。配置从服务端运行时读取，无需重新构建，不使用 `NEXT_PUBLIC_` 或根目录 `.env` 覆盖。关闭开关会允许所有可达地址的 HTTP 访问，适用于本地隔离开发。浏览器终端随页面使用 ws/wss，仍需反向代理将 `/api/terminal/ws` 转发至 Gateway 并支持 Upgrade；此开关不提供转发，也不放开 Ops 到 Agent 的 HTTPS 校验。若域名已缓存 HSTS，请使用本机 HTTP 地址开发。初始化不会覆盖已有管理员。Agent 本地编译和配置见 [Agent 文档](../agent/README.md)。生产配置目录和部署菜单见[部署文档](DEPLOYMENT.md)。
 
 ## 目录职责
 

@@ -177,7 +177,12 @@ test("HTTP探针限制响应体，并保留实际POST方法及映射结果", asy
   }
 });
 
-test("HTTP业务请求拒绝，代理HTTPS按当前Host与端口判断来源", () => {
+test("HTTP业务请求拒绝，代理HTTPS按当前Host与端口判断来源", (t) => {
+  const saved = configValues.REQUIRE_HTTPS;
+  configValues.REQUIRE_HTTPS = "true";
+  t.after(() => {
+    configValues.REQUIRE_HTTPS = saved;
+  });
   const direct = new Request("http://localhost:8080/api/rpc", {
     headers: { host: "localhost:8080", origin: "http://localhost:8080" },
   });

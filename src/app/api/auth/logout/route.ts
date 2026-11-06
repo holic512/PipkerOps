@@ -10,7 +10,7 @@
  */
 import { db } from "@/lib/db";
 import { hashToken } from "@/lib/crypto";
-import { sameOrigin, sessionCookie } from "@/lib/auth";
+import { sameOrigin, sessionCookie, sessionCookieHeader } from "@/lib/auth";
 import { json, errorResponse } from "@/lib/http";
 export async function POST(request: Request) {
   try {
@@ -24,10 +24,7 @@ export async function POST(request: Request) {
     if (token)
       await db().session.deleteMany({ where: { tokenHash: hashToken(token) } });
     const r = json({ data: true });
-    r.headers.set(
-      "Set-Cookie",
-      `${sessionCookie}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
-    );
+    r.headers.set("Set-Cookie", sessionCookieHeader(request, "", 0));
     return r;
   } catch (e) {
     return errorResponse(e);

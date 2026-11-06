@@ -10,7 +10,7 @@
  */
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
-import { sameOrigin, sessionCookie, ApiError } from "@/lib/auth";
+import { sameOrigin, sessionCookieHeader, ApiError } from "@/lib/auth";
 import {
   verifyPassword,
   randomToken,
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     });
     response.headers.set(
       "Set-Cookie",
-      `${sessionCookie}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800; Secure`,
+      sessionCookieHeader(request, token, 28800),
     );
     return response;
   } catch (e) {

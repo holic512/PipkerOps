@@ -6,8 +6,14 @@ import { methodSchemas, METHODS } from "../src/lib/services/contracts";
 import { POST as login } from "../src/app/api/auth/login/route";
 import { POST as rpc } from "../src/app/api/rpc/route";
 import { POST as mcp } from "../src/app/api/mcp/route";
+import { configValues } from "../src/lib/config";
 
-test("HTTP凭证入口在读取密码、API Key和数据库之前拒绝", async () => {
+test("HTTP凭证入口在读取密码、API Key和数据库之前拒绝", async (t) => {
+  const saved = configValues.REQUIRE_HTTPS;
+  configValues.REQUIRE_HTTPS = "true";
+  t.after(() => {
+    configValues.REQUIRE_HTTPS = saved;
+  });
   for (const [path, handler] of [
     ["auth/login", login],
     ["rpc", rpc],

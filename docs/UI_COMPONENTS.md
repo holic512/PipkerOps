@@ -56,6 +56,8 @@ Input / Textarea / NativeSelect 是项目按 shadcn 本地源码方式维护的�
 
 其余页面入口（applications、backups、console、docker-manager、node-manager、nodes、operations、topology、updates）负责业务数据和页面组合，不应被当作第二套基础控件目录。第三方 React Flow 与 xterm 分别用于图与终端，不能替代普通 UI 控件。
 
+登录页由 `src/app/login/page.tsx` 在运行时读取 `REQUIRE_HTTPS`，仅将布尔值传给 `@/components/login` 的 `Login`；表单沿用 Input、Button、ThemeSwitcher。服务端配置和凭据不得导入客户端。关闭 HTTPS 要求时允许 HTTP 登录；开启时保留协议提示和禁用状态。
+
 ## 尚未安装的能力
 
 - 抽屉、日历/日期范围、搜索式 Combobox、通用分页、复杂 Data Grid、Toast 队列、独立 Badge/Card/Label：当前无必须新增的调用场景，不能仅凭 shadcn registry 假定可导入。
