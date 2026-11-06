@@ -39,6 +39,8 @@ REDIS_TLS=false
 # =======================
 # 仅在管理员不存在时初始化；后续重启不会重置账号。
 BOOTSTRAP_EMAIL=admin@example.com
+# 首次初始化：密码至少 16 个字符，且不得包含 CHANGE_ME；建议使用强随机密码。
+# 支持引号，直接填写密码原文。管理员创建后，修改此项不会重置已有账号密码。
 BOOTSTRAP_PASSWORD="CHANGE_ME_USE_AT_LEAST_16_RANDOM_CHARACTERS"
 BOOTSTRAP_NAME=管理员
 

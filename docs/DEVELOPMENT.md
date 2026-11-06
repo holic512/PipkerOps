@@ -19,11 +19,12 @@ cp config/app.conf.example config/app.conf
 编辑 `config/app.conf`，按数据库、缓存 Redis、初始管理员、持久目录、后台任务的顺序填写；不配置外部域名或旧注册网关、PKI 参数。数据库和 Redis 是否使用 TLS 仅由 `DATABASE_SSL_MODE`、`REDIS_TLS` 决定；生产同样支持 `disable`、`false`，无需额外的明文后端开关。
 
 ```sh
-npm run db:generate
-npm run db:deploy
-npm run bootstrap
 npm run dev
 ```
+
+`npm run dev` 的 `predev` 会先执行 `npm run db:init`：生成 Prisma Client → 通过 `prisma migrate deploy` 应用待执行迁移 → 创建初始管理员，任何一步失败都会停止启动。数据库服务、账号和目标开发库应预先准备好；配置仍只读取 `config/app.conf`。生成客户端不连接数据库；迁移负责建表、分区、索引及函数；管理员初始化不创建业务表，已有同邮箱账号不会被重置。首次创建管理员要求配置至少 16 位、非占位符密码。重复启动只应用新增迁移，不使用 `db push`、`migrate reset` 或删除现有数据。该自动流程只挂在 `npm run dev`，生产启动和容器初始化流程保持独立。
+
+可单独运行 `npm run db:init` 准备数据库，或运行 `npm run db:check` 只读检查连接和迁移状态。检查会区分空库、待执行迁移、失败迁移和正常状态；返回非零退出码表示尚不可用，不输出密码或连接串。数据库已有表但没有迁移历史时，应核对来源与基线，不要为了通过启动而重置数据库。
 
 另开两个终端运行 `npm run gateway`、`npm run worker`。本地页面为 `http://127.0.0.1:3000`。在环境变量格式的 `config/app.conf` 中设置 `REQUIRE_HTTPS=false`，重启 Web、Gateway 和 Worker 后即可通过 HTTP 登录及调用业务接口；此时会话 Cookie 保留 HttpOnly、SameSite=Strict，省略 Secure，同源和权限检查保持启用。未设置时默认为 `true`，只接受小写 `true`/`false`，要求 HTTPS 访问；通过 HTTPS 访问时 Cookie 始终带 Secure。配置从服务端运行时读取，无需重新构建，不使用 `NEXT_PUBLIC_` 或根目录 `.env` 覆盖。关闭开关会允许所有可达地址的 HTTP 访问，适用于本地隔离开发。浏览器终端随页面使用 ws/wss，仍需反向代理将 `/api/terminal/ws` 转发至 Gateway 并支持 Upgrade；此开关不提供转发，也不放开 Ops 到 Agent 的 HTTPS 校验。若域名已缓存 HSTS，请使用本机 HTTP 地址开发。初始化不会覆盖已有管理员。Agent 本地编译和配置见 [Agent 文档](../agent/README.md)。生产配置目录和部署菜单见[部署文档](DEPLOYMENT.md)。
 

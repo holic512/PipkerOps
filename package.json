@@ -1,12 +1,13 @@
 {
   "name": "pipkerops",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.12"
   },
   "scripts": {
+    "predev": "npm run db:init",
     "dev": "next dev --hostname 127.0.0.1",
     "build": "prisma generate && next build && npm run build:runtime",
     "build:runtime": "node scripts/build-runtime.mjs",
@@ -16,6 +17,8 @@
     "db:generate": "prisma generate",
     "db:deploy": "prisma migrate deploy",
     "db:validate": "prisma validate",
+    "db:check": "tsx scripts/check-database.ts",
+    "db:init": "npm run db:generate && npm run db:deploy && npm run bootstrap",
     "bootstrap": "tsx scripts/bootstrap.ts",
     "pki:init": "tsx scripts/pki.ts",
     "check": "tsc --noEmit",

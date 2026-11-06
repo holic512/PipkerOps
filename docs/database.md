@@ -2,6 +2,10 @@
 
 以 `prisma/schema.prisma` 和 `prisma/migrations/` 为准。PostgreSQL 通过 Prisma 连接，连接串由 `prisma.config.ts` 读取；模型和迁移不包含环境凭据。
 
+运行时 `src/lib/db.ts` 使用 Prisma Client 与 `@prisma/adapter-pg`，底层由 `pg` 建立 PostgreSQL 连接；每个角色最多 5 个连接，连接超时 5 秒。`prisma.config.ts` 为迁移工具读取同一份 `config/app.conf`，generate/validate 使用不实际连接的占位地址。`prisma generate` 只生成本地客户端，不创建表。业务表、分区及维护函数必须由完整迁移建立；首次可连接的空库仍不能支持登录和业务请求。
+
+本地 `npm run dev` 在启动前自动执行 `db:init`，依次生成客户端、部署迁移、初始化管理员；也可单独执行 `npm run db:init`。`npm run db:check` 是只读诊断工具，检查实际数据库、业务表和迁移记录，不修改数据。服务、账号、目标数据库和配置需提前准备；已有失败迁移需单独排查，不自动重置或清空。生产仍通过独立的部署 init 执行迁移和初始化，不由 Web 请求触发。
+
 ## 模块与关系
 
 | 模块     | 主要表                                             | 关键约束                                                                            |
