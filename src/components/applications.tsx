@@ -513,7 +513,7 @@ export function Applications() {
 }
 export function Probes() {
   const q = useQuery<ProbeData[]>("probes.list");
-  const nodes = useQuery<NodeData[]>("nodes.list");
+  const nodes = useQuery<NodeData[]>("nodes.summary");
   const apps = useQuery<AppData[]>("applications.list");
   const [show, setShow] = useState(false);
   const [selected, setSelected] = useState<string>("");

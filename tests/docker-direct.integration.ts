@@ -1095,13 +1095,9 @@ test(
           "isolated Web",
         );
         const token = randomToken();
-        await fixture.client.session.create({
-          data: {
-            tokenHash: hashToken(token),
-            userId: user.id,
-            expiresAt: new Date(Date.now() + 3600000),
-          },
-        });
+        await (
+          await import("../src/lib/session-store")
+        ).sessions.create(user.id, token);
         const cookieName = (await import("../src/lib/auth")).sessionCookie;
         proxy = await uiProxy(port, gatewayPort, fixture.directory);
         await mkdir(join(runtime.directory, "ui"), { recursive: true });

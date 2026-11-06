@@ -123,7 +123,7 @@ func (c *Client) handler(ctx context.Context, identity *identityStore) http.Hand
 			if err != nil {
 				return
 			}
-			c.acceptConnection(ctx, conn, identity.connection().AgentID)
+			c.acceptConnection(ctx, conn, identity.connection().AgentID, r.URL.Query().Get("telemetry") == "2")
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/artifacts/"):
 			c.receiveArtifact(w, r, strings.TrimPrefix(r.URL.Path, "/v1/artifacts/"))
 		default:

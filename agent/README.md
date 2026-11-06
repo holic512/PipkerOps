@@ -216,3 +216,11 @@ HTTP探针与主控保持一致：拒绝自动重定向，包括同来源307/308
 执行使用 `docker exec -i <containerId> /bin/sh -ceu <固定脚本>`，目标路径作为位置参数、内容通过 stdin 传递，保持容器默认用户权限。容器需运行并包含 `/bin/sh` 及 BusyBox/GNU 基础文件工具（stat、head、cat、mkdir、rm、rmdir、mktemp、chmod、mv、sync）；缺失工具、停止或只读文件系统返回真实错误，不安装工具或提权。目录元数据使用 NUL 分隔，保留中文、空格及换行文件名，再由 Go 生成结构化结果。
 
 列表最多 1000 项，读取最多 256 KiB，返回截断与二进制标记。容器内部拒绝 `/proc`、`/sys`、`/dev` 和符号链接穿越；禁止修改根目录及递归删除。写入使用同目录临时文件、0600 权限、同步和原子替换；创建目录使用 0750 权限。终端目录联动只由管理端粘贴 `cd` 命令，PTY 协议保持原样。
+
+## 分层遥测 v2（0.1.5）
+
+新 Gateway 用 `/v1/connect?telemetry=2` 协商分层上报；旧 Gateway 未带参数时保留完整旧 metrics 协议。新 Ops 也接受旧 Agent 的 metrics，不强制立即升级所有节点。
+
+心跳独立10秒，快速采样5秒，文件系统15秒，进程/连接/systemd/容器30秒，静态信息接入时及每10分钟。各分类不重叠、独立超时；明细子采集有界并发。消息 type=telemetry，payload 含 schemaVersion=2、bootId、sequence、category、sampledAt、durationMs、data、series、errors、truncated。首次 CPU/网络/IO/进程速率等待连续计数基线；重置、身份变化和超过120秒缺口不伪造速率。旧连接采集不能发送到替代连接。
+
+支持 CPU 分类/各核/负载、内存/Swap、文件系统/inode、网卡错误丢包与包速率、IOPS/延迟/队列/忙碌率、真正的 CPU/内存进程 Top、有界连接、服务、容器 inspect 健康/重启次数和批量 stats。CPU 核数百分比口径：主机总量0–100%，进程按单核计可超过100%；多队列磁盘 util 不代表饱和度。进程最多扫描5000个、每榜返回80项，网络64、IO设备128、挂载64、连接2048、端口256、容器200、已加载服务200；达到上限标记截断。不存在 Docker/systemd 或读取失败均显式报告。硬件温度/SMART/GPU 不属于默认采集。

@@ -68,7 +68,7 @@ export function ManagedResources({ resourceId }: { resourceId?: string }) {
     ...(applicationId && { applicationId }),
   });
   const apps = useQuery<AppData[]>("applications.list");
-  const nodes = useQuery<NodeData[]>("nodes.list");
+  const nodes = useQuery<NodeData[]>("nodes.summary");
   const detail = useQuery<ResourceData>(resourceId ? "resources.get" : null, {
     resourceId,
   });
@@ -609,7 +609,7 @@ function ResourceRegistration({
     { nodeId },
     0,
   );
-  const node = useQuery<NodeData[]>("nodes.list");
+  const node = useQuery<NodeData[]>("nodes.summary");
   const [containerId, setContainerId] = useState(initialId);
   const selected = containers.data?.containers.find(
     (c) => c.id === containerId,

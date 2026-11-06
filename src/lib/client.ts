@@ -40,10 +40,10 @@ export const date = (v?: string | null) =>
 export const percent = (v?: number | null) =>
   v === null || v === undefined ? "暂无采样" : `${v.toFixed(1)}%`;
 export type Metric = {
-  id: string;
+  id?: string;
   recordedAt: string;
-  cpuPercent: number;
-  memoryPercent: number;
+  cpuPercent: number | null;
+  memoryPercent: number | null;
   payload: Record<string, unknown>;
 };
 export type NodeData = {
@@ -52,6 +52,7 @@ export type NodeData = {
   hostname: string | null;
   status: string;
   connected: boolean;
+  stale?: boolean;
   os: string | null;
   arch: string | null;
   agentVersion: string | null;

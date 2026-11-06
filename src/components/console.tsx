@@ -37,7 +37,8 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Button } from "./ui/button";
-import { useQuery } from "./shared";
+import { useQuery, useOperation } from "./shared";
+import { useSWRConfig } from "swr";
 import { Overview, NodeDetail } from "./nodes";
 import { Nodes } from "./node-manager";
 import { Applications, Probes } from "./applications";
@@ -49,6 +50,7 @@ import { DockerManagement } from "./docker-manager";
 import { ManagedResources } from "./managed-resources";
 import { RemoteWorkspace } from "./remote-workspace";
 import { ThemeSwitcher } from "./theme-provider";
+import { useNodeEvents } from "./node-events";
 const nav = [
   {
     group: "集群",
@@ -93,6 +95,9 @@ const items = nav.flatMap((g) => g.items);
 export function Console() {
   const pathname = usePathname();
   const path = pathname === "/files" ? "/terminal" : pathname;
+  useNodeEvents(path !== "/login");
+  const logout = useOperation();
+  const { mutate } = useSWRConfig();
   const router = useRouter();
   const [mobile, setMobile] = useState(false);
   const [tabs, setTabs] = useState(path === "/" ? ["/"] : ["/", path]);
@@ -161,6 +166,7 @@ export function Console() {
   };
   return (
     <div className="console">
+      {logout.feedback?.error && logout.ui}
       <a href="#main-content" className="skip-link">
         跳转到主内容
       </a>
@@ -253,10 +259,20 @@ export function Console() {
               variant="ghost"
               size="icon"
               aria-label="退出登录"
-              onClick={async () => {
-                await fetch("/api/auth/logout", { method: "POST" });
-                router.replace("/login");
-              }}
+              disabled={logout.busy}
+              onClick={() =>
+                void logout.run(async () => {
+                  const response = await fetch("/api/auth/logout", {
+                    method: "POST",
+                  });
+                  if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error ?? "退出失败，请稍后重试");
+                  }
+                  await mutate(() => true, undefined, { revalidate: false });
+                  router.replace("/login");
+                }, "已退出登录")
+              }
             >
               <LogOut size={16} />
             </Button>

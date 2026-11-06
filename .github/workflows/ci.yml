@@ -132,7 +132,7 @@ jobs:
   managed:
     needs: checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -147,6 +147,8 @@ jobs:
           cache-dependency-path: agent/go.sum
       - run: npm ci
       - run: npm run build
+      - name: Verify Redis sessions, node telemetry and isolated query baselines
+        run: npm run test:telemetry
       - name: Verify HTTPS onboarding and managed update distribution
         run: sudo env PATH="$PATH" MANAGED_AGENT_IMAGE=python:3.12-slim node --import tsx --test tests/managed-deployment.integration.ts
       - name: Prepare isolated systemd upgrade fixture

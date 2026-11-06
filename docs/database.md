@@ -10,7 +10,7 @@
 
 | 模块     | 主要表                                             | 关键约束                                                                            |
 | -------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| 身份权限 | User、Session、ApiKey                              | 角色为 ADMIN/OPERATOR/VIEWER；会话与 Key 只保存摘要，Key 限定 scope、节点及高危操作 |
+| 身份权限 | User、ApiKey（Session 在 Redis）                              | 角色为 ADMIN/OPERATOR/VIEWER；会话与 Key 只保存摘要，Key 限定 scope、节点及高危操作 |
 | 节点接入 | Node（保留旧 EnrollmentToken 历史表） | Agent ID 唯一；保存 HTTPS 地址、公开 CA 和私有凭证文件引用；私钥留在 Agent |
 | 节点分类 | NodeFolder、Node.folderId、Node.labels | 文件夹多级嵌套，同级名称唯一；节点仅属一个文件夹，NULL表示根目录；标签为字符串数组 |
 | 指标     | MetricSample、MetricHourly、MetricDeviceHourly、MetricMaintenanceState | 原始采样按月分区；CPU/内存及设备小时聚合；持久维护水位                                    |
@@ -128,3 +128,11 @@ npm run test:database
 ## Docker 操作日志
 
 `DockerOperation` 保存方法、节点、操作者/Key身份、来源、目标、生命周期动作、全局唯一幂等键及请求摘要、执行状态/时间、有限输出、错误和结果；不保存 Compose YAML。`DockerOperationLog(operationId,sequence)` 唯一约束去重重连输出。写入意图仅用于追踪直接请求，没有领取、租约、重试或 Worker 调度。开始和完成关联 AuditEvent。旧 Task/TaskLog/Schedule 模型保持兼容。迁移 `202611030001_docker_operations` 仅新增类型和表，不修改历史任务。
+
+## Redis Session 与新版指标存储
+
+迁移 `202611060001_redis_sessions` 删除旧 Session 表，所有旧登录失效。Session 和实时缓存不进入系统备份；恢复清理 pko:* 后必须重新登录。用户、角色、API Key、任务与审计仍是 PostgreSQL 持久事实。
+
+迁移 `202611060002_node_telemetry` 将 CPU/内存及小时均值/峰值改为可空，新增 NodeTelemetry（每节点/分类一条当前快照）、TelemetrySample（每节点约15秒一条数值数组）、TelemetryHourly（节点/指标/设备/UTC小时摘要）和 TelemetryMaintenance（水位）。新原始样本不重复进程/端口/服务清单；兼容查询按需合并当前清单。原有 MetricSample 分区与设备小时函数保留。
+
+Worker 在同一维护事务调用 pipkerops_maintain_telemetry，再执行原指标维护。新函数使用独立 advisory lock、水位与48小时回看，先聚合后清理，保留原始30天、小时365天；显式 null 计入 gapCount，小时数据重复维护通过主键更新去重。新表采用节点/时间主键和时间 BRIN 索引。容量应分别测量两类样本的实际字节，不能只用行数推断磁盘占用。

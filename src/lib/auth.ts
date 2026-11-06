@@ -11,6 +11,7 @@
 import { db } from "./db";
 import { hashToken } from "./crypto";
 import { appOrigin, httpsRequired } from "./config";
+import { sessions } from "./session-store";
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -59,16 +60,15 @@ export async function authenticate(request: Request): Promise<Actor> {
     .find((v) => v.startsWith(sessionCookie + "="))
     ?.slice(sessionCookie.length + 1);
   if (!token) throw new ApiError(401, "请先登录");
-  const session = await db().session.findUnique({
-    where: { tokenHash: hashToken(token) },
-    include: { user: true },
-  });
-  if (!session || session.expiresAt < new Date())
-    throw new ApiError(401, "会话已过期，请重新登录");
+  const digest = hashToken(token);
+  const session = await sessions.get(digest);
+  if (!session) throw new ApiError(401, "会话已过期，请重新登录");
+  const user = await db().user.findUnique({ where: { id: session.userId } });
+  if (!user) throw new ApiError(401, "会话已失效，请重新登录");
   return {
     userId: session.userId,
-    role: session.user.role,
-    sessionId: session.id,
+    role: user.role,
+    sessionId: digest,
   };
 }
 export function authorize(
@@ -151,17 +151,12 @@ export async function refreshActor(actor: Actor): Promise<Actor> {
     };
   }
   if (actor.sessionId) {
-    const session = await db().session.findUnique({
-      where: { id: actor.sessionId },
-      include: { user: true },
-    });
-    if (
-      !session ||
-      session.expiresAt <= new Date() ||
-      session.userId !== actor.userId
-    )
+    const session = await sessions.get(actor.sessionId);
+    if (!session || session.userId !== actor.userId)
       throw new ApiError(403, "会话已失效");
-    return { ...actor, role: session.user.role };
+    const user = await db().user.findUnique({ where: { id: session.userId } });
+    if (!user) throw new ApiError(403, "会话用户已不存在");
+    return { ...actor, role: user.role };
   }
   const user = await db().user.findUnique({ where: { id: actor.userId } });
   if (!user) throw new ApiError(403, "任务授权用户已不存在");

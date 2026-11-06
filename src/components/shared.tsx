@@ -28,7 +28,12 @@ export function useQuery<T>(
   return useSWR<T>(
     method ? [method, JSON.stringify(params)] : null,
     () => rpc<T>(method!, params),
-    { refreshInterval, revalidateOnFocus: false },
+    {
+      refreshInterval,
+      revalidateOnFocus: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    },
   );
 }
 export function QueryState({

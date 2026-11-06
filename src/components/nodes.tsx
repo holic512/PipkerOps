@@ -42,7 +42,7 @@ import { Button } from "./ui/button";
 import { ViewTabs } from "./ui/tabs";
 import { NodeEditor, NodeLabels } from "./node-editor";
 import { folderPath } from "@/lib/node-tree";
-import { ResourceHistory } from "./resource-history";
+import { NodeMonitoring } from "./node-monitoring";
 const online = (node: NodeData) => node.connected;
 export function Overview() {
   const q = useQuery<{
@@ -224,6 +224,9 @@ export function NodeCells({
           />
         )}
         {node.agentUrl && <small>HTTPS · 已校验证书</small>}
+        {node.stale && node.metrics.length > 0 && (
+          <small>指标已过期 / 回退历史</small>
+        )}
         {node.connectionError && (
           <small className="error-text">{node.connectionError}</small>
         )}
@@ -251,11 +254,11 @@ export function NodeCells({
     </>
   );
 }
-function MetricBar({ value }: { value?: number }) {
+function MetricBar({ value }: { value?: number | null }) {
   return (
     <div className="metric-bar">
       <span>{percent(value)}</span>
-      {value !== undefined && (
+      {value !== undefined && value !== null && (
         <div className="meter">
           <div
             style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
@@ -267,19 +270,19 @@ function MetricBar({ value }: { value?: number }) {
   );
 }
 export function NodeDetail({ id }: { id: string }) {
-  const q = useQuery<NodeData[]>("nodes.list");
+  const q = useQuery<NodeData>("nodes.get", { nodeId: id });
   const folders = useQuery<NodeFolderData[]>("nodeFolders.list");
   const user = useQuery<{ role: string }>("users.me", {}, 0);
   const canWrite = !!user.data && user.data.role !== "VIEWER";
-  const node = q.data?.find((n) => n.id === id);
+  const node = q.data;
   const [hours, setHours] = useState(1);
   const [edit, setEdit] = useState(false);
+  const [tab, setTab] = useState("live");
   const h = useQuery<{
     resolution: string;
     samples: Record<string, unknown>[];
-  }>("nodes.metrics", { nodeId: id, hours });
+  }>(tab === "metrics" ? "nodes.metrics" : null, { nodeId: id, hours });
   const op = useOperation(() => void q.mutate());
-  const [tab, setTab] = useState("metrics");
   return (
     <>
       <Link href="/nodes" className="back-link">
@@ -339,7 +342,7 @@ export function NodeDetail({ id }: { id: string }) {
       {edit && node && folders.data && (
         <NodeEditor
           node={node}
-          nodes={q.data ?? []}
+          nodes={node ? [node] : []}
           folders={folders.data}
           onClose={() => setEdit(false)}
           onSaved={() => {
@@ -395,8 +398,12 @@ export function NodeDetail({ id }: { id: string }) {
               value={tab}
               onValueChange={setTab}
               items={[
+                { value: "live", label: "实时概览" },
                 { value: "metrics", label: "历史监控" },
                 { value: "resources", label: "磁盘 / 网络 / IO" },
+                { value: "processes", label: "进程 / 连接" },
+                { value: "services", label: "服务 / 容器" },
+                { value: "system", label: "系统信息" },
                 { value: "details", label: "采集详情" },
               ]}
             >
@@ -435,8 +442,15 @@ export function NodeDetail({ id }: { id: string }) {
                     />
                   </QueryState>
                 </section>
-              ) : tab === "resources" ? (
-                <ResourceHistory nodeId={id} />
+              ) : [
+                  "live",
+                  "resources",
+                  "processes",
+                  "services",
+                  "system",
+                  "details",
+                ].includes(tab) ? (
+                <NodeMonitoring nodeId={id} view={tab} />
               ) : (
                 <section className="panel form-panel">
                   <h2>最近一次完整采样</h2>
@@ -469,13 +483,20 @@ function HistoryChart({
       new Date(String(a.recordedAt ?? a.bucketAt)).getTime() -
       new Date(String(b.recordedAt ?? b.bucketAt)).getTime(),
   );
-  const series = (key: string) =>
-    data
-      .map(
-        (p, i) =>
-          `${40 + (i / Math.max(data.length - 1, 1)) * 910},${220 - Number(p[key] ?? 0) * 1.8}`,
-      )
+  const series = (key: string) => {
+    let previous = false;
+    return data
+      .map((p, i) => {
+        if (typeof p[key] !== "number") {
+          previous = false;
+          return "";
+        }
+        const command = previous ? "L" : "M";
+        previous = true;
+        return `${command}${40 + (i / Math.max(data.length - 1, 1)) * 910},${220 - Number(p[key]) * 1.8}`;
+      })
       .join(" ");
+  };
   return (
     <div className="history-chart">
       <div className="chart-legend">
@@ -516,14 +537,14 @@ function HistoryChart({
               </text>
             </g>
           ))}
-          <polyline
-            points={series(hourly ? "cpuAvg" : "cpuPercent")}
+          <path
+            d={series(hourly ? "cpuAvg" : "cpuPercent")}
             fill="none"
             stroke="var(--chart-1)"
             strokeWidth="2"
           />
-          <polyline
-            points={series(hourly ? "memoryAvg" : "memoryPercent")}
+          <path
+            d={series(hourly ? "memoryAvg" : "memoryPercent")}
             fill="none"
             stroke="var(--chart-2)"
             strokeWidth="2"

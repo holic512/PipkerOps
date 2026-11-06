@@ -184,3 +184,22 @@ Worker 在实际执行前重新校验创建者权限。备份超时、失败或�
 文件操作继续通过 `tasks.create` 提交、`tasks.get` 查询结果。宿主机使用 `files.*`，容器使用独立的 `container.files.*`（Agent 0.1.3 起），不回退为宿主机任务。容器 ID 使用与终端相同的名称约束；创建及派发前同时校验文件与 Docker scope。写操作必须 `confirmed:true` 且有高危许可，提交失败沿用幂等键找回原任务；UNKNOWN 不自动重放。
 
 目录结果为 `{path,containerId?,entries:[{name,directory,symlink,size,mode,modifiedAt}],limited}`，最多 1000 项。读取正文在任务 `output`，`result` 包含 `path`、`containerId?`、`truncated`、`binary`；最多 256 KiB，截断和非 UTF-8 文本禁止在页面编辑覆盖。写入采用同目录临时文件原子替换，权限 0600；新建目录权限 0750，删除不递归，拒绝符号链接穿越及受保护路径。
+
+## Redis 会话与节点遥测（Ops 0.1.17 / Agent 0.1.5）
+
+浏览器 Session 只存 Redis `pko:session:<tokenHash>`，固定 8 小时，不滑动续期。升级统一重新登录。Cookie、HTTPS 开关与同源规则保留；用户/角色/API Key 继续在 PostgreSQL 校验。会话服务不可用返回 503，不存在/过期返回 401。MCP 仍只接受独立 API Key。
+
+新增只读方法均需要 `nodes:read`，并检查 Key 节点范围：
+
+| 方法 | 参数 | 返回 |
+| --- | --- | --- |
+| nodes.get | nodeId | 单节点安全元数据、连接状态，metrics 为空数组；不读取全量节点 |
+| nodes.summary | {} | 授权节点与紧凑 CPU/内存摘要；stale 表示过期/回退，payload 不携带清单 |
+| nodes.snapshot | nodeId,category? | 分类快照及合并 payload；category 为 fast/disks/details/static/legacy，分类有 sampledAt/receivedAt/durationMs/errors/truncated/stale |
+| nodes.history | nodeId,kind:metric,metric,hours(1–8760),device? | 新数值历史，设备选择、unit、bucketSeconds、series；metric 如 cpu.iowait、load.1、swap.in、disk.inodePercent、network.recvPackets、io.readIOPS、io.readLatency |
+
+`nodes.list`、原 disk/network/io 历史继续兼容。CPU/内存允许 null，表示部分采集失败；客户端不得转成零。新数值历史单位包含 %、B、B/s、pps、/s、ms、IOPS 或无量纲空字符串；短窗口按样本均值，长窗口按小时均值显示，小时内显式空值保留缺口。吞吐累计总量/加权设备速率仍使用原设备历史接口，不从新瞬时速率图反推全窗口流量。
+
+旧 Agent 的 `metrics` 帧及已持久化旧快照在读取时兼容转换已上报的基础数值为 `series`，保留 `legacy` 分类和原始 payload。新接收的旧采样同时写入数值历史；已有历史不自动回填。缺失/无效值不转为零，单次网络/IO 累计计数不转换为速率。CPU 各核、负载、Swap 和详细系统信息需节点实际运行支持 v2 的 Agent（0.1.5 起），Gateway 连接通过 `telemetry=2` 协商；仅更新 Ops 或版本文件不会升级远端 Agent。
+
+`GET /api/nodes/events` 是同源 SSE 变更通知，复用 Cookie/Bearer 鉴权，按节点范围过滤，每 5 秒复核会话和当前角色；退出后关闭。`nodes` 事件仅包含 nodeId，客户端重新查询；ready/重连时全量刷新，15 秒轮询兜底，不依赖 Pub/Sub 保存事件历史。

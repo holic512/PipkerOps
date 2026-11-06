@@ -2,6 +2,18 @@
 @import "@xterm/xterm/css/xterm.css";
 @import "@xyflow/react/dist/style.css";
 @import "./tokens.css";
+.node-monitoring {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.node-monitoring > .panel,
+.node-monitoring > .surface {
+  min-width: 0;
+}
+.node-monitoring > .surface {
+  padding: var(--space-3);
+}
 :root {
   font-family: var(--font-ui);
   color: var(--foreground);

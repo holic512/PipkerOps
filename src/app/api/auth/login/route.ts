@@ -9,7 +9,8 @@
  * @author holic512
  */
 import { db } from "@/lib/db";
-import { redis } from "@/lib/redis";
+import { redis, redisCall } from "@/lib/redis";
+import { sessions, sessionSeconds } from "@/lib/session-store";
 import { sameOrigin, sessionCookieHeader, ApiError } from "@/lib/auth";
 import {
   verifyPassword,
@@ -29,10 +30,18 @@ export async function POST(request: Request) {
         password: z.string().min(1).max(256),
       })
       .parse(await body(request));
-    const client = await redis();
     const key = `pko:login:${hashToken(data.email.toLowerCase())}`;
-    const attempts = await client.incr(key);
-    if (attempts === 1) await client.expire(key, 900);
+    let attempts: number;
+    try {
+      attempts = await redisCall(async () => {
+        const client = await redis();
+        const count = await client.incr(key);
+        if (count === 1) await client.expire(key, 900);
+        return count;
+      });
+    } catch {
+      throw new ApiError(503, "登录服务暂不可用，请稍后重试");
+    }
     if (attempts > 20) throw new ApiError(429, "登录尝试过多，请15分钟后重试");
     const user = await db().user.findUnique({
       where: { email: data.email.toLowerCase() },
@@ -43,15 +52,12 @@ export async function POST(request: Request) {
       user?.passwordHash ?? (await dummy),
     );
     if (!valid || !user) throw new ApiError(401, "邮箱或密码不正确");
-    const token = randomToken();
-    await db().session.create({
-      data: {
-        userId: user.id,
-        tokenHash: hashToken(token),
-        expiresAt: new Date(Date.now() + 8 * 3600000),
-      },
-    });
-    await client.del(key);
+    const { token } = await sessions.create(user.id);
+    try {
+      await redisCall(async () => (await redis()).del(key));
+    } catch {
+      throw new ApiError(503, "登录服务暂不可用，请稍后重试");
+    }
     await db().auditEvent.create({
       data: { actorId: user.id, action: "auth.login", resourceType: "Session" },
     });
@@ -60,7 +66,7 @@ export async function POST(request: Request) {
     });
     response.headers.set(
       "Set-Cookie",
-      sessionCookieHeader(request, token, 28800),
+      sessionCookieHeader(request, token, sessionSeconds),
     );
     return response;
   } catch (e) {

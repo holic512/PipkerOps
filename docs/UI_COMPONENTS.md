@@ -86,3 +86,13 @@ Input / Textarea / NativeSelect 是项目按 shadcn 本地源码方式维护的�
 5. 执行 `npm run lint`（四条本地 UI 规则）、`npm run check`、`npm test`；公共组件变动执行 `npm run build`，按范围检查亮/暗、窄屏和键盘。
 
 本地规则在 `scripts/eslint-ui-rules.mjs`，通过 `eslint.config.mjs` 接入现有 CI；`tests/ui-rules.test.ts` 用违规样例和实际配置验证。主题测试继续检查 Token 完整性、对比度与颜色硬编码。AST 检查不能识别所有重复业务逻辑或所有 CSS 技巧，故保留人工组件选择审查与渲染验证；不设历史违规 baseline，也不允许对整个业务目录静默放行。
+
+## 节点监控组合
+
+`@/components/node-monitoring` 导出 NodeMonitoring（nodeId、view）与 NumericHistory（nodeId），组合现有 DataTable、QueryState、NativeSelect 与 ResourceChart。业务视图为实时、设备、进程/连接、服务/容器、系统和诊断；只加载当前分类。`@/components/resource-history` 的 ResourceChart 现支持数值历史单位，不再只将非百分比都解释为 B/s。
+
+`@/components/node-events` 的 useNodeEvents 在 Console 中只挂载一次，SSE 仅触发 SWR 定向刷新；隐藏页面关闭流，返回页面刷新。useQuery 显式关闭后台和离线轮询。监控布局在 globals.css 的 node-monitoring 集中维护，复用现有 Token。
+
+节点明细行的身份由 `src/lib/monitoring-rows.ts` 生成：监听端口使用 PID、协议、地址、端口和可用的 fd 组合，不能只使用 PID；指标使用 metric/device，挂载使用 mountpoint。完全相同的重复观测保留并附重复序号，不静默删除。
+
+NodeMonitoring 兼容旧 Agent 的已上报基础指标：实时数值由服务端转换为指标序列；网络和 IO 展示累计计数，速率仍通过资源历史查看；旧进程列表不标为 CPU 排行。旧采样缺失的明细提示升级 Agent 并提供版本更新入口，无采样不能误报为旧 Agent。禁止将累计计数标成瞬时吞吐或用零填充未采集指标。

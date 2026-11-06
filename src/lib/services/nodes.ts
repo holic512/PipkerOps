@@ -21,6 +21,8 @@ import {
 import { methodSchemas } from "./contracts";
 import { assertFolderTarget } from "./node-organization";
 import { Prisma, type MetricSample } from "@/generated/prisma/client";
+import { readSnapshots } from "./telemetry";
+import { preferredSnapshots } from "../telemetry";
 export async function listNodes(actor: Actor) {
   authorize(actor, "nodes:read");
   const now = Date.now();
@@ -55,9 +57,23 @@ export async function withLatestMetrics<T extends { id: string }>(rows: T[]) {
       )
     : [];
   const latest = new Map(samples.map((sample) => [sample.nodeId, sample]));
+  const snapshots = await readSnapshots(rows.map((row) => row.id));
   return rows.map((node) => ({
     ...node,
-    metrics: latest.has(node.id) ? [latest.get(node.id)!] : [],
+    metrics: latest.has(node.id)
+      ? [
+          {
+            ...latest.get(node.id)!,
+            payload: Object.assign(
+              {},
+              latest.get(node.id)!.payload,
+              ...preferredSnapshots(
+                snapshots.filter((s) => s.nodeId === node.id),
+              ).map((s) => s.data),
+            ),
+          },
+        ]
+      : [],
   }));
 }
 
@@ -219,12 +235,12 @@ type MetricHistorySample = {
   recordedAt?: Date;
   bucketAt?: Date;
   sampleCount: number;
-  cpuPercent?: number;
-  memoryPercent?: number;
-  cpuAvg?: number;
-  memoryAvg?: number;
-  cpuMax: number;
-  memoryMax: number;
+  cpuPercent?: number | null;
+  memoryPercent?: number | null;
+  cpuAvg?: number | null;
+  memoryAvg?: number | null;
+  cpuMax: number | null;
+  memoryMax: number | null;
 };
 
 /** Parameterized SQL is shared with isolated PostgreSQL tests; no payload is read. */

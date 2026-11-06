@@ -8,7 +8,7 @@
  * @index_tags api, identity, entry
  * @author holic512
  */
-import { db } from "@/lib/db";
+import { sessions } from "@/lib/session-store";
 import { hashToken } from "@/lib/crypto";
 import { sameOrigin, sessionCookie, sessionCookieHeader } from "@/lib/auth";
 import { json, errorResponse } from "@/lib/http";
@@ -21,8 +21,7 @@ export async function POST(request: Request) {
       .map((v) => v.trim())
       .find((v) => v.startsWith(sessionCookie + "="))
       ?.slice(sessionCookie.length + 1);
-    if (token)
-      await db().session.deleteMany({ where: { tokenHash: hashToken(token) } });
+    if (token) await sessions.revoke(hashToken(token));
     const r = json({ data: true });
     r.headers.set("Set-Cookie", sessionCookieHeader(request, "", 0));
     return r;

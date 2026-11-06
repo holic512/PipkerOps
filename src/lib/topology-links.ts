@@ -51,9 +51,13 @@ export function topologyLinks(data: Input) {
           kind: "docker",
           target: c.id,
           name: c.name.replace(/^\//, ""),
-          project: labels
-            .find((l) => l.startsWith("com.docker.compose.project="))
-            ?.slice("com.docker.compose.project=".length),
+          project:
+            typeof c.composeService === "string" &&
+            typeof c.composeProject === "string"
+              ? c.composeProject || undefined
+              : labels
+                  .find((l) => l.startsWith("com.docker.compose.project="))
+                  ?.slice("com.docker.compose.project=".length),
           state:
             node.connected &&
             c.state === "running" &&

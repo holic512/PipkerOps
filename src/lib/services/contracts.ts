@@ -44,6 +44,9 @@ export const METHODS = [
   ...(Object.keys(dockerMethodSchemas) as (keyof typeof dockerMethodSchemas)[]),
   "overview",
   "nodes.list",
+  "nodes.get",
+  "nodes.summary",
+  "nodes.snapshot",
   "nodes.test",
   "nodes.import",
   "nodes.deployment",
@@ -110,7 +113,9 @@ export const mutation = (method: string) =>
     method,
   ) &&
   !dockerReadMethods.includes(method) &&
-  !["overview", "topology"].includes(method) &&
+  !["overview", "topology", "nodes.summary", "nodes.snapshot"].includes(
+    method,
+  ) &&
   !method.endsWith(".list") &&
   !method.endsWith(".get") &&
   !method.endsWith(".history") &&
@@ -121,6 +126,14 @@ export const methodSchemas = {
   ...dockerMethodSchemas,
   overview: z.object({}),
   "nodes.list": z.object({}),
+  "nodes.get": z.object({ nodeId: id }),
+  "nodes.summary": z.object({}),
+  "nodes.snapshot": z.object({
+    nodeId: id,
+    category: z
+      .enum(["fast", "disks", "details", "static", "legacy"])
+      .optional(),
+  }),
   "nodes.deployment": z.object({
     nodeId: id,
     deployRoot: z.string().startsWith("/").max(4096),
@@ -152,7 +165,11 @@ export const methodSchemas = {
   }),
   "nodes.history": z.object({
     nodeId: id,
-    kind: z.enum(["disk", "network", "io"]),
+    kind: z.enum(["disk", "network", "io", "metric"]),
+    metric: z
+      .string()
+      .regex(/^[a-zA-Z][a-zA-Z0-9.]{0,79}$/)
+      .optional(),
     hours: z.number().min(1).max(8760).default(1),
     device: z.string().min(1).max(200).optional(),
   }),
@@ -458,8 +475,8 @@ const wireNode = z
       z
         .object({
           recordedAt: wireDate,
-          cpuPercent: z.number(),
-          memoryPercent: z.number(),
+          cpuPercent: z.number().nullable(),
+          memoryPercent: z.number().nullable(),
           payload: object,
         })
         .passthrough(),
@@ -501,8 +518,8 @@ const wireApplication = z
 
 const wireMetricValues = z.object({
   sampleCount: z.number().int().positive(),
-  cpuMax: z.number(),
-  memoryMax: z.number(),
+  cpuMax: z.number().nullable(),
+  memoryMax: z.number().nullable(),
 });
 const wireMetricHistory = z.discriminatedUnion("resolution", [
   z.object({
@@ -512,8 +529,8 @@ const wireMetricHistory = z.discriminatedUnion("resolution", [
       .array(
         wireMetricValues.extend({
           recordedAt: wireDate,
-          cpuPercent: z.number(),
-          memoryPercent: z.number(),
+          cpuPercent: z.number().nullable(),
+          memoryPercent: z.number().nullable(),
         }),
       )
       .max(1440),
@@ -525,15 +542,15 @@ const wireMetricHistory = z.discriminatedUnion("resolution", [
       .array(
         wireMetricValues.extend({
           bucketAt: wireDate,
-          cpuAvg: z.number(),
-          memoryAvg: z.number(),
+          cpuAvg: z.number().nullable(),
+          memoryAvg: z.number().nullable(),
         }),
       )
       .max(8761),
   }),
 ]);
 const wireDeviceHistory = z.object({
-  unit: z.enum(["%", "B/s"]),
+  unit: z.enum(["%", "B/s", "B", "pps", "/s", "ms", "IOPS", ""]),
   bucketSeconds: z.number().int().positive(),
   devices: z.array(z.string()),
   device: z.string().nullable(),
@@ -574,6 +591,17 @@ export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
     ),
   }),
   "nodes.list": z.object({ data: z.array(wireNode) }),
+  "nodes.get": z.object({ data: wireNode }),
+  "nodes.summary": z.object({ data: z.array(wireNode) }),
+  "nodes.snapshot": z.object({
+    data: z.object({
+      nodeId: id,
+      connected: z.boolean(),
+      categories: z.array(object),
+      payload: object,
+      legacy: z.boolean(),
+    }),
+  }),
   "nodeFolders.list": z.object({
     data: z.array(
       z.object({

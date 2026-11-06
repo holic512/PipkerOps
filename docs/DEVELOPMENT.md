@@ -1,6 +1,6 @@
 # 开发与验证
 
-PipkerOps 由 Next.js Web/API、主动连接 Gateway、后台 Worker 和 Go Agent 组成。Web、MCP、Cron 复用 `src/lib/services` 的输入契约、授权与持久化任务；PostgreSQL 为任务事实来源，Redis 仅作协调与限流。非幂等任务最多尝试一次，结果不明保留 UNKNOWN，依赖 Agent journal 对账。
+PipkerOps 由 Next.js Web/API、主动连接 Gateway、后台 Worker 和 Go Agent 组成。Web、MCP、Cron 复用 `src/lib/services` 的输入契约、授权与持久化任务；PostgreSQL 为任务事实来源，Redis 保存会话、实时缓存、协调与限流。非幂等任务最多尝试一次，结果不明保留 UNKNOWN，依赖 Agent journal 对账。
 
 ## 前端组件开发入口
 
@@ -223,3 +223,28 @@ sh scripts/package-agent.sh 0.1.0 arm64 /tmp/pipkerops-agent-release
 浏览器使用 `agent-browser` 独立会话及夹具自建 HTTPS/WSS 代理，已验证 1440px / 390px 布局、无页面横向溢出、文件编辑确认、文件与终端双向读写、两个容器内容隔离、宿主机/容器会话切换、分屏焦点同步、跨页面保留、离线禁用、树键盘展开/读取、弹窗焦点恢复、手机文件/终端切换及关闭工作台释放连接。工作台和文件弹窗 axe 检查均 0 违规、0 待确认；设计检测无发现。
 
 `DOCKER_UI_TEST=true node --import tsx --test tests/docker-direct.integration.ts` 保留专用页面，输出私有 context 文件路径；context 包含 HTTPS origin 和临时测试 Cookie 文件路径，不输出凭据。使用独立会话导入该测试 Cookie 后访问 origin；本地自签证书仅在该测试会话中忽略证书错误。交互验证最长两小时，结束向 context 中的测试 PID 发送 SIGINT，清理夹具自有资源。
+
+
+## Redis Session 与分层监控验证（2026-11-06）
+
+Ops 0.1.17 / Agent 0.1.5 / Scripts 0.1.5 / Skill 0.1.2。实现范围与切换说明见 SESSION_AND_NODE_MONITORING_PLAN.md、API.md、database.md 及部署文档。本轮未对已有数据库执行迁移，未升级或测试性修改实际业务节点。
+
+本机 Windows / Node 26.13.0 实际检查：Prisma generate/validate、TypeScript、ESLint、凭据扫描通过；PGlite 真实 SQL 已执行全部迁移，验证删除 Session 表、可空指标、新数值小时聚合、短/长查询去重及设备数据级联。全量 TypeScript 测试93项，92项通过，1项为此前已存在的 POSIX 临时路径与 /bin/sh 测试在 Windows 失败（tests/remote-files.test.ts）；没有为此增加全局豁免或将它记为通过。
+
+默认 Turbopack 构建在 CSS 子进程启动阶段 panic；使用 npx next build --webpack 编译及 build:runtime 独立运行打包通过。Go 1.26 工具链的 Linux amd64/arm64 测试二进制交叉编译及 Linux go vet 通过，不能等同于实际运行 Go 测试或 race 检查。
+
+Playwright 使用独立浏览器和仅本机可达的临时组件夹具，数据为测试响应，不读取业务配置/凭证。使用生产 CSS 检查1280px亮色、390px亮色/暗色、表格内部滚动、标签方向键、过期/错误/截断提示、采样对话框 Escape 关闭及焦点恢复；窄屏 document.scrollWidth=390，浏览器无应用错误。这证明组件布局/交互，不证明实际 Agent、登录或 SSE/PTY 的端到端行为。
+
+新增 npm run test:telemetry：创建并清理独立 PostgreSQL/Redis、真实本机测试 Agent 与 Gateway，覆盖真实登录/退出/TTL/角色变化/用户删除、SSE退出关闭、节点范围拒绝、Redis故障回退及重新连接，并输出1/10/50节点合成快照下的摘要服务查询p50/p95及字节数。该基线明确不是50个真实Agent或5个浏览器的端到端SLA。已接入 Ubuntu/Node24 managed CI；本机执行因没有 docker 命令返回 ENOENT，未得到真实集成结果。
+
+尚需在 Linux/Docker 环境执行新集成、Go race、备份恢复/Docker/终端回归，以及固定设备规模下50真实节点、5活动浏览器的端到端延迟和容量检查。500ms/1秒/2秒为目标，没有本次实测证明。Redis会话切换须统一重启三角色并重新登录，不能据本轮本地编译结果直接宣布生产验收完成。
+
+## 并发 Redis 初始化与监控行身份修复（Ops 0.1.18）
+
+修复冷启动 Redis socket 已打开、但鉴权/握手未就绪时，并发调用提前执行命令产生的503。所有调用共同等待同一连接 Promise，并且只有 isReady 才可使用；真实断线重连仍明确失败，不放开会话校验。新增受控握手并发、重连、关闭后重新连接回归。
+
+实际配置的 Redis 上只读并发20个 PING：修复前1成功/19个 The client is offline，修复后20成功/0失败；未改配置、未增加超时或读写业务会话。
+
+监控表格原来优先用 PID 作为行键，同一进程监听多个端口会重复；现按端点/指标/设备身份组合并保留完全重复观测。新增排序、值变化、同PID多端口、IPv4/IPv6与协议差异回归。
+
+本次节点只读实际采样复核：legacy快照包含41条监听记录，旧PID键重复30次，修复后无重复。新增5项回归及原会话测试通过；全量98项中97通过，1项仍为既有Windows/POSIX临时路径测试失败。类型检查、lint与Webpack/standalone构建通过。独立Playwright夹具验证同PID的多端口、IPv4/IPv6、UDP及完全重复观测共5条均保留，重复切换标签无React重复key错误；390px暗色无页面横向溢出。

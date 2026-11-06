@@ -44,6 +44,7 @@ function maintainMetrics() {
       const [row] = await db().$transaction(
         async (tx) => {
           await tx.$executeRaw`SET LOCAL statement_timeout = '5min'`;
+          await tx.$queryRaw`SELECT pipkerops_maintain_telemetry()`;
           return tx.$queryRaw<
             { summary: { skipped?: boolean; blockedPartitions?: string[] } }[]
           >`SELECT pipkerops_maintain_metrics() AS summary`;
@@ -247,7 +248,6 @@ async function recover() {
   });
   await db()
     .$executeRaw`UPDATE "Task" SET status=CASE WHEN attempts < "maxAttempts" THEN 'QUEUED'::"TaskStatus" ELSE 'UNKNOWN'::"TaskStatus" END, "leaseExpiresAt"=NULL, "updatedAt"=now(), error='执行租约过期' WHERE status IN ('DISPATCHED','RUNNING') AND "leaseExpiresAt" < now() AND idempotent=true`;
-  await db().session.deleteMany({ where: { expiresAt: { lt: new Date() } } });
 }
 async function control() {
   const tasks = await db().$queryRaw<
@@ -354,6 +354,7 @@ async function alerts() {
       (rule.operator === "lt"
         ? value < rule.threshold
         : value > rule.threshold);
+    if (value === null) continue; // Missing telemetry is not evidence of recovery.
     const key = `pko:alert:${rule.id}`;
     if (!breached) {
       await client.del(key + ":since");

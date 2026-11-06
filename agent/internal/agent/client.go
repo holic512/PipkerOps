@@ -104,7 +104,7 @@ func (c *Client) send(message Message) error {
 	return c.conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func (c *Client) acceptConnection(ctx context.Context, conn *websocket.Conn, agentID string) {
+func (c *Client) acceptConnection(ctx context.Context, conn *websocket.Conn, agentID string, telemetryV2 bool) {
 	defer conn.Close()
 	conn.SetReadLimit(maxFrame)
 	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -144,7 +144,11 @@ func (c *Client) acceptConnection(ctx context.Context, conn *websocket.Conn, age
 			return
 		}
 	}
-	go c.monitor(connCtx)
+	if telemetryV2 {
+		go c.monitorV2(connCtx, conn)
+	} else {
+		go c.monitor(connCtx)
+	}
 	for {
 		var message Message
 		if err := conn.ReadJSON(&message); err != nil {

@@ -22,11 +22,11 @@ Web / MCP / Cron
        │
        ▼
  Authorization & task services ── PostgreSQL (business and task records)
-       │                       └─ Redis (temporary coordination and rate limits)
+       │                       └─ Redis (sessions, live cache and coordination)
        ▼
  Gateway / Worker
        │
-       │  Agent initiates a TLS connection
+       │  Ops initiates a TLS/WSS connection
        ▼
  Go Agent on each Linux node
 ```

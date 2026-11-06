@@ -29,7 +29,17 @@ type History = {
 };
 const colors = ["var(--chart-1)", "var(--chart-2)"];
 const valueLabel = (n: number, unit: string) => {
-  if (unit === "%") return `${n.toFixed(1)}%`;
+  if (unit !== "B/s") {
+    if (unit === "B") {
+      for (const [scale, label] of [
+        [1073741824, "GiB"],
+        [1048576, "MiB"],
+        [1024, "KiB"],
+      ] as const)
+        if (Math.abs(n) >= scale) return `${(n / scale).toFixed(1)} ${label}`;
+    }
+    return `${n.toFixed(1)} ${unit}`;
+  }
   if (n >= 1024 * 1024 * 1024) return `${(n / 1024 ** 3).toFixed(1)} GiB/s`;
   if (n >= 1024 * 1024) return `${(n / 1024 ** 2).toFixed(1)} MiB/s`;
   if (n >= 1024) return `${(n / 1024).toFixed(1)} KiB/s`;
@@ -109,7 +119,7 @@ export function ResourceHistory({ nodeId }: { nodeId: string }) {
     </section>
   );
 }
-function ResourceChart({ data }: { data: History }) {
+export function ResourceChart({ data }: { data: History }) {
   const [valuesOpen, setValuesOpen] = useState(false);
   const all = data.series.flatMap((s) => s.points);
   const times = all.map((p) => new Date(p.recordedAt).getTime());
@@ -117,7 +127,7 @@ function ResourceChart({ data }: { data: History }) {
     end = Math.max(...times);
   const max =
     data.unit === "%"
-      ? 100
+      ? Math.max(100, ...all.map((p) => p.value ?? 0))
       : Math.max(1, ...all.map((p) => p.value ?? 0)) * 1.1;
   const x = (time: string) =>
     90 +

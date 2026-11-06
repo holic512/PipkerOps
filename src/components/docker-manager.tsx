@@ -123,7 +123,7 @@ function DockerWorkspace({
   target: string;
   action: string;
 }) {
-  const nodes = useQuery<NodeData[]>("nodes.list");
+  const nodes = useQuery<NodeData[]>("nodes.summary");
   const folders = useQuery<NodeFolderData[]>("nodeFolders.list");
   const user = useQuery<{ role: string }>("users.me", {}, 0);
   const [selectedId, setSelectedId] = useState(requestedNode);

@@ -2,6 +2,43 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { topologyLinks } from "../src/lib/topology-links";
 
+test("新版遥测使用inspect提供的准确Compose项目及服务标签", () => {
+  const result = topologyLinks({
+    nodes: [
+      {
+        id: "n",
+        connected: true,
+        metrics: [
+          {
+            payload: {
+              containers: [
+                {
+                  id: "a".repeat(64),
+                  name: "web",
+                  state: "running",
+                  composeProject: "stack",
+                  composeService: "web",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+    applications: [
+      {
+        id: "app",
+        deployments: [
+          { id: "deployment", nodeId: "n", type: "compose", target: "stack" },
+        ],
+      },
+    ],
+    probes: [],
+    sites: [],
+  });
+  assert.equal(result.deploymentLinks[0].deploymentId, "deployment");
+});
+
 test("拓扑只按同节点准确容器身份和Compose标签关联，刷新移除旧关系", () => {
   const data = {
     nodes: ["a", "b"].map((id) => ({

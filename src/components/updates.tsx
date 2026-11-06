@@ -19,7 +19,7 @@ import { Button } from "./ui/button";
 import { BusinessDialog } from "./ui/dialog";
 type Release = { tag: string; name: string };
 export function Updates() {
-  const nodes = useQuery<NodeData[]>("nodes.list");
+  const nodes = useQuery<NodeData[]>("nodes.summary");
   const user = useQuery<{ role: string }>("users.me");
   const op = useOperation();
   const [releases, setReleases] = useState<Release[]>([]);

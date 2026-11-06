@@ -22,6 +22,16 @@ import { authorize, requireHttps, refreshActor, type Actor } from "../lib/auth";
 import { authorizeTask } from "../lib/services/tasks";
 import { storeDockerLog, storeDockerSnapshot } from "../lib/services/docker";
 import { dockerSnapshotSchema } from "../lib/docker-contracts";
+import {
+  telemetryQueue,
+  telemetryWriter,
+  legacyFrame,
+} from "../lib/services/telemetry";
+import { telemetryFrame } from "../lib/telemetry";
+const telemetryWriters = new WeakMap<
+  WebSocket,
+  ReturnType<typeof telemetryWriter>
+>();
 const connections = new Map<string, WebSocket>();
 const identifiedConnections = new WeakSet<WebSocket>();
 const connectionCredentials = new WeakMap<WebSocket, string>();
@@ -74,6 +84,7 @@ async function connectNodes() {
             await testAgent(bundle);
             if (stopping) return;
             const url = new URL("/v1/connect", bundle.url);
+            url.searchParams.set("telemetry", "2");
             url.protocol = "wss:";
             const ws = new WebSocket(url, {
               ca: bundle.caPem,
@@ -87,7 +98,47 @@ async function connectNodes() {
             let messages = Promise.resolve();
             let pending = 0;
             let identified = false;
+            telemetryWriters.set(
+              ws,
+              telemetryWriter(
+                node.id,
+                () =>
+                  connections.get(node.id) === ws &&
+                  identifiedConnections.has(ws),
+              ),
+            );
+            const metricQueue = telemetryQueue(
+              async (frame) => {
+                await receive(
+                  node.id,
+                  ws,
+                  JSON.stringify({ type: "telemetry", payload: frame }),
+                );
+              },
+              () =>
+                console.error("Node telemetry processing failed", {
+                  nodeId: node.id,
+                }),
+            );
             ws.on("message", (raw) => {
+              if (identified) {
+                try {
+                  const frame = JSON.parse(raw.toString());
+                  if (frame.type === "metrics" || frame.type === "telemetry") {
+                    const parsed =
+                      frame.type === "metrics"
+                        ? legacyFrame(frame.payload)
+                        : telemetryFrame.parse(frame.payload);
+                    metricQueue.push(parsed);
+                    return;
+                  }
+                } catch {
+                  console.error("Invalid node telemetry frame", {
+                    nodeId: node.id,
+                  });
+                  return;
+                }
+              }
               if (++pending > 512) {
                 ws.close(4008, "message rate exceeded");
                 return;
@@ -270,13 +321,6 @@ enrollment.on("upgrade", async (req, socket, head) => {
     socket.destroy();
   }
 });
-const metrics = z
-  .object({
-    cpuPercent: z.number().finite().min(0).max(100),
-    memoryPercent: z.number().finite().min(0).max(100),
-  })
-  .passthrough();
-const lastMetrics = new Map<string, number>();
 async function receive(id: string, ws: WebSocket, raw: string) {
   const p = z
     .object({ type: z.string(), taskId: z.string().optional() })
@@ -295,18 +339,9 @@ async function receive(id: string, ws: WebSocket, raw: string) {
   }
   if (p.type === "heartbeat" || p.type === "metrics")
     await db().node.update({ where: { id }, data: { lastSeenAt: new Date() } });
-  if (p.type === "metrics") {
-    if (Date.now() - (lastMetrics.get(id) ?? 0) < 3000) return;
-    const payload = metrics.parse(p.payload);
-    lastMetrics.set(id, Date.now());
-    await db().metricSample.create({
-      data: {
-        nodeId: id,
-        cpuPercent: payload.cpuPercent,
-        memoryPercent: payload.memoryPercent,
-        payload: payload as never,
-      },
-    });
+  if (p.type === "telemetry") {
+    const frame = telemetryFrame.parse(p.payload);
+    await telemetryWriters.get(ws)?.(frame);
     const meta = z
       .object({
         hostname: z.string().max(255).optional(),
@@ -314,33 +349,10 @@ async function receive(id: string, ws: WebSocket, raw: string) {
         arch: z.string().max(32).optional(),
         agentVersion: z.string().max(64).optional(),
       })
-      .parse(payload);
-    await db().node.update({ where: { id }, data: meta });
-    const containers = payload.containers;
-    if (Array.isArray(containers)) {
-      for (const d of await db().deployment.findMany({
-        where: { nodeId: id, type: "docker", healthUrl: null },
-      })) {
-        const container = containers.find(
-          (c) =>
-            typeof c === "object" &&
-            c !== null &&
-            ((c as Record<string, unknown>).id === d.target ||
-              (c as Record<string, unknown>).name === d.target),
-        );
-        if (container) {
-          const status = String(
-            (container as Record<string, unknown>).state ??
-              (container as Record<string, unknown>).status ??
-              "UNKNOWN",
-          );
-          await db().deployment.update({
-            where: { id: d.id },
-            data: { status },
-          });
-        }
-      }
-    }
+      .parse(frame.data);
+    if (Object.keys(meta).length)
+      await db().node.update({ where: { id }, data: meta });
+    return;
   }
   if (p.type === "task.busy" && p.taskId) {
     // Direct Docker requests share Agent capacity; a rejected legacy task has not begun.

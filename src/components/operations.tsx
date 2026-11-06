@@ -389,7 +389,7 @@ function OperationsForm({
   target: string;
 }) {
   const config = ops[mode];
-  const q = useQuery<NodeData[]>("nodes.list");
+  const q = useQuery<NodeData[]>("nodes.summary");
   const [node, setNode] = useState(requestedNode);
   const [action, setAction] = useState(
     config.actions.some((a) => a.type === requestedAction)
@@ -615,7 +615,7 @@ export function Resources({ mode }: { mode: string }) {
       mode
     ] ?? `${mode}.list`;
   const q = useQuery<GenericRow[]>(method);
-  const nodes = useQuery<NodeData[]>("nodes.list");
+  const nodes = useQuery<NodeData[]>("nodes.summary");
   const probes = useQuery<{ id: string; name: string }[]>(
     mode === "alerts" ? "probes.list" : null,
   );

@@ -22,11 +22,11 @@ Web / MCP / Cron
        │
        ▼
   授权与任务服务 ── PostgreSQL（业务与任务事实）
-       │          └─ Redis（临时协调与限流）
+       │          └─ Redis（会话、实时缓存与协调）
        ▼
  Gateway / Worker
        │
-       │  Agent 主动建立 TLS 连接
+       │  Ops 主动建立 TLS/WSS 连接
        ▼
   Linux 节点上的 Go Agent
 ```

@@ -22,6 +22,8 @@ import { resourceMethodSchemas } from "../resource-contracts";
 import { dockerMethodSchemas, type DockerMethod } from "../docker-contracts";
 import { listReleases, queueUpdate } from "./updates";
 import { metricDetails } from "./metric-details";
+import { getNode, nodeSummary, getSnapshot } from "./telemetry";
+import { numericHistory } from "./telemetry-history";
 import { createTask, validateTask, listTasks, getTask } from "./tasks";
 import { redis } from "../redis";
 import { privateHost } from "../config";
@@ -201,8 +203,26 @@ export async function execute(
         id.parse(p.nodeId),
         p.hours ? z.number().parse(p.hours) : 24,
       );
+    case "nodes.get":
+      return getNode(actor, id.parse(p.nodeId));
+    case "nodes.summary":
+      return nodeSummary(actor);
+    case "nodes.snapshot":
+      return getSnapshot(
+        actor,
+        id.parse(p.nodeId),
+        p.category as string | undefined,
+      );
     case "nodes.history": {
       const data = p as z.infer<(typeof methodSchemas)["nodes.history"]>;
+      if (data.kind === "metric")
+        return numericHistory(
+          actor,
+          data.nodeId,
+          data.metric,
+          data.hours,
+          data.device,
+        );
       return metricDetails(
         actor,
         data.nodeId,
@@ -251,19 +271,7 @@ export async function execute(
           },
         }),
         db().node.count({ where: { ...where, status: "PENDING" } }),
-        db().node.findMany({
-          where,
-          omit: {
-            csrPem: true,
-            certificatePem: true,
-            certificateFingerprint: true,
-            previousCertificateFingerprint: true,
-            agentCredentialRef: true,
-            agentCaPem: true,
-          },
-          take: 50,
-          orderBy: { createdAt: "desc" },
-        }),
+        nodeSummary(actor).then((rows) => rows.slice(0, 50)),
         can(actor, "tasks:read")
           ? db().task.groupBy({
               by: ["status"],
@@ -272,7 +280,7 @@ export async function execute(
             })
           : Promise.resolve([]),
       ]);
-      const latest = await nodes.withLatestMetrics(recent);
+      const latest = recent;
       return {
         total,
         online: approved,

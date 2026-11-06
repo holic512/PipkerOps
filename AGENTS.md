@@ -31,3 +31,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 组件版本
 
 每次提交前按实际影响维护独立版本：Ops 为 `package.json`（同时同步 `package-lock.json`），Agent 为 `agent/VERSION`，部署脚本为 `deploy/VERSION`，PipkerOpsSkill 为 `skills/VERSION`。受影响组件通常递增补丁号；大版本或次版本依用户要求调整。跨组件或共享接口修改时评估并递增所有受影响组件的版本，不修改无关组件版本。
+
+## 会话与节点遥测
+
+浏览器 Session 只通过 `src/lib/session-store.ts` 访问 Redis，禁止重新使用 Prisma Session 或数据库会话夹具。用户角色仍以数据库为准，Redis 故障不得放行。节点列表/选择器使用 nodes.summary，详情使用 nodes.get 和分类 nodes.snapshot；完整 nodes.list 仅保留兼容场景。实时缓存不能作为资源写操作或任务事实依据。指标接收队列仅允许合并遥测，禁止丢弃任务日志、结果与 ACK；新增指标同步维护单位、空值、设备身份及小时聚合契约。

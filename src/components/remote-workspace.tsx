@@ -41,7 +41,7 @@ import {
 type Session = RemoteTarget & { id: string; name: string; url: string };
 
 export function RemoteWorkspace({ visible }: { visible: boolean }) {
-  const q = useQuery<NodeData[]>("nodes.list");
+  const q = useQuery<NodeData[]>("nodes.summary");
   const user = useQuery<{ role: string }>("users.me", {}, 0);
   const search = useSearchParams();
   const router = useRouter();

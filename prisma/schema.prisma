@@ -67,7 +67,6 @@ model User {
   role             Role              @default(VIEWER)
   createdAt        DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
-  sessions         Session[]
   apiKeys          ApiKey[]
   enrollmentTokens EnrollmentToken[]
   approvedNodes    Node[]            @relation("NodeApprover")
@@ -77,18 +76,6 @@ model User {
   schedules        Schedule[]
   notifications    Notification[]
   customActions    CustomAction[]
-}
-
-model Session {
-  id        String   @id @default(cuid())
-  tokenHash String   @unique
-  userId    String
-  expiresAt DateTime @db.Timestamptz(3)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([expiresAt])
 }
 
 model ApiKey {
@@ -171,6 +158,9 @@ model Node {
   enrollmentToken        EnrollmentToken? @relation(fields: [enrollmentTokenId], references: [id], onDelete: SetNull)
   approvedBy             User?            @relation("NodeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   metrics                MetricSample[]
+  telemetry              NodeTelemetry[]
+  telemetrySamples       TelemetrySample[]
+  telemetryHours         TelemetryHourly[]
   hourlyMetrics          MetricHourly[]
   deviceHourlyMetrics    MetricDeviceHourly[]
   deployments            Deployment[]
@@ -194,8 +184,8 @@ model MetricSample {
   nodeId        String
   recordedAt    DateTime @default(now()) @db.Timestamptz(3)
   payload       Json     @default("{}")
-  cpuPercent    Float
-  memoryPercent Float
+  cpuPercent    Float?
+  memoryPercent Float?
   node          Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@id([id, recordedAt])
@@ -203,14 +193,49 @@ model MetricSample {
   @@index([recordedAt], type: Brin)
 }
 
+model NodeTelemetry {
+  nodeId String
+  category String
+  snapshot Json
+  receivedAt DateTime @db.Timestamptz(3)
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  @@id([nodeId, category])
+}
+model TelemetrySample {
+  nodeId String
+  recordedAt DateTime @db.Timestamptz(3)
+  series Json
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  @@id([nodeId, recordedAt])
+  @@index([recordedAt], type: Brin)
+}
+model TelemetryHourly {
+  nodeId String
+  metric String
+  device String
+  unit String
+  bucketAt DateTime @db.Timestamptz(3)
+  sampleCount Int
+  gapCount Int
+  mean Float?
+  maximum Float?
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  @@id([nodeId, metric, device, bucketAt])
+  @@index([bucketAt], type: Brin)
+}
+model TelemetryMaintenance {
+  id Int @id
+  through DateTime? @db.Timestamptz(3)
+}
+
 model MetricHourly {
   nodeId      String
   bucketAt    DateTime @db.Timestamptz(3)
   sampleCount Int
-  cpuAvg      Float
-  cpuMax      Float
-  memoryAvg   Float
-  memoryMax   Float
+  cpuAvg      Float?
+  cpuMax      Float?
+  memoryAvg   Float?
+  memoryMax   Float?
   node        Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@id([nodeId, bucketAt])
