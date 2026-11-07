@@ -36,6 +36,8 @@ type Client struct {
 	taskMu         sync.Mutex
 	updating       bool
 	pendingRestart bool
+	watchMu        sync.RWMutex
+	watches        watchConfig
 }
 
 func lockState(dir string) (*os.File, error) {
@@ -131,7 +133,7 @@ func (c *Client) acceptConnection(ctx context.Context, conn *websocket.Conn, age
 	terminal := newTerminals(c.send)
 	defer terminal.closeAll()
 	go func() { <-connCtx.Done(); conn.Close() }()
-	if err := c.send(Message{Type: "connected", AgentID: agentID}); err != nil {
+	if err := c.send(Message{Type: "connected", AgentID: agentID, Capabilities: []string{"object-history-v1", "process-watches-v1"}}); err != nil {
 		return
 	}
 	if err := c.journal.replay(c.send); err != nil {
@@ -155,6 +157,10 @@ func (c *Client) acceptConnection(ctx context.Context, conn *websocket.Conn, age
 			return
 		}
 		switch message.Type {
+		case "monitoring.configure":
+			if err := c.configureWatches(message.Payload); err != nil {
+				return
+			}
 		case "task":
 			if message.Task == nil {
 				continue

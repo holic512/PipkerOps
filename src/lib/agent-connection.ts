@@ -50,6 +50,7 @@ export type ConnectionBundle = z.infer<typeof connectionBundle>;
 export const agentInfoSchema = z.object({
   agentId: z.string(),
   protocolVersion: z.literal(1),
+  capabilities: z.array(z.string()).optional(),
   name: z.string().max(120),
   hostname: z.string().max(255),
   os: z.string().max(80),

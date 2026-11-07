@@ -18,9 +18,17 @@ import { redis } from "../lib/redis";
 import { runProbe, type ProbeInput } from "../lib/probe";
 import { finishTask } from "../lib/services/results";
 import { createTask } from "../lib/services/tasks";
+import { publishMonitoringAlert } from "../lib/services/monitoring-alerts";
+import { advanceAlert } from "../lib/alert-window";
+import { readSnapshots } from "../lib/services/telemetry";
+import {
+  monitoringObservation,
+  monitoringAlertMetrics,
+  observationValue,
+} from "../lib/monitoring-alerts";
+import type { Snapshot } from "../lib/telemetry";
 import { withLatestMetrics } from "../lib/services/nodes";
 import { authorize, refreshActor } from "../lib/auth";
-import { hashToken } from "../lib/crypto";
 let stopping = false;
 let updateJob: Promise<void> | undefined;
 let backupJob: Promise<void> | undefined;
@@ -45,6 +53,7 @@ function maintainMetrics() {
         async (tx) => {
           await tx.$executeRaw`SET LOCAL statement_timeout = '5min'`;
           await tx.$queryRaw`SELECT pipkerops_maintain_telemetry()`;
+          await tx.$queryRaw`SELECT pipkerops_maintain_object_history()`;
           return tx.$queryRaw<
             { summary: { skipped?: boolean; blockedPartitions?: string[] } }[]
           >`SELECT pipkerops_maintain_metrics() AS summary`;
@@ -333,10 +342,33 @@ async function alerts() {
       node.metrics[0],
     ]),
   );
+  const monitoringNodes = [
+    ...new Set(
+      rules
+        .filter(
+          (r) => r.nodeId && monitoringAlertMetrics.some((m) => m === r.metric),
+        )
+        .map((r) => r.nodeId!),
+    ),
+  ];
+  const monitoringSnapshots = new Map<string, Snapshot[]>();
+  for (const snapshot of await readSnapshots(monitoringNodes)) {
+    const values = monitoringSnapshots.get(snapshot.nodeId) ?? [];
+    values.push(snapshot);
+    monitoringSnapshots.set(snapshot.nodeId, values);
+  }
   for (const rule of rules) {
     let value: number | null = null;
     const node = rule.node;
-    const sample = node ? samples.get(node.id) : undefined;
+    const latest = node ? samples.get(node.id) : undefined;
+    const sample =
+      latest && Date.now() - new Date(latest.recordedAt).getTime() <= 45000
+        ? latest
+        : undefined;
+    let context = "";
+    let observedAt = sample
+      ? new Date(sample.recordedAt).getTime()
+      : Date.now();
     if (rule.metric === "offline" && node)
       value =
         node.status !== "APPROVED" ||
@@ -349,68 +381,25 @@ async function alerts() {
       value = sample.memoryPercent;
     else if (rule.metric === "probeFailure" && rule.probe)
       value = rule.probe.failureCount;
-    const breached =
-      value !== null &&
-      (rule.operator === "lt"
-        ? value < rule.threshold
-        : value > rule.threshold);
-    if (value === null) continue; // Missing telemetry is not evidence of recovery.
-    const key = `pko:alert:${rule.id}`;
-    if (!breached) {
-      await client.del(key + ":since");
-      const fired = await client.getDel(key + ":fired");
-      if (fired)
-        await db().notification.create({
-          data: {
-            alertRuleId: rule.id,
-            title: `${rule.name} 已恢复`,
-            body: "指标已恢复到规则阈值范围。",
-            level: "success",
-          },
-        });
-      continue;
+    else if (node && monitoringAlertMetrics.some((m) => m === rule.metric)) {
+      const observation = monitoringObservation(
+        rule.metric,
+        monitoringSnapshots.get(node.id) ?? [],
+      );
+      value = observationValue(observation, rule.operator, rule.threshold);
+      context = observation.context;
+      observedAt = observation.observedAt ?? Date.now();
     }
-    const since = await client.get(key + ":since");
-    if (!since) {
-      await client.set(key + ":since", String(Date.now()), { EX: 172800 });
-      continue;
-    }
-    if (Date.now() - Number(since) < rule.durationSeconds * 1000) continue;
-    if (!(await client.set(key + ":fired", "1", { NX: true, EX: 86400 })))
-      continue;
-    const message = {
-      title: rule.name,
-      body: `${rule.metric} = ${value}，阈值 ${rule.operator} ${rule.threshold}`,
-      level: "error",
-    };
-    const notification = await db().notification.create({
-      data: { alertRuleId: rule.id, ...message },
-    });
-    if (rule.webhookUrl) {
-      try {
-        const response = await fetch(rule.webhookUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...message, id: notification.id }),
-          redirect: "error",
-          signal: AbortSignal.timeout(5000),
-        });
-        if (!response.ok) throw new Error("webhook status");
-        await response.body?.cancel();
-      } catch {
-        await db().auditEvent.create({
-          data: {
-            action: "alerts.webhook.failed",
-            resourceType: "AlertRule",
-            resourceId: rule.id,
-            detail: {
-              notificationId: notification.id,
-              destinationHash: hashToken(rule.webhookUrl),
-            },
-          },
-        });
-      }
-    }
+    const event = await advanceAlert(
+      client,
+      rule,
+      value,
+      Date.now(),
+      observedAt,
+      context,
+    );
+    if (!event) continue;
+    await publishMonitoringAlert(client, rule, event, value, context);
   }
 }
 async function tick() {

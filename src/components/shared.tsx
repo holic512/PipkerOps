@@ -123,12 +123,12 @@ const states: Record<string, [string, string]> = {
   online: ["在线", "good"],
   offline: ["离线", "bad"],
 };
-export function Status({ value }: { value: string }) {
+export function Status({ value, label }: { value: string; label?: string }) {
   const [text, color] = states[value] ?? [value, "neutral"];
   return (
     <span className={`status status-${color}`}>
       <i />
-      {text}
+      {label ?? text}
     </span>
   );
 }

@@ -30,6 +30,18 @@ func readDeviceIdentities(root string, network, io []string) map[string]map[stri
 	for _, name := range io {
 		base := filepath.Join(root, "sys/class/block", name)
 		sequence := readIdentityFile(filepath.Join(base, "diskseq"))
+		// Partitions inherit the parent disk generation, but keep their own
+		// partition number and start sector. Never infer a parent from its name.
+		partition := readIdentityFile(filepath.Join(base, "partition"))
+		if sequence == "" && partition != "" {
+			if resolved, err := filepath.EvalSymlinks(base); err == nil {
+				parentSequence := readIdentityFile(filepath.Join(filepath.Dir(resolved), "diskseq"))
+				start := readIdentityFile(filepath.Join(resolved, "start"))
+				if parentSequence != "" && start != "" {
+					sequence = parentSequence + ":partition:" + partition + ":" + start
+				}
+			}
+		}
 		if sequence != "" {
 			identities["io"][name] = boot + ":" + sequence
 		}

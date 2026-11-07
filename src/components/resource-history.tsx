@@ -209,6 +209,8 @@ export function ResourceChart({ data }: { data: History }) {
                   fill="none"
                   stroke={colors[i % colors.length]}
                   strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
                 {s.points
                   .filter((p) => p.value !== null)

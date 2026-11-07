@@ -41,3 +41,47 @@ func TestDeviceIdentityChangesAcrossBootAndReplacement(t *testing.T) {
 		t.Fatal("reboot kept old identity")
 	}
 }
+
+func TestPartitionIdentityUsesConfirmedSysfsParent(t *testing.T) {
+	root := t.TempDir()
+	write := func(path, value string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("proc/sys/kernel/random/boot_id", "boot")
+	write("sys/devices/block/vda/diskseq", "10")
+	write("sys/devices/block/vda/vda1/partition", "1")
+	write("sys/devices/block/vda/vda1/start", "2048")
+	class := filepath.Join(root, "sys/class/block")
+	if err := os.MkdirAll(class, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "sys/devices/block/vda/vda1"), filepath.Join(class, "vda1")); err != nil {
+		t.Fatal(err)
+	}
+	read := func() string { return readDeviceIdentities(root, nil, []string{"vda1"})["io"]["vda1"] }
+	first := read()
+	if first != "boot:10:partition:1:2048" {
+		t.Fatalf("partition identity: %q", first)
+	}
+	write("sys/devices/block/vda/diskseq", "11")
+	if read() == first {
+		t.Fatal("parent replacement reused identity")
+	}
+	write("sys/devices/block/vda/vda1/start", "4096")
+	if read() != "boot:11:partition:1:4096" {
+		t.Fatal("partition layout not in identity")
+	}
+	if err := os.Remove(filepath.Join(root, "sys/devices/block/vda/diskseq")); err != nil {
+		t.Fatal(err)
+	}
+	if read() != "" {
+		t.Fatal("guessed identity without parent generation")
+	}
+}

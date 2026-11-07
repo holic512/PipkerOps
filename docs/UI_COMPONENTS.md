@@ -36,7 +36,7 @@ Input / Textarea / NativeSelect 是项目按 shadcn 本地源码方式维护的�
 | `DataTable`              | headers: ReactNode[]、children、label（默认“数据表格”）、className（滚动容器）                                                                       | 自动可键盘聚焦的横向滚动区域、列标题 scope=col。children 写 tr/td；行标题用 th scope=row。复杂表头传 Checkbox 等节点；不内置排序、过滤、分页或虚拟列表                     |
 | `ResourceForm` / `Field` | fields、onSubmit(data)、busy、disabled、submit、id、hideSubmit、children；Field 的 name/label/type/options/defaultValue/required/placeholder/min/max | 非受控简单字段；支持 text/number/textarea/select/json/checkbox/password/email；JSON 解析错误在表单内显示；空字符串字段不提交。复杂联动与文件上传用自定义 form 组合基础控件 |
 | `QueryState`             | loading、error、empty、retry、children、emptyTitle/emptyText                                                                                         | 统一加载、错误、重试和空态；按数据含义填写空态文案                                                                                                                         |
-| `Status`                 | value                                                                                                                                                | 统一状态文字、颜色和圆点，未知值保留原文；不要逐页复制 status-* 徽标逻辑                                                                                                   |
+| `Status`                 | value、label?（覆盖业务文字）                                                                                                                                                | 统一状态文字、颜色和圆点，未知值保留原文；不要逐页复制 status-* 徽标逻辑                                                                                                   |
 | `Feedback`               | value: {message,error?}\|null、onClose                                                                                                               | 固定位置操作反馈，成功 role=status、失败 role=alert；useOperation 已包含它                                                                                                 |
 | `JsonView`               | data                                                                                                                                                 | 只读格式化 JSON，与日志共用代码块主题                                                                                                                                      |
 | `useQuery<T>`            | method\|null、params={}、refreshInterval=15000                                                                                                       | SWR + RPC；null 不请求，0 关闭轮询。加载、错误用 QueryState 呈现                                                                                                           |
@@ -89,6 +89,18 @@ Input / Textarea / NativeSelect 是项目按 shadcn 本地源码方式维护的�
 
 ## 节点监控组合
 
+采集质量 `CollectionQuality` 使用图标/类别/状态、成功时间与耗时、失败原因、处理建议的分层卡片；长错误仅在摘要限制两行，Button 进入采集详情查看完整原因。正常卡片不重复通用排障文案。`Status` 允许可选 `label` 覆盖业务文字，颜色仍由既有 `value` 状态语义决定，未传时保持原有文案。
+
+`ui/chart` 的 `CoreUsageChart` 接收 `cores: {name, value: number|null}[]` 与 `stale`，以每核一行的分段条和精确百分比展示当前采样；小于一个分段的非零读数保留部分填充，缺失/过期不绘制有效占用。保持现有主题颜色，不引入参考图的终端配色。趋势线端点、条形末端、环图扇区及提示框统一适度圆角，趋势仍按真实采样线性连接并保留缺口。
+
+对象历史升级（Ops 0.1.22 / Agent 0.1.7）：`ui/chart` 同时导出 `TrendChart`（series、unit、label）、`StateDonut`（slices、label）、`RankChart`（data、unit、label）。趋势保留 null 断点、单图单单位；排行数轴允许超过100%；状态环始终配文字图例。图形使用 Recharts 与主题 Token，交互入口使用 Button，趋势支持 Recharts 键盘访问。
+
+`monitoring-dashboard` 的 MetricTrend、ProcessRanking、ObjectDistribution、CollectionQuality 组合资源历史和分类快照。`monitoring-workspace` 在七个标签外保存设备、表格筛选及对象选择；`object-history` 的 ObjectActions、ProcessWatches、ObjectHistory 提供准确实例关注、最多5对象比较、日期范围和观察事件分页。返回恢复触发按钮焦点及原筛选。CPU 核心热力图仅当前采样；系统信息继续用信息表。
+
+`@/components/ui/chart` 新增 `ChartContainer` 与 `RingChart`，按 shadcn/ui 的本地源码组合方式接入 Recharts 3.10.1（专用图表库，不是新增 UI 框架）。ChartContainer 统一响应式容器；RingChart 接收 label、value、total=100、composition、muted、danger 与中心 children，使用 Recharts Pie/PieChart 绘制环，不在业务页复制 SVG。颜色来自 chart/border/danger Token，静态图形 inert，外层提供文字等价的可访问名称；查看历史仍由 Button 操作。无效/缺失值只画灰环，0 是有效观测，0/0 为无活动而非占用百分比，超过 100% 仅限制圆弧、保留真实文字。参考 [环图示例](examples/ring-metrics.tsx)。
+
+实时概览 CPU/内存/Swap/容量使用占用环，负载使用归一化百分比；网络和 IO 使用收发/读写占比，中心保留实际速率和单位，不冒充带宽或磁盘性能利用率。`ring-chart.ts` 的计算/速率单位格式化有独立回归。
+
 `@/components/node-monitoring` 导出 NodeMonitoring（nodeId、view）与 NumericHistory（nodeId），组合现有 DataTable、QueryState、NativeSelect 与 ResourceChart。业务视图为实时、设备、进程/连接、服务/容器、系统和诊断；只加载当前分类。`@/components/resource-history` 的 ResourceChart 现支持数值历史单位，不再只将非百分比都解释为 B/s。
 
 `@/components/node-events` 的 useNodeEvents 在 Console 中只挂载一次，SSE 仅触发 SWR 定向刷新；隐藏页面关闭流，返回页面刷新。useQuery 显式关闭后台和离线轮询。监控布局在 globals.css 的 node-monitoring 集中维护，复用现有 Token。
@@ -96,3 +108,11 @@ Input / Textarea / NativeSelect 是项目按 shadcn 本地源码方式维护的�
 节点明细行的身份由 `src/lib/monitoring-rows.ts` 生成：监听端口使用 PID、协议、地址、端口和可用的 fd 组合，不能只使用 PID；指标使用 metric/device，挂载使用 mountpoint。完全相同的重复观测保留并附重复序号，不静默删除。
 
 NodeMonitoring 兼容旧 Agent 的已上报基础指标：实时数值由服务端转换为指标序列；网络和 IO 展示累计计数，速率仍通过资源历史查看；旧进程列表不标为 CPU 排行。旧采样缺失的明细提示升级 Agent 并提供版本更新入口，无采样不能误报为旧 Agent。禁止将累计计数标成瞬时吞吐或用零填充未采集指标。
+
+NodeMonitoring 在各分类上方组合 DataTable 展示采集诊断：当前状态、采样时间、最近完整成功、耗时、错误和截断处理建议；“采集详情”汇总所有分类，JSON 仅为辅助。`src/lib/monitoring-availability.ts` 统一九种指标可用性及原因；无采样、过期、旧 Agent、缺基线、无设备世代身份必须区分，有效零值仍显示零。容器无健康检查或 Compose 归属显示不适用，inspect 失败单独显示原因。已有数值系列允许可选 status/reason，不改变单位、null 或历史聚合含义。
+
+实时概览顶部按所选磁盘、网卡和 IO 设备展示七类资源摘要，明细与诊断位于下方。明细表组合 Input/NativeSelect/Checkbox 支持搜索、排序、设备及异常筛选；只针对已采集范围，不暗示完整进程清单或近期重启频率。`monitoring-explorer.ts` 维护筛选和准确设备历史目标。NodeMonitoring/NumericHistory 可接收受控 historySelection/selection 与更新回调；节点详情持有时间范围、指标及设备，兼容指标之间切换保留设备，跨类别清理无效设备。查看历史使用 Button，定位并聚焦页面下方历史区域；采样缺口和单位继续由现有 ResourceChart 处理。
+
+`@/components/cluster-monitoring` 的 ClusterMonitoring 用于集群总览，读取 nodes.monitoring 的授权紧凑投影，组合 Input、NativeSelect、DataTable、QueryState 和链接 Button。支持节点/标签/异常搜索、状态筛选、资源降序排行；无法确认的指标保留空值。节点详情接受经过白名单校验的 monitor 查询参数及纯文本 context，展示来源上下文并打开对应分类。
+
+监控状态追加约定：进程/网卡的 fieldErrors 用于显示实际字段失败原因；缺基线与其他对象失败隔离。实时概览按使用率 ≥85%、归一化负载 ≥100% 提示偏高。集群长期无采样按实时资源采样判断，CPU/内存排行进入实时概览；持久快照来源与是否过期分别展示，不将缓存回退本身当成指标过期。

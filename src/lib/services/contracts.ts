@@ -9,6 +9,7 @@
  * @author holic512
  */
 import { z } from "zod";
+import { monitoringAlertMetrics } from "../monitoring-alerts";
 import { taskInput, taskSpecs } from "./tasks";
 import { connectionBundle } from "../agent-connection";
 import {
@@ -46,6 +47,7 @@ export const METHODS = [
   "nodes.list",
   "nodes.get",
   "nodes.summary",
+  "nodes.monitoring",
   "nodes.snapshot",
   "nodes.test",
   "nodes.import",
@@ -55,6 +57,10 @@ export const METHODS = [
   "nodes.revoke",
   "nodes.metrics",
   "nodes.history",
+  "nodes.events.list",
+  "nodes.processWatches.list",
+  "nodes.processWatches.save",
+  "nodes.processWatches.delete",
   "nodes.update",
   "nodes.move",
   "nodeFolders.list",
@@ -113,9 +119,13 @@ export const mutation = (method: string) =>
     method,
   ) &&
   !dockerReadMethods.includes(method) &&
-  !["overview", "topology", "nodes.summary", "nodes.snapshot"].includes(
-    method,
-  ) &&
+  ![
+    "overview",
+    "topology",
+    "nodes.summary",
+    "nodes.snapshot",
+    "nodes.monitoring",
+  ].includes(method) &&
   !method.endsWith(".list") &&
   !method.endsWith(".get") &&
   !method.endsWith(".history") &&
@@ -125,6 +135,7 @@ export const methodSchemas = {
   ...resourceMethodSchemas,
   ...dockerMethodSchemas,
   overview: z.object({}),
+  "nodes.monitoring": z.object({}),
   "nodes.list": z.object({}),
   "nodes.get": z.object({ nodeId: id }),
   "nodes.summary": z.object({}),
@@ -165,13 +176,50 @@ export const methodSchemas = {
   }),
   "nodes.history": z.object({
     nodeId: id,
-    kind: z.enum(["disk", "network", "io", "metric"]),
+    kind: z.enum([
+      "disk",
+      "network",
+      "io",
+      "metric",
+      "process",
+      "container",
+      "service",
+      "diagnostics",
+    ]),
     metric: z
       .string()
       .regex(/^[a-zA-Z][a-zA-Z0-9.]{0,79}$/)
       .optional(),
     hours: z.number().min(1).max(8760).default(1),
     device: z.string().min(1).max(200).optional(),
+    objectIds: z.array(z.string().min(1).max(300)).max(5).optional(),
+    from: z.iso.datetime({ offset: true }).optional(),
+    to: z.iso.datetime({ offset: true }).optional(),
+  }),
+  "nodes.events.list": z.object({
+    nodeId: id,
+    kind: z.enum(["process", "container", "service", "diagnostics"]),
+    objectId: z.string().min(1).max(300).optional(),
+    hours: z.number().min(1).max(720).default(1),
+    from: z.iso.datetime({ offset: true }).optional(),
+    to: z.iso.datetime({ offset: true }).optional(),
+    cursor: z
+      .object({
+        recordedAt: z.iso.datetime({ offset: true }),
+        id: z.string().max(100),
+      })
+      .optional(),
+  }),
+  "nodes.processWatches.list": z.object({ nodeId: id }),
+  "nodes.processWatches.save": z.object({
+    nodeId: id,
+    bootId: z.string().min(1).max(100),
+    pid: z.number().int().positive(),
+    startTicks: z.string().regex(/^[0-9]{1,30}$/),
+  }),
+  "nodes.processWatches.delete": z.object({
+    nodeId: id,
+    objectId: z.string().min(1).max(300),
   }),
   "nodes.update": z.object({
     id,
@@ -328,7 +376,13 @@ export const methodSchemas = {
     name: label,
     nodeId: id.optional(),
     probeId: id.optional(),
-    metric: z.enum(["cpuPercent", "memoryPercent", "offline", "probeFailure"]),
+    metric: z.enum([
+      "cpuPercent",
+      "memoryPercent",
+      "offline",
+      "probeFailure",
+      ...monitoringAlertMetrics,
+    ]),
     operator: z.enum(["gt", "lt"]).default("gt"),
     threshold: z.number().finite(),
     durationSeconds: z.number().int().min(0).max(86400).default(60),
@@ -593,6 +647,29 @@ export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
   "nodes.list": z.object({ data: z.array(wireNode) }),
   "nodes.get": z.object({ data: wireNode }),
   "nodes.summary": z.object({ data: z.array(wireNode) }),
+  "nodes.monitoring": z.object({
+    data: z.array(
+      z.object({
+        id,
+        name: z.string(),
+        labels: z.array(z.string()),
+        connected: z.boolean(),
+        lastSampleAt: z.iso.datetime({ offset: true }).nullable(),
+        longMissing: z.boolean(),
+        cpuPercent: z.number().min(0).max(100).nullable(),
+        memoryPercent: z.number().min(0).max(100).nullable(),
+        observations: z.record(
+          z.string(),
+          z.object({
+            value: z.number().finite().nullable(),
+            complete: z.boolean(),
+            context: z.string(),
+          }),
+        ),
+        reasons: z.array(z.string()),
+      }),
+    ),
+  }),
   "nodes.snapshot": z.object({
     data: z.object({
       nodeId: id,
@@ -614,7 +691,84 @@ export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
     ),
   }),
   "nodes.metrics": z.object({ data: wireMetricHistory }),
-  "nodes.history": z.object({ data: wireDeviceHistory }),
+  "nodes.history": z.object({
+    data: z.union([
+      wireDeviceHistory,
+      z.object({
+        kind: z.enum(["process", "container", "service", "diagnostics"]),
+        metric: z.string(),
+        unit: z.string(),
+        bucketSeconds: z.number().positive(),
+        resolution: z.enum(["raw", "aggregate"]),
+        from: wireDate,
+        to: wireDate,
+        coverage: z.string(),
+        reason: z.string(),
+        objects: z.array(object),
+        objectIds: z.array(z.string()).max(5),
+        retention: z.object({
+          rawDays: z.literal(7),
+          aggregateDays: z.literal(30),
+          eventDays: z.literal(30),
+        }),
+        series: z
+          .array(
+            z.object({
+              objectId: z.string(),
+              identity: object,
+              name: z.string(),
+              points: z
+                .array(
+                  z.object({
+                    recordedAt: wireDate,
+                    value: z.number().nullable(),
+                    mean: z.number().nullable(),
+                    maximum: z.number().nullable(),
+                    validCount: z.number().int(),
+                    gapCount: z.number().int(),
+                    bootId: z.string().nullable(),
+                  }),
+                )
+                .max(1440),
+            }),
+          )
+          .max(5),
+      }),
+    ]),
+  }),
+  "nodes.events.list": z.object({
+    data: z.object({
+      events: z.array(object).max(100),
+      nextCursor: z.object({ recordedAt: wireDate, id: z.string() }).nullable(),
+      from: wireDate,
+      to: wireDate,
+      semantics: z.string(),
+    }),
+  }),
+  "nodes.processWatches.list": z.object({
+    data: z.object({
+      revision: z.number().int(),
+      ackRevision: z.number().int(),
+      ackedAt: wireDate.nullable(),
+      watches: z.array(object).max(20),
+    }),
+  }),
+  "nodes.processWatches.save": z.object({
+    data: z.object({
+      revision: z.number().int(),
+      ackRevision: z.number().int(),
+      ackedAt: wireDate.nullable(),
+      watches: z.array(object).max(20),
+    }),
+  }),
+  "nodes.processWatches.delete": z.object({
+    data: z.object({
+      revision: z.number().int(),
+      ackRevision: z.number().int(),
+      ackedAt: wireDate.nullable(),
+      watches: z.array(object).max(20),
+    }),
+  }),
   "applications.list": z.object({ data: z.array(wireApplication) }),
   "tasks.create": z.object({ data: wireTask }),
   "tasks.get": z.object({

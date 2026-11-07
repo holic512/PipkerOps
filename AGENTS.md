@@ -20,6 +20,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 弹窗和确认用 `BusinessDialog` / `ConfirmDialog`；操作沿用 `useOperation`，保留忙碌保护、同框核对和焦点恢复。普通标签视图用 `ViewTabs`；筛选浮层用 `Popover`；动作菜单用 `DropdownMenu`。业务层不得直接导入 Radix 自建基础交互。
 - 原生 HTML 用于 `main/section/form/label/fieldset` 等语义结构。禁止用原生交互控件或 `div role="button/dialog/menu"` 复制已有能力。确有业务布局需要的资源卡片、树拖拽/展开、终端多面板选择等原生按钮，须逐个填写 `data-ui-native="具体理由"`，审查时核对理由；不得为普通按钮申请例外，也不得用 ESLint disable 批量绕过约束。
 - 颜色、字体、尺寸来自 `src/app/tokens.css`；公共组件外观在 `globals.css` 集中维护，Tailwind 仅使用语义颜色及既有布局。禁止业务色板、任意色值、逐页暗色覆盖；主题只用 `ThemeProvider/useTheme`。树缩进、图表坐标、指标宽度等数据布局可以动态计算。
+- 实时概览环图复用 `@/components/ui/chart` 的 `RingChart`，底层使用已安装的 Recharts；百分比、归一化负载、收发/读写占比须标明不同口径，缺失值不绘制有效占用圆弧。通用图表容器使用同模块的 `ChartContainer`，颜色沿用主题 Token。
+- 节点趋势、排行和状态组成复用同模块的 `TrendChart` / `RankChart` / `StateDonut`。对象历史使用完整实例身份；跨标签上下文由 `MonitoringWorkspace` 保存，历史返回恢复筛选及焦点。状态事件表示采样观察，未覆盖及断采样不得补零或推断恢复。
+- CPU 各核当前采样复用 `ui/chart` 的 `CoreUsageChart` 分段条，保持每核名称、精确百分比及缺失/过期文字；小占用保留部分段填充，不取整为零。监控圆角与颜色继续使用现有主题 Token。
 - 不引入第二套 UI 框架或 CSS-in-JS 方案。不为了“组件齐全”预装日历、抽屉等；出现真实需求时先评估组合，再按现有 Radix/shadcn 路线补齐，并补文档与验证。
 
 交付前执行 `npm run lint`、`npm run check`、相关测试；公共组件变化执行构建，并查看代表页面的亮/暗主题、窄屏与键盘交互。现有 CI 会执行 ESLint 组件规则及其回归测试；遇到违规应修复组件选择，不增加全局豁免。审查清单见组件索引末尾。

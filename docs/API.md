@@ -195,6 +195,7 @@ Worker 在实际执行前重新校验创建者权限。备份超时、失败或�
 | --- | --- | --- |
 | nodes.get | nodeId | 单节点安全元数据、连接状态，metrics 为空数组；不读取全量节点 |
 | nodes.summary | {} | 授权节点与紧凑 CPU/内存摘要；stale 表示过期/回退，payload 不携带清单 |
+| nodes.monitoring | {} | 仅授权节点的集群监控投影：CPU/内存、最高容量/inode、服务/容器异常、最近采样、长期无采样和异常上下文；不返回完整清单 |
 | nodes.snapshot | nodeId,category? | 分类快照及合并 payload；category 为 fast/disks/details/static/legacy，分类有 sampledAt/receivedAt/durationMs/errors/truncated/stale |
 | nodes.history | nodeId,kind:metric,metric,hours(1–8760),device? | 新数值历史，设备选择、unit、bucketSeconds、series；metric 如 cpu.iowait、load.1、swap.in、disk.inodePercent、network.recvPackets、io.readIOPS、io.readLatency |
 
@@ -203,3 +204,23 @@ Worker 在实际执行前重新校验创建者权限。备份超时、失败或�
 旧 Agent 的 `metrics` 帧及已持久化旧快照在读取时兼容转换已上报的基础数值为 `series`，保留 `legacy` 分类和原始 payload。新接收的旧采样同时写入数值历史；已有历史不自动回填。缺失/无效值不转为零，单次网络/IO 累计计数不转换为速率。CPU 各核、负载、Swap 和详细系统信息需节点实际运行支持 v2 的 Agent（0.1.5 起），Gateway 连接通过 `telemetry=2` 协商；仅更新 Ops 或版本文件不会升级远端 Agent。
 
 `GET /api/nodes/events` 是同源 SSE 变更通知，复用 Cookie/Bearer 鉴权，按节点范围过滤，每 5 秒复核会话和当前角色；退出后关闭。`nodes` 事件仅包含 nodeId，客户端重新查询；ready/重连时全量刷新，15 秒轮询兜底，不依赖 Pub/Sub 保存事件历史。
+
+
+### 节点监控告警指标
+
+`alerts.save.metric` 新增 `diskPercent` / `inodePercent`（所有已观察文件系统的最高百分比）、`collectionFailure`（过期/失败/未采样的采集类别数）、`serviceFailure`（失败服务数）、`containerFailure`（不健康、dead/restarting、累计重启≥3 的容器数）。这些指标选择 nodeId，不选择 probeId；持续时间与阈值契约沿用现有规则。部分采集只能证明已观察到的异常，不能证明恢复；缺采样会中断未触发窗口的持续计时，已触发事件保留直到有效采样证明恢复。恢复消息与触发消息均写入通知并发送到规则配置的 HTTPS Webhook。
+
+告警窗口通过 Redis Lua 原子评估；通知使用稳定事件 ID 幂等落库，数据库写入失败后可重新认领。Webhook 请求中的 id 是事件身份，发送后、确认前进程退出时可能重试，接收方须按 id 幂等处理。首次迁移保留旧版已触发状态，规则版本变化重置当前评估窗口；缺采样不产生恢复事件。
+
+监控时间约定：应用 PostgreSQL 连接固定 UTC 会话，服务器默认时区不变。nodes.monitoring.lastSampleAt 指实时资源 fast/legacy 的最近采样或最近资源历史回退，不由静态清单更新推进；longMissing 按该资源采样超过 5 分钟或从未采样计算。nodes.snapshot 的 stale 按连接状态、采样及接收时间判断，分类 cacheFallback 仅说明持久快照来源，不单独表示过期。nodes.summary 的粗粒度回退提示保持兼容。
+# 对象监控历史（Ops 0.1.22 / Agent 0.1.7）
+
+兼容扩展 `nodes.history` 的 kind：`process`、`container`、`service`、`diagnostics`。参数包含 nodeId、metric、hours（对象最多720小时）、可选 ISO from/to（最多30天窗口）、objectIds（最多5个）。返回 unit、bucketSeconds、resolution、对象 identity、coverage/reason、retention 和 series；每对象最多1440点，点含 value、mean、maximum、validCount、gapCount、bootId。value 在缺口或跨启动分段时为 null。CPU 按单核计算，不限制100%。容器速率使用完整ID、bootId与startedAt重建基线。
+
+`nodes.events.list`：nodeId、kind、可选准确 objectId、hours/from/to、cursor {recordedAt,id}；返回 events、nextCursor、固定查询范围和采样观察语义，每页100条。分页后应沿用首请求的 from/to。
+
+`nodes.processWatches.list` 使用 nodes:read；save/delete 使用 nodes:write 并审计。save 必须提交 bootId、正整数pid、字符串startTicks，并在当前有效采样中匹配；delete 提交 objectId。每节点共享20个额度，返回 revision、ackRevision、ackedAt 和 watches。确认退出或PID身份改变后自动结束关注；榜外和权限失败不会结束关注。
+
+Agent `connected` 和 `/v1/info` 可选 capabilities 包含 object-history-v1、process-watches-v1。v2帧 data 可选 historyVersion=1、processHistory（CPU Top20∪内存Top20∪关注，最多60）、watchResults、watchRevision，实时Top80边界保留。`monitoring.configure` 下发 revision/watches；`monitoring.configure.ack` 走可靠消息串行处理，每30秒重发核对，连接与变更时同步。旧Agent没有这些字段时显示需要升级。
+
+新增 MonitoringSample / MonitoringAggregate / MonitoringEvent 独立存储，UTC每日分区，原始7天、5分钟聚合与事件30天。dirty bucket、维护水位及事务保证先聚合后清理；资源历史保留策略不变。数据库兼容迁移必须先于 Ops 发布。

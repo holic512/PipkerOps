@@ -1,4 +1,6 @@
 /** Authorized lightweight node queries and durable/current telemetry storage. */
+import { clusterProjection } from "../cluster-monitoring";
+import { storeObjectFrame } from "./object-monitoring";
 import { db } from "../db";
 import { redis, redisCall } from "../redis";
 import { authorize, ApiError, nodeFilter, type Actor } from "../auth";
@@ -139,7 +141,7 @@ export async function getSnapshot(
     connected: node.connected,
     categories: values.map((value) => ({
       ...value,
-      stale: !node.connected || value.cacheFallback || !snapshotFresh(value),
+      stale: !node.connected || !snapshotFresh(value),
     })),
     payload: Object.assign({}, ...values.map((s) => s.data)),
     legacy: values.length > 0 && values.every((s) => s.category === "legacy"),
@@ -265,10 +267,17 @@ export function telemetryWriter(nodeId: string, valid: () => boolean) {
         ],
       };
     }
+    // Retain the last fully successful collection across reconnects/restarts.
+    const persisted =
+      previous ?? (await readSnapshots([nodeId], frame.category))[0];
+    if (persisted && Date.parse(frame.sampledAt) <= Date.parse(persisted.sampledAt)) return;
     const snapshot: Snapshot = {
       ...frame,
       receivedAt: new Date().toISOString(),
+      lastSuccessAt:
+        frame.errors.length === 0 ? frame.sampledAt : persisted?.lastSuccessAt,
     };
+    await storeObjectFrame(nodeId, frame);
     latest.set(frame.category, snapshot);
     await db()
       .$executeRaw`INSERT INTO "NodeTelemetry" ("nodeId",category,snapshot,"receivedAt") VALUES (${nodeId},${frame.category},${JSON.stringify(snapshot)}::jsonb,${new Date(snapshot.receivedAt)}) ON CONFLICT ("nodeId",category) DO UPDATE SET snapshot=EXCLUDED.snapshot,"receivedAt"=EXCLUDED."receivedAt" WHERE "NodeTelemetry"."receivedAt"<=EXCLUDED."receivedAt"`;
@@ -368,4 +377,20 @@ export function legacyFrame(payload: Record<string, unknown>): TelemetryFrame {
       ? payload.collectionErrors
       : [],
   });
+}
+
+/** Cross-node diagnostics remain an authorized compact projection. */
+export async function nodeMonitoring(actor: Actor) {
+  const nodes = await nodeSummary(actor);
+  const snapshots = await readSnapshots(nodes.map((n) => n.id));
+  const byNode = new Map<string, Snapshot[]>();
+  for (const s of snapshots) {
+    const values = byNode.get(s.nodeId) ?? [];
+    values.push(s);
+    byNode.set(s.nodeId, values);
+  }
+  const now = Date.now();
+  return nodes.map((node) =>
+    clusterProjection(node, byNode.get(node.id) ?? [], now),
+  );
 }

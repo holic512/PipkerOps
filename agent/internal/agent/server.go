@@ -83,7 +83,7 @@ func (c *Client) handler(ctx context.Context, identity *identityStore) http.Hand
 			c.handleDocker(ctx, w, r)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/info":
 			host, _ := os.Hostname()
-			writeJSON(w, map[string]any{"agentId": identity.connection().AgentID, "name": c.config.Name, "hostname": host, "os": runtime.GOOS, "arch": runtime.GOARCH, "agentVersion": Version, "protocolVersion": 1, "deployRoot": c.config.DeployRoot})
+			writeJSON(w, map[string]any{"agentId": identity.connection().AgentID, "name": c.config.Name, "hostname": host, "os": runtime.GOOS, "arch": runtime.GOARCH, "agentVersion": Version, "protocolVersion": 1, "deployRoot": c.config.DeployRoot, "capabilities": []string{"object-history-v1", "process-watches-v1"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/installation":
 			root, err := c.executor.installationRoot(r.URL.Query().Get("root"), "")
 			if err != nil {

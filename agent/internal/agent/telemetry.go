@@ -30,6 +30,8 @@ type metricPoint struct {
 	Device string   `json:"device"`
 	Unit   string   `json:"unit"`
 	Value  *float64 `json:"value"`
+	Status string   `json:"status,omitempty"`
+	Reason string   `json:"reason,omitempty"`
 }
 type telemetry struct {
 	SchemaVersion int            `json:"schemaVersion"`
@@ -46,7 +48,7 @@ type telemetry struct {
 
 func (t *telemetry) point(metric, device, unit string, value float64) {
 	if !math.IsNaN(value) && !math.IsInf(value, 0) {
-		t.Series = append(t.Series, metricPoint{metric, device, unit, &value})
+		t.Series = append(t.Series, metricPoint{Metric: metric, Device: device, Unit: unit, Value: &value})
 	}
 }
 func (t *telemetry) failure(name string, err error) {
@@ -59,12 +61,15 @@ type counterSample struct {
 	identity string
 }
 type telemetryCollector struct {
-	previous map[string]counterSample
-	cpu      map[string]cpu.TimesStat
+	previous          map[string]counterSample
+	cpu               map[string]cpu.TimesStat
+	bootID            string
+	watchConfig       func() watchConfig
+	containerPrevious map[string]counterSample
 }
 
 func newTelemetryCollector() *telemetryCollector {
-	return &telemetryCollector{previous: map[string]counterSample{}, cpu: map[string]cpu.TimesStat{}}
+	return &telemetryCollector{previous: map[string]counterSample{}, containerPrevious: map[string]counterSample{}, cpu: map[string]cpu.TimesStat{}, bootID: readIdentityFile("/proc/sys/kernel/random/boot_id")}
 }
 
 // Counter resets, replaced devices and missing identities never produce a rate.
@@ -80,7 +85,14 @@ func (c *telemetryCollector) rate(key, identity string, value float64, at time.T
 }
 func (c *telemetryCollector) counter(t *telemetry, metric, device, unit, identity string, value float64, at time.Time) *float64 {
 	v := c.rate(metric+":"+device, identity, value, at)
-	t.Series = append(t.Series, metricPoint{metric, device, unit, v})
+	p := metricPoint{Metric: metric, Device: device, Unit: unit, Value: v}
+	if v == nil {
+		p.Status, p.Reason = "waiting_baseline", "需要同一设备的两个连续有效计数；重启、重置或采样中断后重新建立基线"
+		if identity == "" {
+			p.Status, p.Reason = "unsupported", "无法读取设备世代身份；检查 boot_id、sysfs 和内核 diskseq 支持"
+		}
+	}
+	t.Series = append(t.Series, p)
 	return v
 }
 func newTelemetry(category string) telemetry {
@@ -103,6 +115,10 @@ func (c *telemetryCollector) collect(ctx context.Context, category string) telem
 	if ctx.Err() != nil {
 		t.failure(category, ctx.Err())
 	}
+	if len(t.Errors) > 200 {
+		t.Errors = t.Errors[:200]
+		t.Truncated = true
+	}
 	return t
 }
 func cpuTotal(v cpu.TimesStat) float64 {
@@ -123,6 +139,11 @@ func (c *telemetryCollector) fast(ctx context.Context, t *telemetry) {
 			c.cpu[v.CPU] = v
 			total := cpuTotal(v) - cpuTotal(old)
 			if !ok || total <= 0 {
+				if !perCPU {
+					for _, metric := range []string{"total", "user", "system", "idle", "iowait", "steal"} {
+						t.Series = append(t.Series, metricPoint{Metric: "cpu." + metric, Unit: "%", Status: "waiting_baseline", Reason: "CPU 使用率需要两个连续有效计数"})
+					}
+				}
 				continue
 			}
 			fields := map[string]float64{"user": v.User - old.User, "system": v.System - old.System, "idle": v.Idle - old.Idle, "iowait": v.Iowait - old.Iowait, "steal": v.Steal - old.Steal}
@@ -252,6 +273,29 @@ func (c *telemetryCollector) fast(ctx context.Context, t *telemetry) {
 			queueDepth = &x
 			t.point("io.queue", name, "", x)
 		}
+		status, reason := "waiting_baseline", "需要同一设备的两个连续有效计数"
+		if identity == "" {
+			status, reason = "unsupported", "无法读取设备世代身份；检查 boot_id、sysfs 和内核 diskseq 支持"
+		}
+		for _, missing := range []struct {
+			metric, unit string
+			value        *float64
+			idle         bool
+		}{
+			{"io.readLatency", "ms", readLatency, reads != nil && *reads == 0},
+			{"io.writeLatency", "ms", writeLatency, writes != nil && *writes == 0},
+			{"io.util", "%", utilPercent, false},
+			{"io.queue", "", queueDepth, false},
+		} {
+			if missing.value != nil {
+				continue
+			}
+			p := metricPoint{Metric: missing.metric, Device: name, Unit: missing.unit, Status: status, Reason: reason}
+			if missing.idle {
+				p.Status, p.Reason = "not_applicable", "采样期间没有对应 IO 操作，无法计算平均延迟"
+			}
+			t.Series = append(t.Series, p)
+		}
 		ioRates = append(ioRates, map[string]any{"name": name, "readPerSecond": read, "writePerSecond": write, "readIOPS": reads, "writeIOPS": writes, "readLatency": readLatency, "writeLatency": writeLatency, "utilPercent": utilPercent, "queueDepth": queueDepth})
 	}
 	t.Data["io"] = ioValues
@@ -283,6 +327,7 @@ func (c *telemetryCollector) disks(ctx context.Context, t *telemetry) {
 		v, e := disk.UsageWithContext(ctx, p.Mountpoint)
 		if e != nil {
 			t.failure(p.Mountpoint, e)
+			values = append(values, map[string]any{"device": p.Device, "mountpoint": p.Mountpoint, "fstype": p.Fstype, "collectionError": e.Error()})
 			continue
 		}
 		var freeBytes any
@@ -332,10 +377,23 @@ func (c *telemetryCollector) static(ctx context.Context, t *telemetry) {
 		links := []map[string]any{}
 		for _, iface := range v {
 			var speed any
-			if n, err := strconv.ParseInt(readIdentityFile("/sys/class/net/"+iface.Name+"/speed"), 10, 64); err == nil && n > 0 {
+			failures := map[string]string{}
+			speedRaw, speedErr := os.ReadFile("/sys/class/net/" + iface.Name + "/speed")
+			if speedErr != nil {
+				failures["speedMbps"] = speedErr.Error()
+			} else if n, err := strconv.ParseInt(strings.TrimSpace(string(speedRaw)), 10, 64); err == nil && n > 0 {
 				speed = n
+			} else {
+				failures["speedMbps"] = "not supported: network driver does not expose link speed"
 			}
-			links = append(links, map[string]any{"name": iface.Name, "state": readIdentityFile("/sys/class/net/" + iface.Name + "/operstate"), "speedMbps": speed})
+			stateRaw, stateErr := os.ReadFile("/sys/class/net/" + iface.Name + "/operstate")
+			var state any
+			if stateErr != nil {
+				failures["state"] = stateErr.Error()
+			} else {
+				state = strings.TrimSpace(string(stateRaw))
+			}
+			links = append(links, map[string]any{"name": iface.Name, "state": state, "speedMbps": speed, "fieldErrors": failures})
 		}
 		t.Data["links"] = links
 	} else {
@@ -349,12 +407,33 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 		return
 	}
 	t.Data["processCount"] = len(ids)
+	config := watchConfig{}
+	if c.watchConfig != nil {
+		config = c.watchConfig()
+	}
+	t.Data["watchRevision"] = config.Revision
+	if len(ids) > 5000 {
+		ids = ids[:5000]
+		t.Truncated = true
+	}
+	seenIDs := map[int32]bool{}
+	for _, id := range ids {
+		seenIDs[id] = true
+	}
+	for _, watch := range config.Watches {
+		if !seenIDs[watch.PID] {
+			ids = append(ids, watch.PID)
+			seenIDs[watch.PID] = true
+		}
+	}
 	states := map[string]int{}
 	values := []map[string]any{}
 	at := time.Now()
 	seen := map[string]bool{}
-	for i, id := range ids {
-		if i >= 5000 || ctx.Err() != nil {
+	partialProcesses := 0
+	firstFieldError := ""
+	for _, id := range ids {
+		if ctx.Err() != nil {
 			t.Truncated = true
 			break
 		}
@@ -362,13 +441,14 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 		if err != nil {
 			continue
 		}
-		name, _ := p.NameWithContext(ctx)
-		created, e := p.CreateTimeWithContext(ctx)
+		name, nameErr := p.NameWithContext(ctx)
+		startTicks, e := processStartTicks("/proc", id)
 		identity := ""
-		if e == nil {
-			identity = fmt.Sprintf("%d:%d", id, created)
+		if e == nil && c.bootID != "" {
+			identity = fmt.Sprintf("%s:%d:%s", c.bootID, id, startTicks)
 		}
 		cpuValue := (*float64)(nil)
+		var cpuErr error
 		if times, e := p.TimesWithContext(ctx); e == nil {
 			key := fmt.Sprintf("process:%d", id)
 			cpuValue = c.rate(key, identity, times.User+times.System, at)
@@ -377,6 +457,11 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 				v := *cpuValue * 100
 				cpuValue = &v
 			}
+		} else {
+			cpuErr = e
+		}
+		if e != nil {
+			cpuErr = e
 		}
 		memory, memoryErr := p.MemoryInfoWithContext(ctx)
 		threads, threadErr := p.NumThreadsWithContext(ctx)
@@ -387,7 +472,23 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 				states[s]++
 			}
 		}
-		value := map[string]any{"pid": id, "name": name, "cpuPercent": cpuValue}
+		failures := map[string]string{}
+		record := func(key string, err error) {
+			if err != nil {
+				failures[key] = err.Error()
+				if firstFieldError == "" {
+					firstFieldError = key + ": " + err.Error()
+				}
+			}
+		}
+		record("name", nameErr)
+		record("cpuPercent", cpuErr)
+		record("threads", threadErr)
+		record("user", userErr)
+		record("status", statusErr)
+		record("rss", memoryErr)
+		record("vms", memoryErr)
+		value := map[string]any{"pid": id, "name": name, "cpuPercent": cpuValue, "fieldErrors": failures, "bootId": c.bootID, "startTicks": startTicks, "objectId": identity}
 		if threadErr == nil {
 			value["threads"] = threads
 		}
@@ -403,9 +504,29 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 		}
 		if v, e := p.MemoryPercentWithContext(ctx); e == nil {
 			value["memoryPercent"] = v
+		} else {
+			record("memoryPercent", e)
 		}
 		if v, e := p.IOCountersWithContext(ctx); e == nil {
 			value["io"] = v
+			for key, count := range map[string]uint64{"readRate": v.ReadBytes, "writeRate": v.WriteBytes} {
+				counterKey := fmt.Sprintf("process:%d:%s", id, key)
+				old := c.previous[counterKey]
+				value[key] = c.rate(counterKey, identity, float64(count), at)
+				seen[counterKey] = true
+				if !old.at.IsZero() && at.Sub(old.at) > 0 && at.Sub(old.at) <= 120*time.Second {
+					value["intervalMs"] = float64(at.Sub(old.at).Milliseconds())
+				}
+			}
+		} else {
+			record("io", e)
+		}
+		if len(failures) > 0 {
+			partialProcesses++
+		}
+		// Re-read stat after all fields to reject PID reuse during collection.
+		if confirmed, err := processStartTicks("/proc", id); identity != "" && (err != nil || confirmed != startTicks) {
+			continue
 		}
 		values = append(values, value)
 	}
@@ -438,11 +559,30 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 	if len(memoryTop) > 80 {
 		memoryTop = memoryTop[:80]
 	}
+	if partialProcesses > 0 {
+		t.failure("processes", fmt.Errorf("%d processes have unavailable fields; first: %s", partialProcesses, firstFieldError))
+	}
+	t.Data["processPartial"] = partialProcesses
 	t.Data["processes"] = cpuTop
 	t.Data["memoryTop"] = memoryTop
 	t.Data["processStates"] = states
 	t.Data["processSampled"] = len(values)
 	t.Data["processLimit"] = 80
+	t.Data["processHistory"] = processHistoryRows(cpuTop, memoryTop, values, config.Watches)
+	watchResults := []map[string]any{}
+	for _, watch := range config.Watches {
+		status := "not_covered"
+		ticks, err := processStartTicks("/proc", watch.PID)
+		if (c.bootID != "" && watch.BootID != c.bootID) || (err == nil && ticks != watch.StartTicks) {
+			status = "identity_changed"
+		} else if os.IsNotExist(err) {
+			status = "exited"
+		} else if err == nil {
+			status = "present"
+		}
+		watchResults = append(watchResults, map[string]any{"objectId": watch.ObjectID, "bootId": watch.BootID, "pid": watch.PID, "startTicks": watch.StartTicks, "status": status})
+	}
+	t.Data["watchResults"] = watchResults
 }
 func collectConnections(ctx context.Context, t *telemetry) {
 	values, err := gnet.ConnectionsMaxWithContext(ctx, "inet", 2048)
@@ -498,21 +638,11 @@ func collectContainers(ctx context.Context, t *telemetry) {
 		}
 	}
 	if len(ids) > 0 {
-		args := append([]string{"inspect", "--format", `{"id":{{json .Id}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}"none"{{end}},"restartCount":{{.RestartCount}},"composeProject":{{json (index .Config.Labels "com.docker.compose.project")}},"composeService":{{json (index .Config.Labels "com.docker.compose.service")}}}`}, ids...)
-		if out, e := runCommand(ctx, nil, "docker", args...); e == nil {
-			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-				var raw map[string]any
-				if json.Unmarshal([]byte(line), &raw) == nil {
-					if v := byID[fmt.Sprint(raw["id"])]; v != nil {
-						for k, x := range raw {
-							v[k] = x
-						}
-					}
-				}
-			}
-		} else {
-			t.failure("dockerInspect", e)
-		}
+		// Serialize State as a whole: .State.Health is absent for containers
+		// without a healthcheck and direct template lookup can fail the batch.
+		args := append([]string{"inspect", "--format", `{"id":{{json .Id}},"state":{{json .State}},"restartCount":{{json .RestartCount}},"labels":{{json .Config.Labels}}}`}, ids...)
+		out, stderr, inspectErr := runCommandOutput(ctx, nil, "docker", args...)
+		mergeContainerInspect(t, byID, out, stderr, inspectErr)
 		running := []string{}
 		for _, v := range values {
 			if v["state"] == "running" {
@@ -521,17 +651,31 @@ func collectContainers(ctx context.Context, t *telemetry) {
 		}
 		if len(running) > 0 {
 			args = append([]string{"stats", "--no-stream", "--no-trunc", "--format", "{{json .}}"}, running...)
-			if out, e := runCommand(ctx, nil, "docker", args...); e == nil {
-				for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-					var raw map[string]any
-					if json.Unmarshal([]byte(line), &raw) == nil {
-						if v := byID[fmt.Sprint(raw["ID"])]; v != nil {
-							v["stats"] = raw
-						}
+			out, stderr, statsErr := runCommandOutput(ctx, nil, "docker", args...)
+			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+				var raw map[string]any
+				if json.Unmarshal([]byte(line), &raw) == nil {
+					if v := byID[fmt.Sprint(raw["ID"])]; v != nil {
+						v["stats"] = raw
 					}
 				}
-			} else {
-				t.failure("dockerStats", e)
+			}
+			for _, id := range running {
+				if byID[id]["stats"] != nil {
+					continue
+				}
+				reason := "stats returned no valid record"
+				if statsErr != nil {
+					reason = statsErr.Error()
+				}
+				if stderr != "" {
+					reason += ": " + strings.TrimSpace(stderr)
+				}
+				if len(reason) > 1000 {
+					reason = reason[:1000]
+				}
+				byID[id]["statsError"] = reason
+				t.failure("dockerStats "+id, fmt.Errorf("%s", reason))
 			}
 		}
 	}
@@ -542,6 +686,59 @@ func collectContainers(ctx context.Context, t *telemetry) {
 	}
 	t.Data["containerStates"] = counts
 }
+
+// Docker can return valid stdout for survivors alongside a nonzero exit for a
+// removed container. Preserve every valid object and report only missing ones.
+func mergeContainerInspect(t *telemetry, byID map[string]map[string]any, output, stderr string, commandErr error) {
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		var raw struct {
+			ID    string `json:"id"`
+			State struct {
+				Health    *struct{ Status string }
+				StartedAt string
+			} `json:"state"`
+			RestartCount *int              `json:"restartCount"`
+			Labels       map[string]string `json:"labels"`
+		}
+		if json.Unmarshal([]byte(line), &raw) != nil {
+			continue
+		}
+		v := byID[raw.ID]
+		if v == nil {
+			continue
+		}
+		seen[raw.ID] = true
+		v["startedAt"] = raw.State.StartedAt
+		v["health"] = "none"
+		if raw.State.Health != nil {
+			v["health"] = raw.State.Health.Status
+		}
+		if raw.RestartCount != nil {
+			v["restartCount"] = *raw.RestartCount
+		}
+		v["composeProject"] = raw.Labels["com.docker.compose.project"]
+		v["composeService"] = raw.Labels["com.docker.compose.service"]
+	}
+	for id, v := range byID {
+		if seen[id] {
+			continue
+		}
+		reason := "inspect returned no valid record"
+		if commandErr != nil {
+			reason = commandErr.Error()
+		}
+		if stderr != "" {
+			reason += ": " + strings.TrimSpace(stderr)
+		}
+		if len(reason) > 1000 {
+			reason = reason[:1000]
+		}
+		v["inspectError"] = reason
+		t.failure("dockerInspect "+id, fmt.Errorf("%s", reason))
+	}
+}
+
 func (c *telemetryCollector) details(ctx context.Context, t *telemetry) {
 	type result struct {
 		category string
@@ -581,6 +778,7 @@ func (c *telemetryCollector) details(ctx context.Context, t *telemetry) {
 				}
 			case "containers":
 				collectContainers(child, &part)
+				c.containerMetrics(&part)
 			}
 			if child.Err() != nil {
 				part.failure(name, child.Err())
@@ -627,6 +825,7 @@ func (c *Client) monitorV2(ctx context.Context, conn *websocket.Conn) {
 	}{{"fast", 5 * time.Second, 3 * time.Second}, {"disks", 15 * time.Second, 5 * time.Second}, {"details", 30 * time.Second, 8 * time.Second}, {"static", 10 * time.Minute, 5 * time.Second}} {
 		go func(name string, period, limit time.Duration) {
 			collector := newTelemetryCollector()
+			collector.watchConfig = c.currentWatches
 			ticker := time.NewTicker(period)
 			defer ticker.Stop()
 			var sequence uint64
@@ -643,6 +842,7 @@ func (c *Client) monitorV2(ctx context.Context, conn *websocket.Conn) {
 				sequence++
 				frame.BootID = boot
 				frame.Sequence = sequence
+				frame.Data["historyVersion"] = 1
 				if err := send(Message{Type: "telemetry", Payload: frame}); err != nil {
 					return
 				}

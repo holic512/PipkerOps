@@ -11,6 +11,8 @@
 "use client";
 import { NativeSelect } from "@/components/ui/native-select";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { ClusterMonitoring } from "./cluster-monitoring";
 import { useState, type ReactNode } from "react";
 import {
   Server,
@@ -43,6 +45,8 @@ import { ViewTabs } from "./ui/tabs";
 import { NodeEditor, NodeLabels } from "./node-editor";
 import { folderPath } from "@/lib/node-tree";
 import { NodeMonitoring } from "./node-monitoring";
+import { MonitoringWorkspace } from "./monitoring-workspace";
+import type { HistorySelection } from "@/lib/monitoring-explorer";
 const online = (node: NodeData) => node.connected;
 export function Overview() {
   const q = useQuery<{
@@ -111,6 +115,7 @@ export function Overview() {
             </section>
           ))}
         </div>
+        <ClusterMonitoring />
         <div className="section-heading">
           <h2>节点资源</h2>
           <Link href="/nodes">
@@ -270,6 +275,8 @@ function MetricBar({ value }: { value?: number | null }) {
   );
 }
 export function NodeDetail({ id }: { id: string }) {
+  const search = useSearchParams();
+  const monitoringContext = search.get("context")?.slice(0, 1000);
   const q = useQuery<NodeData>("nodes.get", { nodeId: id });
   const folders = useQuery<NodeFolderData[]>("nodeFolders.list");
   const user = useQuery<{ role: string }>("users.me", {}, 0);
@@ -277,7 +284,18 @@ export function NodeDetail({ id }: { id: string }) {
   const node = q.data;
   const [hours, setHours] = useState(1);
   const [edit, setEdit] = useState(false);
-  const [tab, setTab] = useState("live");
+  const [tab, setTab] = useState(
+    ["live", "resources", "processes", "services", "details"].includes(
+      search.get("monitor") ?? "",
+    )
+      ? search.get("monitor")!
+      : "live",
+  );
+  const [monitoringHistory, setMonitoringHistory] = useState<HistorySelection>({
+    metric: "cpu.total",
+    device: undefined,
+    hours: 1,
+  });
   const h = useQuery<{
     resolution: string;
     samples: Record<string, unknown>[];
@@ -321,6 +339,11 @@ export function NodeDetail({ id }: { id: string }) {
         )}
       </PageTitle>
       {op.ui}
+      {monitoringContext && (
+        <p role="status" className="surface">
+          来自集群总览：{monitoringContext}
+        </p>
+      )}
       {folders.error && (
         <p role="alert" className="error-text">
           分类加载失败：{folders.error.message}{" "}
@@ -393,78 +416,85 @@ export function NodeDetail({ id }: { id: string }) {
                 节点 ID <code>{node.id}</code>
               </span>
             </div>
-            <ViewTabs
-              label="节点监控"
-              value={tab}
-              onValueChange={setTab}
-              items={[
-                { value: "live", label: "实时概览" },
-                { value: "metrics", label: "历史监控" },
-                { value: "resources", label: "磁盘 / 网络 / IO" },
-                { value: "processes", label: "进程 / 连接" },
-                { value: "services", label: "服务 / 容器" },
-                { value: "system", label: "系统信息" },
-                { value: "details", label: "采集详情" },
-              ]}
-            >
-              {tab === "metrics" ? (
-                <section className="panel">
-                  <div className="panel-header">
-                    <h2>CPU 与内存</h2>
-                    <NativeSelect
-                      aria-label="监控时间范围"
-                      value={hours}
-                      onChange={(e) => setHours(Number(e.target.value))}
+            <MonitoringWorkspace nodeId={id} onNavigate={setTab}>
+              <ViewTabs
+                label="节点监控"
+                value={tab}
+                onValueChange={setTab}
+                items={[
+                  { value: "live", label: "实时概览" },
+                  { value: "metrics", label: "历史监控" },
+                  { value: "resources", label: "磁盘 / 网络 / IO" },
+                  { value: "processes", label: "进程 / 连接" },
+                  { value: "services", label: "服务 / 容器" },
+                  { value: "system", label: "系统信息" },
+                  { value: "details", label: "采集详情" },
+                ]}
+              >
+                {tab === "metrics" ? (
+                  <section className="panel">
+                    <div className="panel-header">
+                      <h2>CPU 与内存</h2>
+                      <NativeSelect
+                        aria-label="监控时间范围"
+                        value={hours}
+                        onChange={(e) => setHours(Number(e.target.value))}
+                      >
+                        {[
+                          [1, "最近1小时"],
+                          [24, "最近24小时"],
+                          [168, "最近7天（小时聚合）"],
+                          [720, "最近30天（小时聚合）"],
+                        ].map(([v, l]) => (
+                          <option key={v} value={v}>
+                            {l}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    </div>
+                    <QueryState
+                      error={h.error}
+                      loading={h.isLoading}
+                      empty={!h.data?.samples.length}
+                      retry={() => void h.mutate()}
+                      emptyTitle="暂无历史采样"
+                      emptyText="节点批准并连接后，Agent 会定期采集资源指标。"
                     >
-                      {[
-                        [1, "最近1小时"],
-                        [24, "最近24小时"],
-                        [168, "最近7天（小时聚合）"],
-                        [720, "最近30天（小时聚合）"],
-                      ].map(([v, l]) => (
-                        <option key={v} value={v}>
-                          {l}
-                        </option>
-                      ))}
-                    </NativeSelect>
-                  </div>
-                  <QueryState
-                    error={h.error}
-                    loading={h.isLoading}
-                    empty={!h.data?.samples.length}
-                    retry={() => void h.mutate()}
-                    emptyTitle="暂无历史采样"
-                    emptyText="节点批准并连接后，Agent 会定期采集资源指标。"
-                  >
-                    <HistoryChart
-                      samples={h.data?.samples ?? []}
-                      hourly={h.data?.resolution === "hour"}
-                    />
-                  </QueryState>
-                </section>
-              ) : [
-                  "live",
-                  "resources",
-                  "processes",
-                  "services",
-                  "system",
-                  "details",
-                ].includes(tab) ? (
-                <NodeMonitoring nodeId={id} view={tab} />
-              ) : (
-                <section className="panel form-panel">
-                  <h2>最近一次完整采样</h2>
-                  <p className="muted">
-                    磁盘、网卡、IO、进程、端口及容器来自 Agent 真实采集。
-                  </p>
-                  {node.metrics[0] ? (
-                    <JsonView data={node.metrics[0].payload} />
-                  ) : (
-                    <p className="panel-empty">尚未收到采样。</p>
-                  )}
-                </section>
-              )}
-            </ViewTabs>
+                      <HistoryChart
+                        samples={h.data?.samples ?? []}
+                        hourly={h.data?.resolution === "hour"}
+                      />
+                    </QueryState>
+                  </section>
+                ) : [
+                    "live",
+                    "resources",
+                    "processes",
+                    "services",
+                    "system",
+                    "details",
+                  ].includes(tab) ? (
+                  <NodeMonitoring
+                    nodeId={id}
+                    view={tab}
+                    historySelection={monitoringHistory}
+                    onHistorySelectionChange={setMonitoringHistory}
+                  />
+                ) : (
+                  <section className="panel form-panel">
+                    <h2>最近一次完整采样</h2>
+                    <p className="muted">
+                      磁盘、网卡、IO、进程、端口及容器来自 Agent 真实采集。
+                    </p>
+                    {node.metrics[0] ? (
+                      <JsonView data={node.metrics[0].payload} />
+                    ) : (
+                      <p className="panel-empty">尚未收到采样。</p>
+                    )}
+                  </section>
+                )}
+              </ViewTabs>
+            </MonitoringWorkspace>
           </>
         )}
       </QueryState>
@@ -542,12 +572,16 @@ function HistoryChart({
             fill="none"
             stroke="var(--chart-1)"
             strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           />
           <path
             d={series(hourly ? "memoryAvg" : "memoryPercent")}
             fill="none"
             stroke="var(--chart-2)"
             strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           />
           <text
             x="40"

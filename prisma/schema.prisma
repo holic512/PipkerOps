@@ -158,6 +158,13 @@ model Node {
   enrollmentToken        EnrollmentToken? @relation(fields: [enrollmentTokenId], references: [id], onDelete: SetNull)
   approvedBy             User?            @relation("NodeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   metrics                MetricSample[]
+  objectMonitoringProcessWatch ProcessWatch[]
+  objectMonitoringMonitoringSample MonitoringSample[]
+  objectMonitoringMonitoringAggregate MonitoringAggregate[]
+  objectMonitoringMonitoringEvent MonitoringEvent[]
+  objectMonitoringMonitoringState MonitoringState[]
+  objectMonitoringMonitoringIngestCursor MonitoringIngestCursor[]
+  objectMonitoringConfig ProcessWatchConfig?
   telemetry              NodeTelemetry[]
   telemetrySamples       TelemetrySample[]
   telemetryHours         TelemetryHourly[]
@@ -224,6 +231,99 @@ model TelemetryHourly {
   @@index([bucketAt], type: Brin)
 }
 model TelemetryMaintenance {
+  id Int @id
+  through DateTime? @db.Timestamptz(3)
+}
+
+model ProcessWatchConfig {
+  nodeId String @id
+  revision Int @default(0)
+  ackRevision Int @default(-1)
+  ackedAt DateTime? @db.Timestamptz(3)
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}
+model ProcessWatch {
+  nodeId String
+  objectId String
+  bootId String
+  pid Int
+  startTicks String
+  name String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  @@id([nodeId, objectId])
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}
+model MonitoringSample {
+  nodeId String
+  kind String
+  objectId String
+  recordedAt DateTime @db.Timestamptz(3)
+  bootId String
+  identity Json
+  state String
+  coverage String
+  reason String
+  metrics Json
+  @@id([nodeId, kind, objectId, recordedAt])
+  @@index([nodeId, kind, objectId, recordedAt(sort: Desc)])
+  @@index([recordedAt], type: Brin)
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}
+model MonitoringAggregate {
+  nodeId String
+  kind String
+  objectId String
+  bucketAt DateTime @db.Timestamptz(3)
+  bootId String
+  identity Json
+  metrics Json
+  sampleCount Int
+  gapCount Int
+  @@id([nodeId, kind, objectId, bucketAt, bootId])
+  @@index([nodeId, kind, objectId, bucketAt(sort: Desc)])
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}
+model MonitoringEvent {
+  id String
+  nodeId String
+  kind String
+  objectId String
+  recordedAt DateTime @db.Timestamptz(3)
+  bootId String
+  identity Json
+  fromState String?
+  toState String
+  coverage String
+  reason String
+  @@id([id, recordedAt])
+  @@index([nodeId, kind, objectId, recordedAt(sort: Desc), id(sort: Desc)])
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}
+model MonitoringState {
+  nodeId String
+  kind String
+  objectId String
+  recordedAt DateTime @db.Timestamptz(3)
+  bootId String
+  identity Json
+  state String
+  coverage String
+  @@id([nodeId, kind, objectId])
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}
+model MonitoringIngestCursor {
+  nodeId String
+  category String
+  recordedAt DateTime @db.Timestamptz(3)
+  bootId String
+  sequence BigInt
+  @@id([nodeId, category])
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}
+model MonitoringDirtyBucket {
+  bucketAt DateTime @id @db.Timestamptz(3)
+}
+model MonitoringMaintenance {
   id Int @id
   through DateTime? @db.Timestamptz(3)
 }

@@ -28,6 +28,24 @@ import {
   legacyFrame,
 } from "../lib/services/telemetry";
 import { telemetryFrame } from "../lib/telemetry";
+import {
+  desiredWatches,
+  acknowledgeWatches,
+  watchChannel,
+} from "../lib/services/object-monitoring";
+const watchCapable = new WeakSet<WebSocket>();
+async function syncWatches(nodeId: string) {
+  const ws = connections.get(nodeId);
+  if (!ws || !watchCapable.has(ws) || ws.readyState !== WebSocket.OPEN) return;
+  const config = await desiredWatches(nodeId);
+  if (connections.get(nodeId) === ws && ws.readyState === WebSocket.OPEN)
+    ws.send(
+      JSON.stringify({
+        type: "monitoring.configure",
+        payload: { revision: config.revision, watches: config.watches },
+      }),
+    );
+}
 const telemetryWriters = new WeakMap<
   WebSocket,
   ReturnType<typeof telemetryWriter>
@@ -150,14 +168,18 @@ async function connectNodes() {
                       .object({
                         type: z.literal("connected"),
                         agentId: z.literal(node.agentId!),
+                        capabilities: z.array(z.string()).max(20).optional(),
                       })
                       .parse(JSON.parse(raw.toString()));
                     identified = !!hello;
                     identifiedConnections.add(ws);
+                    if (hello.capabilities?.includes("process-watches-v1"))
+                      watchCapable.add(ws);
                     await db().node.update({
                       where: { id: node.id },
                       data: { lastSeenAt: new Date(), connectionError: null },
                     });
+                    await syncWatches(node.id);
                     return;
                   }
                   await receive(node.id, ws, raw.toString());
@@ -339,6 +361,13 @@ async function receive(id: string, ws: WebSocket, raw: string) {
   }
   if (p.type === "heartbeat" || p.type === "metrics")
     await db().node.update({ where: { id }, data: { lastSeenAt: new Date() } });
+  if (p.type === "monitoring.configure.ack") {
+    const ack = z
+      .object({ revision: z.number().int().nonnegative() })
+      .parse(p.payload);
+    if (watchCapable.has(ws)) await acknowledgeWatches(id, ack.revision);
+    return;
+  }
   if (p.type === "telemetry") {
     const frame = telemetryFrame.parse(p.payload);
     await telemetryWriters.get(ws)?.(frame);
@@ -620,6 +649,26 @@ async function dispatch() {
   }
 }
 const timer = setInterval(() => void dispatch(), 1000);
+const watchTimer = setInterval(() => {
+  for (const nodeId of connections.keys())
+    void syncWatches(nodeId).catch(() =>
+      console.error("Process watch reconciliation failed", { nodeId }),
+    );
+}, 30000);
+let watchSubscriber: Awaited<ReturnType<typeof redis>> | undefined;
+void (async () => {
+  const subscriber = (await redis()).duplicate();
+  subscriber.on("error", () => {});
+  watchSubscriber = subscriber;
+  await subscriber.connect();
+  await subscriber.subscribe(watchChannel, (nodeId) => {
+    void syncWatches(nodeId).catch(() =>
+      console.error("Process watch notification failed", { nodeId }),
+    );
+  });
+})().catch(() =>
+  console.error("Process watch subscriber unavailable; using reconciliation"),
+);
 const connector = setInterval(
   () =>
     void connectNodes().catch(() =>
@@ -635,6 +684,8 @@ async function shutdown() {
   stopping = true;
   clearInterval(timer);
   clearInterval(connector);
+  clearInterval(watchTimer);
+  if (watchSubscriber?.isOpen) watchSubscriber.destroy();
   for (const ws of connections.values()) ws.terminate();
   for (const t of terminals.values()) t.socket.close(1001, "shutdown");
   await new Promise<void>((resolve) => enrollment.close(() => resolve()));

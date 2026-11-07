@@ -1,6 +1,6 @@
 {
   "name": "pipkerops",
-  "version": "0.1.19",
+  "version": "0.1.22",
   "private": true,
   "type": "module",
   "engines": {
@@ -32,13 +32,16 @@
     "test:systemd": "tsx --test tests/systemd.integration.ts",
     "test:connectivity": "tsx --test tests/connectivity.integration.ts",
     "test:alerts": "tsx --test tests/alerts.integration.ts",
+    "test:monitoring-alerts": "tsx --test tests/monitoring-alerts.integration.ts",
     "test:recovery": "tsx --test tests/recovery.integration.ts",
     "test:capacity": "tsx --test tests/capacity.integration.ts",
     "test:database": "node --import tsx --test tests/database-concurrency.integration.ts",
     "test:history-capacity": "DEVICE_HISTORY_CAPACITY=true node --import tsx --test tests/database-concurrency.integration.ts",
     "test:managed": "node --import tsx --test tests/managed-deployment.integration.ts",
     "test:agent-upgrade": "node --import tsx --test tests/agent-upgrade.integration.ts",
-    "test:docker": "node --import tsx --test tests/docker-direct.integration.ts"
+    "test:docker": "node --import tsx --test tests/docker-direct.integration.ts",
+    "test:object-monitoring": "tsx --test tests/object-monitoring.integration.ts",
+    "test:object-capacity": "tsx --test tests/object-monitoring-capacity.integration.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.4.3",
@@ -80,6 +83,7 @@
     "pg": "8.23.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
+    "recharts": "3.10.1",
     "redis": "6.3.0",
     "swr": "2.5.1",
     "tailwind-merge": "3.7.0",

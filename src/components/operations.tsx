@@ -782,6 +782,17 @@ export function Resources({ mode }: { mode: string }) {
           { value: "memoryPercent", label: "内存使用率" },
           { value: "offline", label: "节点离线（1为离线）" },
           { value: "probeFailure", label: "探针连续失败次数" },
+          { value: "diskPercent", label: "文件系统最高容量使用率 %" },
+          { value: "inodePercent", label: "文件系统最高 inode 使用率 %" },
+          {
+            value: "collectionFailure",
+            label: "采集失效类别数（过期/失败/未采样）",
+          },
+          { value: "serviceFailure", label: "失败服务数量" },
+          {
+            value: "containerFailure",
+            label: "异常容器数（不健康/重启中/累计重启≥3）",
+          },
         ],
       },
       {

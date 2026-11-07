@@ -43,3 +43,20 @@ func TestTelemetryFirstFastSampleKeepsMemoryWithoutFakeCPU(t *testing.T) {
 		t.Fatal("missing collection metadata")
 	}
 }
+
+func TestContainerInspectPreservesSurvivorsAndOptionalHealth(t *testing.T) {
+	tel := newTelemetry("details")
+	values := map[string]map[string]any{"a": {"id": "a"}, "b": {"id": "b"}, "gone": {"id": "gone"}}
+	mergeContainerInspect(&tel, values, `{"id":"a","state":{"Status":"running"},"restartCount":0,"labels":null}
+{"id":"b","state":{"Health":{"Status":"unhealthy"}},"restartCount":7,"labels":{"com.docker.compose.project":"app","com.docker.compose.service":"web"}}
+invalid`, "No such object: gone", context.Canceled)
+	if values["a"]["health"] != "none" || values["a"]["restartCount"] != 0 || values["a"]["inspectError"] != nil {
+		t.Fatalf("container without healthcheck lost: %v", values["a"])
+	}
+	if values["b"]["health"] != "unhealthy" || values["b"]["restartCount"] != 7 || values["b"]["composeService"] != "web" || values["b"]["composeProject"] != "app" {
+		t.Fatalf("inspect details lost: %v", values["b"])
+	}
+	if len(tel.Errors) != 1 || values["gone"]["inspectError"] == nil || values["gone"]["restartCount"] != nil {
+		t.Fatalf("failure was not isolated: %v / %v", values, tel.Errors)
+	}
+}

@@ -31,25 +31,26 @@ type Task struct {
 }
 
 type Message struct {
-	Type        string `json:"type"`
-	AgentID     string `json:"agentId,omitempty"`
-	Task        *Task  `json:"task,omitempty"`
-	TaskID      string `json:"taskId,omitempty"`
-	OperationID string `json:"operationId,omitempty"`
-	Payload     any    `json:"payload,omitempty"`
-	Sequence    int    `json:"sequence,omitempty"`
-	Stream      string `json:"stream,omitempty"`
-	Message     string `json:"message,omitempty"`
-	Success     *bool  `json:"success,omitempty"`
-	Output      string `json:"output,omitempty"`
-	Error       string `json:"error,omitempty"`
-	Result      any    `json:"result,omitempty"`
-	SessionID   string `json:"sessionId,omitempty"`
-	ContainerID string `json:"containerId,omitempty"`
-	Data        string `json:"data,omitempty"`
-	Cols        uint16 `json:"cols,omitempty"`
-	Rows        uint16 `json:"rows,omitempty"`
-	ExitCode    *int   `json:"exitCode,omitempty"`
+	Type         string   `json:"type"`
+	AgentID      string   `json:"agentId,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Task         *Task    `json:"task,omitempty"`
+	TaskID       string   `json:"taskId,omitempty"`
+	OperationID  string   `json:"operationId,omitempty"`
+	Payload      any      `json:"payload,omitempty"`
+	Sequence     int      `json:"sequence,omitempty"`
+	Stream       string   `json:"stream,omitempty"`
+	Message      string   `json:"message,omitempty"`
+	Success      *bool    `json:"success,omitempty"`
+	Output       string   `json:"output,omitempty"`
+	Error        string   `json:"error,omitempty"`
+	Result       any      `json:"result,omitempty"`
+	SessionID    string   `json:"sessionId,omitempty"`
+	ContainerID  string   `json:"containerId,omitempty"`
+	Data         string   `json:"data,omitempty"`
+	Cols         uint16   `json:"cols,omitempty"`
+	Rows         uint16   `json:"rows,omitempty"`
+	ExitCode     *int     `json:"exitCode,omitempty"`
 }
 
 type journalRecord struct {

@@ -22,9 +22,17 @@ import { resourceMethodSchemas } from "../resource-contracts";
 import { dockerMethodSchemas, type DockerMethod } from "../docker-contracts";
 import { listReleases, queueUpdate } from "./updates";
 import { metricDetails } from "./metric-details";
-import { getNode, nodeSummary, getSnapshot } from "./telemetry";
+import { getNode, nodeSummary, getSnapshot, nodeMonitoring } from "./telemetry";
 import { numericHistory } from "./telemetry-history";
+import {
+  objectHistory,
+  objectEvents,
+  listProcessWatches,
+  saveProcessWatch,
+  deleteProcessWatch,
+} from "./object-monitoring";
 import { createTask, validateTask, listTasks, getTask } from "./tasks";
+import { clearAlertWindow } from "../alert-window";
 import { redis } from "../redis";
 import { privateHost } from "../config";
 const id = z.string().min(1).max(100);
@@ -205,6 +213,8 @@ export async function execute(
       );
     case "nodes.get":
       return getNode(actor, id.parse(p.nodeId));
+    case "nodes.monitoring":
+      return nodeMonitoring(actor);
     case "nodes.summary":
       return nodeSummary(actor);
     case "nodes.snapshot":
@@ -215,6 +225,14 @@ export async function execute(
       );
     case "nodes.history": {
       const data = p as z.infer<(typeof methodSchemas)["nodes.history"]>;
+      if (
+        ["process", "container", "service", "diagnostics"].includes(data.kind)
+      )
+        return objectHistory(actor, {
+          ...data,
+          kind: data.kind as
+            "process" | "container" | "service" | "diagnostics",
+        });
       if (data.kind === "metric")
         return numericHistory(
           actor,
@@ -226,11 +244,25 @@ export async function execute(
       return metricDetails(
         actor,
         data.nodeId,
-        data.kind,
+        data.kind as "disk" | "network" | "io",
         data.hours,
         data.device,
       );
     }
+    case "nodes.events.list":
+      return objectEvents(
+        actor,
+        p as z.infer<(typeof methodSchemas)["nodes.events.list"]>,
+      );
+    case "nodes.processWatches.list":
+      return listProcessWatches(actor, id.parse(p.nodeId));
+    case "nodes.processWatches.save":
+      return saveProcessWatch(
+        actor,
+        p as z.infer<(typeof methodSchemas)["nodes.processWatches.save"]>,
+      );
+    case "nodes.processWatches.delete":
+      return deleteProcessWatch(actor, id.parse(p.nodeId), String(p.objectId));
     case "tasks.create":
       return createTask(actor, p, actor.apiKeyId ? "MCP" : "WEB");
     case "tasks.list":
@@ -912,6 +944,7 @@ export async function execute(
         authorize(actor, "alerts:write", probe.sourceNodeId ?? undefined);
       }
       await db().alertRule.delete({ where: { id: resource.id } });
+      await clearAlertWindow(await redis(), resource.id);
       await audit(actor, method, "AlertRule", resource.id);
       return { id: resource.id };
     }

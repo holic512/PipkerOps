@@ -8,11 +8,24 @@ export const categories = [
   "legacy",
 ] as const;
 export type TelemetryCategory = (typeof categories)[number];
+export const availabilityStates = [
+  "ok",
+  "waiting_sample",
+  "waiting_baseline",
+  "not_applicable",
+  "unsupported",
+  "permission_denied",
+  "failed",
+  "stale",
+  "upgrade_required",
+] as const;
 export const seriesPoint = z.object({
   metric: z.string().min(1).max(80),
   device: z.string().max(200).default(""),
   unit: z.string().max(20),
   value: z.number().finite().nullable(),
+  status: z.enum(availabilityStates).optional(),
+  reason: z.string().max(2000).optional(),
 });
 export const telemetryFrame = z.object({
   schemaVersion: z.literal(2),
@@ -27,7 +40,10 @@ export const telemetryFrame = z.object({
   truncated: z.boolean().default(false),
 });
 export type TelemetryFrame = z.infer<typeof telemetryFrame>;
-export type Snapshot = TelemetryFrame & { receivedAt: string };
+export type Snapshot = TelemetryFrame & {
+  receivedAt: string;
+  lastSuccessAt?: string;
+};
 export const telemetryChannel = "pko:telemetry:changed";
 export const snapshotKey = (nodeId: string, category: string) =>
   `pko:telemetry:${nodeId}:${category}`;
@@ -39,9 +55,14 @@ export const categoryMaxAge = {
   legacy: 45000,
 };
 export function snapshotFresh(snapshot: Snapshot, now = Date.now()) {
-  return (
-    now - Date.parse(snapshot.receivedAt) <= categoryMaxAge[snapshot.category]
-  );
+  return [snapshot.receivedAt, snapshot.sampledAt].every((value) => {
+    const age = now - Date.parse(value);
+    return (
+      Number.isFinite(age) &&
+      age >= -30000 &&
+      age <= categoryMaxAge[snapshot.category]
+    );
+  });
 }
 export function numericPercent(value: unknown): number | null {
   return typeof value === "number" &&
