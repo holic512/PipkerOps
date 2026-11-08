@@ -32,6 +32,7 @@ import {
   type UpdatePreparationStage,
 } from "../update-diagnostics";
 import { downloadReleaseFile as download } from "../release-download";
+import { updatePreparationStages } from "../update-status";
 export { trustedDownloadUrl } from "../release-download";
 const api = "https://api.github.com/repos/holic512/PipkerOps/releases";
 const version = z.string().regex(/^\d+\.\d+\.\d+$/);
@@ -85,6 +86,20 @@ export async function listReleases(actor: Actor) {
         r.assets.some((a) => a.name === "release-manifest.json"),
     )
     .map((r) => ({ tag: r.tag_name, name: r.name }));
+}
+export async function previewUpdate(actor: Actor, tag: string) {
+  authorize(actor, "nodes:approve");
+  const info = await release(tag);
+  return {
+    tag: info.release.tag_name,
+    name: info.release.name,
+    versions: info.manifest.versions,
+    artifacts: Object.entries(info.manifest.assets)
+      .filter(([, asset]) =>
+        info.release.assets.some((a) => a.name === asset.name),
+      )
+      .map(([key]) => key),
+  };
 }
 export async function queueUpdate(actor: Actor, input: unknown) {
   const data = methodSchemas["updates.create"].parse(input);
@@ -151,7 +166,20 @@ export async function processUpdateQueue() {
   >`UPDATE "Task" SET status='RUNNING', attempts=attempts+1, "startedAt"=now(), "leaseExpiresAt"=now()+interval '30 minutes', "updatedAt"=now() WHERE id IN (SELECT id FROM "Task" WHERE type='platform.update' AND status='QUEUED' ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id`;
   for (const { id } of claimed) {
     let stage: UpdatePreparationStage = "authorization";
+    const mark = async (next: UpdatePreparationStage) => {
+      stage = next;
+      const marked = await db().task.updateMany({
+        where: { id, status: "RUNNING" },
+        data: {
+          output: `更新准备中：${updatePreparationStages[next]}`,
+          result: { preparationStage: next },
+        },
+      });
+      if (!marked.count)
+        throw new ApiError(409, "更新任务状态已变化，已停止准备操作");
+    };
     try {
+      await mark("authorization");
       const task = await db().task.findUniqueOrThrow({ where: { id } });
       const p = task.payload as {
         nodeId: string;
@@ -167,7 +195,7 @@ export async function processUpdateQueue() {
       authorize(actor, "nodes:approve", p.nodeId, true);
       if (p.component === "ops")
         authorize(actor, "admin:write", undefined, true);
-      stage = "connection";
+      await mark("connection");
       const node = await db().node.findUniqueOrThrow({
         where: { id: p.nodeId },
       });
@@ -189,14 +217,14 @@ export async function processUpdateQueue() {
         deployRoot: node.deployRoot ?? "",
       };
       const info = await testAgent(bundle);
-      stage = "registration";
+      await mark("registration");
       await registerDeployment(actor, {
         nodeId: p.nodeId,
         deployRoot: p.deployRoot,
         component: p.component,
         confirmed: true,
       });
-      stage = "release";
+      await mark("release");
       const releaseInfo = await release(p.releaseTag);
       if (
         p.component === "agent" &&
@@ -209,24 +237,24 @@ export async function processUpdateQueue() {
         });
         continue;
       }
-      stage = "artifact";
+      await mark("artifact");
       const artifact = await prepareArtifact(
         p.releaseTag,
         p.component === "agent" ? `agent-${info.arch}` : "scripts",
         releaseInfo,
       );
       if (p.component !== "ops") {
-        stage = "transfer";
+        await mark("transfer");
         await agentRequest(
           bundle,
           `/v1/artifacts/${artifact.sha256}`,
           artifact.path,
         );
       } else {
-        stage = "backup";
+        await mark("backup");
         await createBackup(id);
       }
-      stage = "execution";
+      await mark("execution");
       await db().$transaction(async (tx) => {
         const child = await createTask(
           actor,

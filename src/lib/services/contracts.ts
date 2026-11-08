@@ -53,6 +53,7 @@ export const METHODS = [
   "nodes.import",
   "nodes.deployment",
   "updates.releases",
+  "updates.preview",
   "updates.create",
   "nodes.revoke",
   "nodes.metrics",
@@ -125,6 +126,7 @@ export const mutation = (method: string) =>
     "nodes.summary",
     "nodes.snapshot",
     "nodes.monitoring",
+    "updates.preview",
   ].includes(method) &&
   !method.endsWith(".list") &&
   !method.endsWith(".get") &&
@@ -161,6 +163,9 @@ export const methodSchemas = {
     confirmed: confirmation,
   }),
   "updates.releases": z.object({}),
+  "updates.preview": z.object({
+    releaseTag: z.string().regex(/^[a-zA-Z0-9_.-]+$/),
+  }),
   "updates.create": z.object({
     nodeId: id,
     component: z.enum(["agent", "ops", "scripts"]),
@@ -623,6 +628,18 @@ const wireDeviceHistory = z.object({
 
 /** Wire contracts after the shared business result's normal JSON serialization. */
 export const methodOutputSchemas: Partial<Record<Method, z.ZodObject>> = {
+  "updates.preview": z.object({
+    data: z.object({
+      tag: z.string(),
+      name: z.string(),
+      versions: z.object({
+        ops: z.string(),
+        agent: z.string(),
+        scripts: z.string(),
+      }),
+      artifacts: z.array(z.string()),
+    }),
+  }),
   ...resourceOutputSchemas,
   ...Object.fromEntries(
     Object.entries(dockerResultSchemas).map(([method, schema]) => [

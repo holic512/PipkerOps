@@ -20,7 +20,7 @@ import { executeDocker } from "./docker";
 import { executeResource, resolveResource } from "./resources";
 import { resourceMethodSchemas } from "../resource-contracts";
 import { dockerMethodSchemas, type DockerMethod } from "../docker-contracts";
-import { listReleases, queueUpdate } from "./updates";
+import { listReleases, previewUpdate, queueUpdate } from "./updates";
 import { metricDetails } from "./metric-details";
 import { getNode, nodeSummary, getSnapshot, nodeMonitoring } from "./telemetry";
 import { numericHistory } from "./telemetry-history";
@@ -200,6 +200,8 @@ export async function execute(
       return nodes.importNode(actor, p);
     case "updates.releases":
       return listReleases(actor);
+    case "updates.preview":
+      return previewUpdate(actor, String(p.releaseTag));
     case "updates.create":
       return queueUpdate(actor, p);
     case "nodes.revoke":

@@ -215,6 +215,8 @@ Worker 在实际执行前重新校验创建者权限。备份超时、失败或�
 监控时间约定：应用 PostgreSQL 连接固定 UTC 会话，服务器默认时区不变。nodes.monitoring.lastSampleAt 指实时资源 fast/legacy 的最近采样或最近资源历史回退，不由静态清单更新推进；longMissing 按该资源采样超过 5 分钟或从未采样计算。nodes.snapshot 的 stale 按连接状态、采样及接收时间判断，分类 cacheFallback 仅说明持久快照来源，不单独表示过期。nodes.summary 的粗粒度回退提示保持兼容。
 # 对象监控历史（Ops 0.1.22 / Agent 0.1.7）
 
+Ops 0.1.24 新增只读 `updates.preview`：输入 `{releaseTag}`，沿用 nodes:approve 权限，返回 tag、name、versions（ops/agent/scripts）与实际发布中存在的 artifacts 键。版本来自验证后的正式发布清单，不依赖标题解析；下载和执行时继续重新获取清单、验证SHA-256及目标身份。更新准备过程将当前 preparationStage 与文本状态写入父任务，创建执行子任务后通过 executionTaskId 关联，不以页面时间或动画推断进度。
+
 Agent 0.1.8 的进程 `user` 兼容原有显示字段，并可选附带真实 UID `uid` 与 `usernameResolved`。真实 UID 可读但宿主机账号库没有对应用户名时，`user` 显示 `UID <数字>`，不计入字段/分类失败；权限、读取失败及其他账号库查询错误仍报告。用户名解析缓存仅在一次运行明细采集内生效，不跨采样保留。未知 UID 不会被推断为 root。
 
 兼容扩展 `nodes.history` 的 kind：`process`、`container`、`service`、`diagnostics`。参数包含 nodeId、metric、hours（对象最多720小时）、可选 ISO from/to（最多30天窗口）、objectIds（最多5个）。返回 unit、bucketSeconds、resolution、对象 identity、coverage/reason、retention 和 series；每对象最多1440点，点含 value、mean、maximum、validCount、gapCount、bootId。value 在缺口或跨启动分段时为 null。CPU 按单核计算，不限制100%。容器速率使用完整ID、bootId与startedAt重建基线。

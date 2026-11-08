@@ -87,6 +87,12 @@ Input / Textarea / NativeSelect 是项目按 shadcn 本地源码方式维护的�
 
 本地规则在 `scripts/eslint-ui-rules.mjs`，通过 `eslint.config.mjs` 接入现有 CI；`tests/ui-rules.test.ts` 用违规样例和实际配置验证。主题测试继续检查 Token 完整性、对比度与颜色硬编码。AST 检查不能识别所有重复业务逻辑或所有 CSS 技巧，故保留人工组件选择审查与渲染验证；不设历史违规 baseline，也不允许对整个业务目录静默放行。
 
+## 版本更新工作区
+
+`@/components/updates` 的 Updates 组合 NativeSelect/Input、Status、DataTable 与 BusinessDialog，采用目标/目录/发布选择和版本核对侧栏。节点路径来自已登记数据，允许明确清空，不猜测安装路径；验证绑定组件、节点、目录，更换任一项即失效。目标版本由 updates.preview 读取正式清单，不能解析发布标题猜测；同版本阻止重复更新，降级在核对框明确标注。提交使用 useOperation 忙碌保护与稳定幂等键，核对框内反馈失败。
+
+近期任务取 tasks.list 返回范围内的平台更新，展示最近5项；任务窗口轮询父/子执行记录，展示实际准备阶段、执行与版本确认及错误，UNKNOWN不标成完成。关闭不取消任务并恢复稳定触发点焦点，刷新页面后从近期任务重新查看。数据阶段与版本比较共用客户端安全的 update-status，颜色沿用Token，不画虚构下载百分比。
+
 ## 节点监控组合
 
 采集质量 `CollectionQuality` 使用图标/类别/状态、成功时间与耗时、失败原因、处理建议的分层卡片；长错误仅在摘要限制两行，Button 进入采集详情查看完整原因。正常卡片不重复通用排障文案。`Status` 允许可选 `label` 覆盖业务文字，颜色仍由既有 `value` 状态语义决定，未传时保持原有文案。

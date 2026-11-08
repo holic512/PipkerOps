@@ -1,16 +1,12 @@
 import { ApiError } from "./auth";
-
-export const updatePreparationStages = {
-  authorization: "校验更新权限",
-  connection: "检查 Agent 连接",
-  registration: "核对部署登记",
-  release: "获取发布清单",
-  artifact: "下载并校验发布制品",
-  transfer: "向 Agent 传输制品",
-  backup: "创建更新前备份",
-  execution: "创建节点执行任务",
-} as const;
-export type UpdatePreparationStage = keyof typeof updatePreparationStages;
+import {
+  updatePreparationStages,
+  type UpdatePreparationStage,
+} from "./update-status";
+export {
+  updatePreparationStages,
+  type UpdatePreparationStage,
+} from "./update-status";
 
 /** Only emit known codes and trusted API messages, never arbitrary driver text. */
 export function updatePreparationFailure(

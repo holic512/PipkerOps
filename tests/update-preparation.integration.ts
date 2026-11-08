@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { nativeMonitoringDb } from "./helpers/native-monitoring-db";
 import { finishTask } from "../src/lib/services/results";
 import { updatePreparationFailure } from "../src/lib/update-diagnostics";
+import { processUpdateQueue } from "../src/lib/services/updates";
 
 test(
   "更新准备超时持久化阶段和文本诊断，不产生执行子任务",
@@ -38,6 +39,37 @@ test(
         preparationErrorCode: "TimeoutError",
       });
       assert.equal(await f.prisma.task.count(), 1);
+      const viewer = await f.prisma.user.create({
+        data: {
+          email: "update-viewer@test.invalid",
+          displayName: "viewer",
+          passwordHash: "unused",
+          role: "VIEWER",
+        },
+      });
+      const queued = await f.prisma.task.create({
+        data: {
+          type: "platform.update",
+          status: "QUEUED",
+          actorId: viewer.id,
+          payload: {
+            component: "agent",
+            nodeId: "not-accessed",
+            releaseTag: "not-accessed",
+            deployRoot: "/not-accessed",
+          },
+        },
+      });
+      await processUpdateQueue();
+      const denied = await f.prisma.task.findUniqueOrThrow({
+        where: { id: queued.id },
+      });
+      assert.equal(denied.status, "FAILED");
+      assert.equal(
+        (denied.result as { preparationStage: string }).preparationStage,
+        "authorization",
+      );
+      assert.match(denied.output!, /校验更新权限/);
     } finally {
       await f.close();
     }
