@@ -432,6 +432,7 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 	seen := map[string]bool{}
 	partialProcesses := 0
 	firstFieldError := ""
+	users := newProcessUserResolver()
 	for _, id := range ids {
 		if ctx.Err() != nil {
 			t.Truncated = true
@@ -465,7 +466,8 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 		}
 		memory, memoryErr := p.MemoryInfoWithContext(ctx)
 		threads, threadErr := p.NumThreadsWithContext(ctx)
-		user, userErr := p.UsernameWithContext(ctx)
+		uids, uidErr := p.UidsWithContext(ctx)
+		owner, userErr := users.resolve(uids, uidErr)
 		status, statusErr := p.StatusWithContext(ctx)
 		if statusErr == nil {
 			for _, s := range status {
@@ -492,8 +494,10 @@ func (c *telemetryCollector) processes(ctx context.Context, t *telemetry) {
 		if threadErr == nil {
 			value["threads"] = threads
 		}
-		if userErr == nil {
-			value["user"] = user
+		if owner.HasUID {
+			value["user"] = owner.Display
+			value["uid"] = owner.UID
+			value["usernameResolved"] = owner.Resolved
 		}
 		if statusErr == nil {
 			value["status"] = status
