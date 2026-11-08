@@ -27,6 +27,12 @@ import { createTask } from "./tasks";
 import { finishTask } from "./results";
 import { createBackup } from "../backup-storage";
 import { registerDeployment } from "./nodes";
+import {
+  updatePreparationFailure,
+  type UpdatePreparationStage,
+} from "../update-diagnostics";
+import { downloadReleaseFile as download } from "../release-download";
+export { trustedDownloadUrl } from "../release-download";
 const api = "https://api.github.com/repos/holic512/PipkerOps/releases";
 const version = z.string().regex(/^\d+\.\d+\.\d+$/);
 const manifestSchema = z.object({
@@ -47,55 +53,6 @@ type Release = {
   prerelease: boolean;
   assets: { name: string; browser_download_url: string }[];
 };
-export function trustedDownloadUrl(raw: string) {
-  const url = new URL(raw);
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    ![
-      "api.github.com",
-      "github.com",
-      "release-assets.githubusercontent.com",
-      "objects.githubusercontent.com",
-    ].includes(url.hostname)
-  )
-    throw new ApiError(502, "发布文件地址不受信任");
-  return url;
-}
-async function download(raw: string, limit: number): Promise<Buffer> {
-  let url = trustedDownloadUrl(raw);
-  for (let hop = 0; hop < 6; hop++) {
-    const response = await fetch(url, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(120000),
-      headers: {
-        "User-Agent": "PipkerOps",
-        Accept: "application/vnd.github+json",
-      },
-    });
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      await response.body?.cancel();
-      url = trustedDownloadUrl(
-        new URL(response.headers.get("location") ?? "", url).href,
-      );
-      continue;
-    }
-    if (!response.ok || !response.body)
-      throw new ApiError(502, `获取发布文件失败（HTTP ${response.status}）`);
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > limit) {
-        throw new ApiError(502, "发布文件超过大小限制");
-      }
-      chunks.push(chunk);
-    }
-    return Buffer.concat(chunks);
-  }
-  throw new ApiError(502, "发布下载重定向过多");
-}
 async function release(tag: string) {
   const value = JSON.parse(
     (
@@ -175,7 +132,7 @@ async function prepareArtifact(
       (a) => a.name === asset.name,
     )?.browser_download_url;
     if (!url) throw new ApiError(502, "发布制品缺失");
-    content = await download(url, 128 << 20);
+    content = await download(url, 128 << 20, 300000);
     if (createHash("sha256").update(content).digest("hex") !== asset.sha256)
       throw new ApiError(502, "发布制品 SHA-256 校验失败");
     const temporary = `${path}.partial`;
@@ -193,6 +150,7 @@ export async function processUpdateQueue() {
     { id: string }[]
   >`UPDATE "Task" SET status='RUNNING', attempts=attempts+1, "startedAt"=now(), "leaseExpiresAt"=now()+interval '30 minutes', "updatedAt"=now() WHERE id IN (SELECT id FROM "Task" WHERE type='platform.update' AND status='QUEUED' ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id`;
   for (const { id } of claimed) {
+    let stage: UpdatePreparationStage = "authorization";
     try {
       const task = await db().task.findUniqueOrThrow({ where: { id } });
       const p = task.payload as {
@@ -209,6 +167,7 @@ export async function processUpdateQueue() {
       authorize(actor, "nodes:approve", p.nodeId, true);
       if (p.component === "ops")
         authorize(actor, "admin:write", undefined, true);
+      stage = "connection";
       const node = await db().node.findUniqueOrThrow({
         where: { id: p.nodeId },
       });
@@ -230,12 +189,14 @@ export async function processUpdateQueue() {
         deployRoot: node.deployRoot ?? "",
       };
       const info = await testAgent(bundle);
+      stage = "registration";
       await registerDeployment(actor, {
         nodeId: p.nodeId,
         deployRoot: p.deployRoot,
         component: p.component,
         confirmed: true,
       });
+      stage = "release";
       const releaseInfo = await release(p.releaseTag);
       if (
         p.component === "agent" &&
@@ -248,18 +209,24 @@ export async function processUpdateQueue() {
         });
         continue;
       }
+      stage = "artifact";
       const artifact = await prepareArtifact(
         p.releaseTag,
         p.component === "agent" ? `agent-${info.arch}` : "scripts",
         releaseInfo,
       );
-      if (p.component !== "ops")
+      if (p.component !== "ops") {
+        stage = "transfer";
         await agentRequest(
           bundle,
           `/v1/artifacts/${artifact.sha256}`,
           artifact.path,
         );
-      else await createBackup(id);
+      } else {
+        stage = "backup";
+        await createBackup(id);
+      }
+      stage = "execution";
       await db().$transaction(async (tx) => {
         const child = await createTask(
           actor,
@@ -305,11 +272,7 @@ export async function processUpdateQueue() {
     } catch (error) {
       await finishTask(id, null, {
         success: false,
-        error:
-          error instanceof ApiError
-            ? error.message
-            : "更新准备失败，请检查发布清单、连接和备份",
-        result: {},
+        ...updatePreparationFailure(stage, error),
       });
     }
   }
