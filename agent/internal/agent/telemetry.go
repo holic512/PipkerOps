@@ -66,6 +66,7 @@ type telemetryCollector struct {
 	bootID            string
 	watchConfig       func() watchConfig
 	containerPrevious map[string]counterSample
+	containerRestarts containerRestartHistory
 }
 
 func newTelemetryCollector() *telemetryCollector {
@@ -684,6 +685,7 @@ func collectContainers(ctx context.Context, t *telemetry) {
 		}
 	}
 	t.Data["containers"] = values
+	t.Data["containerInventoryTruncated"] = t.Truncated
 	counts := map[string]int{}
 	for _, value := range values {
 		counts[fmt.Sprint(value["state"])]++
@@ -699,8 +701,11 @@ func mergeContainerInspect(t *telemetry, byID map[string]map[string]any, output,
 		var raw struct {
 			ID    string `json:"id"`
 			State struct {
-				Health    *struct{ Status string }
-				StartedAt string
+				Status     string
+				Health     *struct{ Status string }
+				StartedAt  string
+				FinishedAt string
+				ExitCode   *int
 			} `json:"state"`
 			RestartCount *int              `json:"restartCount"`
 			Labels       map[string]string `json:"labels"`
@@ -714,6 +719,18 @@ func mergeContainerInspect(t *telemetry, byID map[string]map[string]any, output,
 		}
 		seen[raw.ID] = true
 		v["startedAt"] = raw.State.StartedAt
+		if raw.State.Status != "" {
+			v["state"] = raw.State.Status
+		}
+		if raw.State.Status == "exited" && raw.State.ExitCode != nil {
+			v["exitCode"] = *raw.State.ExitCode
+			if finishedAt, err := time.Parse(time.RFC3339Nano, raw.State.FinishedAt); err == nil && !finishedAt.IsZero() {
+				v["finishedAt"] = raw.State.FinishedAt
+			}
+		}
+		if raw.Labels["pipkerops.container-lifecycle"] == "oneshot" {
+			v["lifecycle"] = "oneshot"
+		}
 		v["health"] = "none"
 		if raw.State.Health != nil {
 			v["health"] = raw.State.Health.Status
@@ -782,6 +799,8 @@ func (c *telemetryCollector) details(ctx context.Context, t *telemetry) {
 				}
 			case "containers":
 				collectContainers(child, &part)
+				rows, _ := part.Data["containers"].([]map[string]any)
+				c.containerRestarts = c.containerRestarts.observe(rows, time.Now())
 				c.containerMetrics(&part)
 			}
 			if child.Err() != nil {

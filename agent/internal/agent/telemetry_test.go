@@ -60,3 +60,21 @@ invalid`, "No such object: gone", context.Canceled)
 		t.Fatalf("failure was not isolated: %v / %v", values, tel.Errors)
 	}
 }
+
+func TestContainerInspectCapturesExplicitOneShotExit(t *testing.T) {
+	tel := newTelemetry("details")
+	values := map[string]map[string]any{
+		"job": {"id": "job", "state": "running"},
+		"web": {"id": "web", "state": "exited"},
+	}
+	mergeContainerInspect(&tel, values, `{"id":"job","state":{"Status":"exited","ExitCode":0,"FinishedAt":"2026-11-15T10:00:00Z","Health":{"Status":"unhealthy"}},"restartCount":0,"labels":{"pipkerops.container-lifecycle":"oneshot"}}
+{"id":"web","state":{"Status":"running","ExitCode":0,"FinishedAt":"0001-01-01T00:00:00Z"},"restartCount":8}`, "", nil)
+	job := values["job"]
+	if job["state"] != "exited" || job["exitCode"] != 0 || job["lifecycle"] != "oneshot" || job["finishedAt"] != "2026-11-15T10:00:00Z" {
+		t.Fatalf("one-shot exit information lost: %v", job)
+	}
+	web := values["web"]
+	if web["state"] != "running" || web["exitCode"] != nil || web["finishedAt"] != nil || web["lifecycle"] != nil {
+		t.Fatalf("running container must use current inspected state: %v", web)
+	}
+}

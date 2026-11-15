@@ -1,4 +1,5 @@
 import { numericPercent, type Snapshot } from "./telemetry";
+import { activeContainerMetric } from "./container-monitoring";
 import {
   currentSnapshot,
   monitoringAlertMetrics,
@@ -50,6 +51,9 @@ export function clusterProjection(
       monitoringObservation(metric, snapshots, now),
     ]),
   );
+  const currentObservations = Object.entries(observations).filter(
+    ([metric]) => metric !== "containerFailure",
+  );
   const reasons = [
     ...(!node.connected ? ["节点离线"] : []),
     ...(longMissing ? ["实时资源超过 5 分钟无采样或从未采样"] : []),
@@ -57,10 +61,10 @@ export function clusterProjection(
     ...(memoryPercent !== null && memoryPercent >= 85
       ? ["内存使用率偏高"]
       : []),
-    ...(Object.values(observations).some((v) => !v.complete)
+    ...(currentObservations.some(([, v]) => !v.complete)
       ? ["部分指标无法确认，请检查采集诊断"]
       : []),
-    ...Object.entries(observations)
+    ...currentObservations
       .filter(
         ([m, v]) =>
           v.value !== null &&
@@ -93,7 +97,7 @@ export function clusterTarget(
   if (node.longMissing) return "details";
   if (
     (node.observations.serviceFailure?.value ?? 0) > 0 ||
-    (node.observations.containerFailure?.value ?? 0) > 0
+    (node.observations[activeContainerMetric]?.value ?? 0) > 0
   )
     return "services";
   return ["cpuPercent", "memoryPercent"].includes(ranking)

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useQuery, QueryState, DataTable, JsonView } from "./shared";
 import { Button } from "./ui/button";
 import { ringValueLabel } from "@/lib/ring-chart";
+import { assessContainer } from "@/lib/container-monitoring";
 import { RingChart } from "@/components/ui/chart";
 import { Input } from "./ui/input";
 import { Checkbox } from "./ui/checkbox";
@@ -146,7 +147,13 @@ function DetailTable({
               {columns
                 .filter(
                   ([key]) =>
-                    !["stats", "io", "options", "inspectError"].includes(key),
+                    ![
+                      "stats",
+                      "io",
+                      "options",
+                      "inspectError",
+                      "assessment",
+                    ].includes(key),
                 )
                 .flatMap(([key, label]) => [
                   <option key={`${key}:desc`} value={`${key}:desc`}>
@@ -167,7 +174,7 @@ function DetailTable({
               {kind === "process"
                 ? "仅 CPU/内存 ≥80%"
                 : kind === "container"
-                  ? "仅异常或累计重启 ≥3"
+                  ? "仅容器异常"
                   : "仅异常"}
             </label>
           )}
@@ -218,6 +225,25 @@ function DetailTable({
                   {(() => {
                     if (key === "device" && row[key] === "") return "整机";
                     if (key === "unit" && row[key] === "") return "无量纲";
+                    if (key === "assessment")
+                      return `${snapshot?.stale ? "上次采样 · " : ""}${assessContainer(row).reason}`;
+                    if (key === "recentRestartCount") {
+                      if (row.restartWindowComplete === true)
+                        return text(row[key]);
+                      return typeof row[key] === "number" && row[key] > 0
+                        ? `至少 ${text(row[key])} 次`
+                        : "无法确认";
+                    }
+                    if (key === "finishedAt") {
+                      if (row.state !== "exited") return "不适用";
+                      const exit =
+                        typeof row.exitCode === "number"
+                          ? `退出码 ${row.exitCode}`
+                          : "退出码未知";
+                      return typeof row[key] === "string"
+                        ? `${date(row[key])} · ${exit}`
+                        : exit;
+                    }
                     if (key === "inspectError")
                       return row[key] ? text(row[key]) : "无";
                     const state = availability({
@@ -1253,7 +1279,10 @@ export function NodeMonitoring({
                 ["image", "镜像"],
                 ["state", "状态"],
                 ["health", "健康"],
-                ["restartCount", "重启次数"],
+                ["assessment", "异常判定"],
+                ["restartCount", "累计重启"],
+                ["recentRestartCount", "近 5 分钟重启"],
+                ["finishedAt", "退出时间 / 退出码"],
                 [
                   "composeProject",
                   q.data?.legacy ? "容器标签" : "Compose 项目",

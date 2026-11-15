@@ -5,6 +5,10 @@ import {
   observationValue,
 } from "../src/lib/monitoring-alerts";
 import type { Snapshot } from "../src/lib/telemetry";
+import {
+  activeContainerMetric,
+  assessContainer,
+} from "../src/lib/container-monitoring";
 const now = Date.now();
 const snapshot = (
   category: Snapshot["category"],
@@ -101,4 +105,58 @@ test("采集失效含未采样和过期，旧版仅按实际能力检查", () =>
     ).value,
     1,
   );
+});
+
+test("当前容器异常区分一次性任务结果、近期重启与历史累计", () => {
+  const init = {
+    name: "ocs-answer-hub-init-1",
+    lifecycle: "oneshot",
+    state: "exited",
+    health: "unhealthy",
+    restartCount: 0,
+    exitCode: 0,
+  };
+  const redis = {
+    name: "pipker-databases-redis-1",
+    state: "running",
+    health: "healthy",
+    restartCount: 8,
+    recentRestartCount: 0,
+    restartWindowComplete: true,
+  };
+  const observe = (...containers: Record<string, unknown>[]) =>
+    monitoringObservation(
+      activeContainerMetric,
+      [snapshot("details", { containers })],
+      now,
+    );
+  assert.equal(observe(init, redis).value, 0);
+  assert.equal(assessContainer(init).status, "completed");
+  assert.equal(
+    assessContainer({ ...init, lifecycle: undefined }).status,
+    "failure",
+  );
+  assert.match(
+    observe({ ...init, exitCode: 1 }, redis).context,
+    /执行失败（退出码 1）/,
+  );
+  assert.equal(observe({ ...init, exitCode: undefined }).value, null);
+  assert.equal(observe({ ...redis, restartWindowComplete: false }).value, null);
+  assert.equal(
+    observe({ ...redis, restartWindowComplete: undefined }).value,
+    null,
+  );
+  const partial = observe(
+    { ...redis, restartWindowComplete: false, recentRestartCount: 3 },
+    { state: "running", health: "healthy", restartCount: 8 },
+  );
+  assert.match(partial.context, /近 5 分钟重启 至少 3 次/);
+  assert.equal(observationValue(partial, "gt", 0), 1);
+  assert.equal(observationValue(partial, "lt", 2), null);
+  assert.match(
+    observe({ ...redis, health: "unhealthy" }).context,
+    /健康检查失败/,
+  );
+  assert.match(observe({ ...redis, state: "restarting" }).context, /正在重启/);
+  assert.match(observe({ ...redis, state: "dead" }).context, /dead/);
 });

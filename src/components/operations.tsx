@@ -16,6 +16,7 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Plus, RotateCw, Play, ChevronLeft } from "lucide-react";
 import { rpc, date, type NodeData, type TaskData } from "@/lib/client";
+import { activeContainerMetric } from "@/lib/container-monitoring";
 import {
   useQuery,
   useOperation,
@@ -791,7 +792,11 @@ export function Resources({ mode }: { mode: string }) {
           { value: "serviceFailure", label: "失败服务数量" },
           {
             value: "containerFailure",
-            label: "异常容器数（不健康/重启中/累计重启≥3）",
+            label: "异常容器数（旧口径，含累计重启 ≥3）",
+          },
+          {
+            value: activeContainerMetric,
+            label: "当前异常容器数（含近 5 分钟重启 ≥3）",
           },
         ],
       },

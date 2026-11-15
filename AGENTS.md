@@ -38,3 +38,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 会话与节点遥测
 
 浏览器 Session 只通过 `src/lib/session-store.ts` 访问 Redis，禁止重新使用 Prisma Session 或数据库会话夹具。用户角色仍以数据库为准，Redis 故障不得放行。节点列表/选择器使用 nodes.summary，详情使用 nodes.get 和分类 nodes.snapshot；完整 nodes.list 仅保留兼容场景。实时缓存不能作为资源写操作或任务事实依据。指标接收队列仅允许合并遥测，禁止丢弃任务日志、结果与 ACK；新增指标同步维护单位、空值、设备身份及小时聚合契约。
+
+容器总览、节点容器异常筛选与 `containerActiveFailure` 复用同一判定。一次性任务通过明确 Docker 标签标识，近期重启按完整容器实例 ID 与连续采样计算。累计重启保留作为独立观测；旧 `containerFailure` 告警口径保留兼容。

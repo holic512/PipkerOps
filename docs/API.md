@@ -210,6 +210,10 @@ Worker 在实际执行前重新校验创建者权限。备份超时、失败或�
 
 `alerts.save.metric` 新增 `diskPercent` / `inodePercent`（所有已观察文件系统的最高百分比）、`collectionFailure`（过期/失败/未采样的采集类别数）、`serviceFailure`（失败服务数）、`containerFailure`（不健康、dead/restarting、累计重启≥3 的容器数）。这些指标选择 nodeId，不选择 probeId；持续时间与阈值契约沿用现有规则。部分采集只能证明已观察到的异常，不能证明恢复；缺采样会中断未触发窗口的持续计时，已触发事件保留直到有效采样证明恢复。恢复消息与触发消息均写入通知并发送到规则配置的 HTTPS Webhook。
 
+Ops 0.1.25 的集群总览和容器异常筛选使用 `containerActiveFailure`。包含当前健康检查失败、`dead` / `restarting`、已标记的一次性任务非零退出，或近 5 分钟观察到同一容器实例重启至少 3 次。总览显示触发原因及容器采样时间。API 保留 `observations.containerFailure` 和原告警规则口径；需要改用近期口径时，在告警配置中将指标改为「当前异常容器数」，重新进入规则持续时间窗口。
+
+Agent 0.1.9 的 `details` 容器行可提供 `exitCode`、`finishedAt`（来自已退出容器的 inspect）、`lifecycle: "oneshot"`（Docker 标签 `pipkerops.container-lifecycle=oneshot`）、`recentRestartCount` 和 `restartWindowComplete`。一次性服务在 Compose 服务的 `labels` 下显式设置该标签，退出码 0 显示已完成。窗口按完整 Docker 实例 ID 连续采样，重连、缺失观测、采样间隔超过 90 秒、计数下降或实例更换会重新建立基线。窗口不完整时可确认已观察到的正增量下界；旧 Agent 缺少窗口时仍检查当前健康和运行状态，未知的重启数据不会产生恢复。
+
 告警窗口通过 Redis Lua 原子评估；通知使用稳定事件 ID 幂等落库，数据库写入失败后可重新认领。Webhook 请求中的 id 是事件身份，发送后、确认前进程退出时可能重试，接收方须按 id 幂等处理。首次迁移保留旧版已触发状态，规则版本变化重置当前评估窗口；缺采样不产生恢复事件。
 
 监控时间约定：应用 PostgreSQL 连接固定 UTC 会话，服务器默认时区不变。nodes.monitoring.lastSampleAt 指实时资源 fast/legacy 的最近采样或最近资源历史回退，不由静态清单更新推进；longMissing 按该资源采样超过 5 分钟或从未采样计算。nodes.snapshot 的 stale 按连接状态、采样及接收时间判断，分类 cacheFallback 仅说明持久快照来源，不单独表示过期。nodes.summary 的粗粒度回退提示保持兼容。

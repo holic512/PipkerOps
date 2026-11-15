@@ -1,5 +1,6 @@
 "use client";
 import { clusterTarget } from "@/lib/cluster-monitoring";
+import { activeContainerMetric } from "@/lib/container-monitoring";
 import { useState } from "react";
 import Link from "next/link";
 import { DataTable, QueryState, useQuery } from "./shared";
@@ -88,7 +89,7 @@ export function ClusterMonitoring() {
               ["diskPercent", "磁盘容量"],
               ["inodePercent", "inode"],
               ["serviceFailure", "失败服务数"],
-              ["containerFailure", "异常容器数"],
+              [activeContainerMetric, "当前异常容器数"],
             ].map(([k, label]) => (
               <option key={k} value={k}>
                 {label} 降序
@@ -117,7 +118,7 @@ export function ClusterMonitoring() {
             "磁盘最高 %",
             "inode 最高 %",
             "失败服务",
-            "异常容器",
+            "当前异常容器",
             "最近资源采样",
             "异常上下文",
             "定位",
@@ -132,13 +133,21 @@ export function ClusterMonitoring() {
                 "diskPercent",
                 "inodePercent",
                 "serviceFailure",
-                "containerFailure",
+                activeContainerMetric,
               ].map((k) => (
                 <td key={k} title={r.observations[k]?.context}>
                   {value(r, k) ?? "无法确认"}
                   {r.observations[k]?.complete === false && value(r, k) !== null
-                    ? "（部分采集）"
+                    ? "（覆盖不完整）"
                     : ""}
+                  {k === activeContainerMetric &&
+                    r.observations[k]?.observedAt !== undefined && (
+                      <div className="muted">
+                        {date(
+                          new Date(r.observations[k].observedAt).toISOString(),
+                        )}
+                      </div>
+                    )}
                 </td>
               ))}
               <td>{date(r.lastSampleAt)}</td>

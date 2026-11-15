@@ -34,7 +34,7 @@ test("明细按数值排序且缺失值始终靠后，搜索与异常筛选共�
   );
   assert.equal(rows[0].pid, 1);
 });
-test("服务失败、容器不健康和累计重启可定位；正常停止容器不误报", () => {
+test("服务失败与当前容器异常可定位；累计重启不触发当前异常", () => {
   assert.equal(resourceWarning("cpu.total", 85), "使用率偏高（≥85%）");
   assert.equal(resourceWarning("cpu.total", null), null);
   assert.equal(
@@ -51,8 +51,24 @@ test("服务失败、容器不健康和累计重启可定位；正常停止容�
     "归一化负载偏高（≥100%）",
   );
   assert.equal(abnormalRow({ active: "failed" }, "service"), true);
-  assert.equal(abnormalRow({ health: "unhealthy" }, "container"), true);
-  assert.equal(abnormalRow({ restartCount: 3 }, "container"), true);
+  assert.equal(
+    abnormalRow({ state: "running", health: "unhealthy" }, "container"),
+    true,
+  );
+  assert.equal(
+    abnormalRow(
+      { state: "running", health: "healthy", restartCount: 8 },
+      "container",
+    ),
+    false,
+  );
+  assert.equal(
+    abnormalRow(
+      { state: "running", health: "healthy", recentRestartCount: 3 },
+      "container",
+    ),
+    true,
+  );
   assert.equal(
     abnormalRow({ state: "exited", restartCount: 0 }, "container"),
     false,

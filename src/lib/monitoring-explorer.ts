@@ -1,4 +1,5 @@
 /** Client-side exploration of bounded, already collected inventories. */
+import { assessContainer } from "./container-monitoring";
 import type { Snapshot } from "./telemetry";
 export function resourceWarning(
   metric: string,
@@ -29,14 +30,7 @@ export function abnormalRow(row: MonitoringRow, kind: InventoryKind) {
     return Number(row.cpuPercent) >= 80 || Number(row.memoryPercent) >= 80;
   if (kind === "service")
     return row.active === "failed" || row.sub === "failed";
-  if (kind === "container")
-    return (
-      row.health === "unhealthy" ||
-      ["restarting", "dead"].includes(String(row.state)) ||
-      Number(row.restartCount) >= 3 ||
-      !!row.inspectError ||
-      !!row.statsError
-    );
+  if (kind === "container") return assessContainer(row).status === "failure";
   return (
     Number(row.usedPercent) >= 85 ||
     Number(row.inodesUsedPercent) >= 85 ||

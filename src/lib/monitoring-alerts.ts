@@ -1,10 +1,12 @@
 import { snapshotFresh, type Snapshot } from "./telemetry";
+import { activeContainerMetric, assessContainer } from "./container-monitoring";
 export const monitoringAlertMetrics = [
   "diskPercent",
   "inodePercent",
   "collectionFailure",
   "serviceFailure",
   "containerFailure",
+  activeContainerMetric,
 ] as const;
 export function currentSnapshot(s: Snapshot, now: number) {
   return snapshotFresh(s, now);
@@ -80,6 +82,33 @@ export function monitoringObservation(
   const services = metric === "serviceFailure",
     field = services ? "services" : "containers";
   if (!Object.hasOwn(s.data, field)) return missing;
+  if (metric === activeContainerMetric) {
+    if (!Array.isArray(s.data.containers)) return missing;
+    const assessments = rows(s.data.containers).map((row) => ({
+      name: String(row.name ?? row.id ?? "未知容器"),
+      ...assessContainer(row),
+    }));
+    const bad = assessments.filter((result) => result.status === "failure");
+    complete =
+      (s.data.containerInventoryTruncated === false ||
+        (s.data.containerInventoryTruncated === undefined && !s.truncated)) &&
+      !s.errors.some((error) => /^(docker(?!Stats)|containers)/.test(error)) &&
+      assessments.length === s.data.containers.length &&
+      !assessments.some((result) => result.status === "unknown");
+    return {
+      value: bad.length || (complete ? 0 : null),
+      complete,
+      observedAt: Date.parse(s.sampledAt),
+      context: bad.length
+        ? `容器异常：${bad
+            .slice(0, 10)
+            .map(({ name, reason }) => `${name}（${reason}）`)
+            .join("、")}${bad.length > 10 ? "等" : ""}`
+        : complete
+          ? "未观察到容器异常"
+          : "等待完整容器状态与近期重启采样",
+    };
+  }
   complete &&= !s.errors.some((e) =>
     services ? /^(systemd|services)/.test(e) : /^(docker|containers)/.test(e),
   );

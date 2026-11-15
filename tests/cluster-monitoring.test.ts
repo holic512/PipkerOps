@@ -5,6 +5,7 @@ import {
   clusterTarget,
 } from "../src/lib/cluster-monitoring";
 import type { Snapshot } from "../src/lib/telemetry";
+import { activeContainerMetric } from "../src/lib/container-monitoring";
 const now = Date.now();
 const node = {
   id: "n",
@@ -85,4 +86,35 @@ test("排行定位选择正确分类，失效采样与服务异常保留对应�
     ),
     "services",
   );
+});
+
+test("容器总览使用当前异常口径并保留旧 RPC 指标", () => {
+  const details = {
+    ...snapshot("details"),
+    data: {
+      containers: [
+        {
+          name: "redis",
+          state: "running",
+          health: "healthy",
+          restartCount: 8,
+          recentRestartCount: 0,
+          restartWindowComplete: true,
+        },
+      ],
+    },
+  };
+  const row = clusterProjection(node, [snapshot("fast"), details], now);
+  assert.equal(row.observations.containerFailure.value, 1);
+  assert.equal(row.observations[activeContainerMetric].value, 0);
+  assert.ok(!row.reasons.some((reason) => reason.includes("redis")));
+  assert.equal(clusterTarget(row, "cpuPercent"), "live");
+  details.data.containers[0].recentRestartCount = 3;
+  const active = clusterProjection(node, [snapshot("fast"), details], now);
+  assert.ok(
+    active.reasons.some((reason) =>
+      reason.includes("redis（近 5 分钟重启 3 次）"),
+    ),
+  );
+  assert.equal(clusterTarget(active, "cpuPercent"), "services");
 });
