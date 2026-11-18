@@ -17,13 +17,14 @@ export type ObjectSelection = {
   to?: string;
   focusId?: string;
 };
+export type MonitoringDevices = { mount: string; network: string; io: string };
 type Workspace = {
   rank: string;
   hours: number;
-  devices: { mount: string; network: string; io: string };
+  devices: MonitoringDevices;
   filters: Record<
     string,
-    { query: string; onlyAbnormal: boolean; sort: string; device: string }
+    { query: string; onlyAbnormal: boolean; sort: string }
   >;
   object?: ObjectSelection;
   returnTab?: string;

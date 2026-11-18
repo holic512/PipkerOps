@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module node-monitoring-ui
  * @description 集群概览、节点信息与分类编辑、实际指标历史及共用节点表格单元。
- * @logic 统一查询真实 API；紧凑标题下的信息区保留主机与系统身份；节点名称、文件夹和标签共用编辑弹窗，未采样显示空态。
+ * @logic 统一查询真实 API；详情信息区并排展示接入主机、状态和系统身份；文件夹归属留在编辑弹窗，未采样显示空态。
  * @dependencies React, SWR, node services
  * @index_tags nodes, overview, metrics, ui
  * @author holic512
@@ -43,7 +43,6 @@ import {
 import { Button } from "./ui/button";
 import { ViewTabs } from "./ui/tabs";
 import { NodeEditor, NodeLabels } from "./node-editor";
-import { folderPath } from "@/lib/node-tree";
 import { NodeMonitoring } from "./node-monitoring";
 import { MonitoringWorkspace } from "./monitoring-workspace";
 import type { HistorySelection } from "@/lib/monitoring-explorer";
@@ -278,10 +277,13 @@ export function NodeDetail({ id }: { id: string }) {
   const search = useSearchParams();
   const monitoringContext = search.get("context")?.slice(0, 1000);
   const q = useQuery<NodeData>("nodes.get", { nodeId: id });
-  const folders = useQuery<NodeFolderData[]>("nodeFolders.list");
   const user = useQuery<{ role: string }>("users.me", {}, 0);
   const canWrite = !!user.data && user.data.role !== "VIEWER";
+  const folders = useQuery<NodeFolderData[]>(
+    canWrite ? "nodeFolders.list" : null,
+  );
   const node = q.data;
+  const agentHost = node?.agentUrl ? new URL(node.agentUrl).hostname : null;
   const [hours, setHours] = useState(1);
   const [edit, setEdit] = useState(false);
   const [tab, setTab] = useState(
@@ -303,10 +305,12 @@ export function NodeDetail({ id }: { id: string }) {
   const op = useOperation(() => void q.mutate());
   return (
     <>
-      <Link href="/nodes" className="back-link">
-        <ChevronLeft size={15} />
-        节点管理
-      </Link>
+      <Button variant="link" asChild>
+        <Link href="/nodes" className="back-link">
+          <ChevronLeft size={16} strokeWidth={1.5} aria-hidden="true" />
+          节点管理
+        </Link>
+      </Button>
       <PageTitle title={node?.name ?? "节点详情"}>
         <Button variant="outline" asChild>
           <Link href={`/resources?node=${id}`}>节点资源</Link>
@@ -356,12 +360,6 @@ export function NodeDetail({ id }: { id: string }) {
           </Button>
         </p>
       )}
-      {node && (
-        <p className="muted">
-          {node.agentUrl ?? "尚未导入新接入信息"}
-          {node.connectionError ? ` · ${node.connectionError}` : ""}
-        </p>
-      )}
       {edit && node && folders.data && (
         <NodeEditor
           node={node}
@@ -384,19 +382,7 @@ export function NodeDetail({ id }: { id: string }) {
       >
         {node && (
           <>
-            <p className="muted">
-              所属文件夹：
-              {node.folderId
-                ? folders.data
-                  ? folderPath(node.folderId, folders.data) ||
-                    "分类已变更，请刷新"
-                  : folders.error
-                    ? "分类加载失败"
-                    : "正在加载分类…"
-                : "根目录"}
-            </p>
-            <NodeLabels labels={node.labels} />
-            <div className="node-summary">
+            <div className="surface node-detail-summary">
               <Status
                 value={
                   node.status === "APPROVED"
@@ -406,15 +392,51 @@ export function NodeDetail({ id }: { id: string }) {
                     : node.status
                 }
               />
-              <span>主机名 {node.hostname ?? "等待采集"}</span>
-              <span>
-                系统 {node.os ?? "等待采集"} / {node.arch ?? "—"}
-              </span>
-              <span>Agent {node.agentVersion ?? "—"}</span>
-              <span>最近心跳 {date(node.lastSeenAt)}</span>
-              <span>
-                节点 ID <code>{node.id}</code>
-              </span>
+              <dl className="node-detail-fields">
+                <div>
+                  <dt>接入主机</dt>
+                  <dd>
+                    {agentHost ? (
+                      <code title={node.agentUrl ?? undefined}>
+                        {agentHost}
+                      </code>
+                    ) : (
+                      "未配置"
+                    )}
+                  </dd>
+                </div>
+                {node.hostname !== node.name && (
+                  <div>
+                    <dt>主机名</dt>
+                    <dd>{node.hostname ?? "等待采集"}</dd>
+                  </div>
+                )}
+                <div>
+                  <dt>系统</dt>
+                  <dd>
+                    {node.os ?? "等待采集"}
+                    {node.arch ? ` / ${node.arch}` : ""}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Agent</dt>
+                  <dd>{node.agentVersion ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>最近心跳</dt>
+                  <dd>{date(node.lastSeenAt)}</dd>
+                </div>
+                <div>
+                  <dt>节点 ID</dt>
+                  <dd>
+                    <code>{node.id}</code>
+                  </dd>
+                </div>
+              </dl>
+              <NodeLabels labels={node.labels} />
+              {node.connectionError && (
+                <p className="error-text">连接异常：{node.connectionError}</p>
+              )}
             </div>
             <MonitoringWorkspace nodeId={id} onNavigate={setTab}>
               <ViewTabs

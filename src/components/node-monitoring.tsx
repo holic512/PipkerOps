@@ -1,6 +1,17 @@
 "use client";
+/**
+ * @file node-monitoring.tsx
+ * @project PipkerOps
+ * @module node-monitoring-ui
+ * @description 节点指标概览、资源明细和分类采集诊断。
+ * @logic 资源页集中筛选设备并同步概览；历史入口保留准确指标和设备身份，不改变设备筛选。
+ * @dependencies React, shared queries, RingChart, MonitoringWorkspace
+ * @index_tags nodes, telemetry, device-filters, history
+ * @author holic512
+ */
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { History } from "lucide-react";
 import { useQuery, QueryState, DataTable, JsonView } from "./shared";
 import { Button } from "./ui/button";
 import { ringValueLabel } from "@/lib/ring-chart";
@@ -33,7 +44,10 @@ import {
   ProcessRanking,
   MetricTrend,
 } from "./monitoring-dashboard";
-import { useMonitoringWorkspace } from "./monitoring-workspace";
+import {
+  useMonitoringWorkspace,
+  type MonitoringDevices,
+} from "./monitoring-workspace";
 import { ObjectActions, ObjectHistory, ProcessWatches } from "./object-history";
 type Row = Record<string, unknown>;
 type SnapshotResult = {
@@ -62,6 +76,7 @@ function DetailTable({
   legacy = false,
   snapshot,
   kind,
+  device = "",
   onHistory,
 }: {
   title: string;
@@ -70,6 +85,7 @@ function DetailTable({
   legacy?: boolean;
   snapshot?: Snapshot & { stale?: boolean };
   kind?: InventoryKind;
+  device?: string;
   onHistory?: (target: Pick<HistorySelection, "metric" | "device">) => void;
 }) {
   const workspace = useMonitoringWorkspace();
@@ -77,13 +93,12 @@ function DetailTable({
     query: "",
     onlyAbnormal: false,
     sort: "",
-    device: "",
   });
   const filter = workspace?.state.filters[title] ?? {
     ...local,
     onlyAbnormal: workspace?.state.abnormal ?? local.onlyAbnormal,
   };
-  const { query, onlyAbnormal, sort, device } = filter;
+  const { query, onlyAbnormal, sort } = filter;
   const updateFilter = (patch: Partial<typeof local>) => {
     setLocal({ ...filter, ...patch });
     workspace?.setState((s) => ({
@@ -95,14 +110,10 @@ function DetailTable({
   const setOnlyAbnormal = (onlyAbnormal: boolean) =>
     updateFilter({ onlyAbnormal });
   const setSort = (sort: string) => updateFilter({ sort });
-  const setDevice = (device: string) => updateFilter({ device });
   const visible = kind
     ? exploreRows(values, kind, query, onlyAbnormal, sort, device)
     : values;
   const keys = monitoringRowKeys(visible);
-  const devices = [
-    ...new Set(values.map((r) => String(r.mountpoint ?? r.name ?? r.device))),
-  ];
   return (
     <section className="panel">
       <div className="panel-header">
@@ -119,23 +130,6 @@ function DetailTable({
               placeholder="名称、PID、状态或归属"
             />
           </label>
-          {["disk", "network", "io"].includes(kind) && (
-            <label>
-              设备
-              <NativeSelect
-                aria-label={`${title}设备`}
-                value={device}
-                onChange={(e) => setDevice(e.target.value)}
-              >
-                <option value="">全部设备</option>
-                {devices.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </NativeSelect>
-            </label>
-          )}
           <label>
             排序
             <NativeSelect
@@ -431,193 +425,143 @@ export function NumericHistory({
 function LiveSummary({
   fast,
   disks,
+  devices,
   onHistory,
 }: {
   fast?: SnapshotResult;
   disks?: SnapshotResult;
+  devices: MonitoringDevices;
   onHistory: (target: Pick<HistorySelection, "metric" | "device">) => void;
 }) {
-  const workspace = useMonitoringWorkspace();
-  const [local, setLocal] = useState({ mount: "", network: "", io: "" });
-  const { mount, network, io } = workspace?.state.devices ?? local;
-  const update = (patch: Partial<typeof local>) => {
-    setLocal((s) => ({ ...s, ...patch }));
-    workspace?.setState((s) => ({ ...s, devices: { ...s.devices, ...patch } }));
-  };
-  const setMount = (mount: string) => update({ mount });
-  const setNetwork = (network: string) => update({ network });
-  const setIO = (io: string) => update({ io });
   const f = fast?.categories[0],
     d = disks?.categories[0];
-  const mounts = rows(disks?.payload.disk).map((r) => String(r.mountpoint));
-  const networkNames = [
-    ...new Set(
-      f?.series
-        .filter((p) => p.metric.startsWith("network."))
-        .map((p) => p.device) ?? [],
-    ),
-  ];
-  const ioNames = [
-    ...new Set(
-      f?.series
-        .filter((p) => p.metric.startsWith("io."))
-        .map((p) => p.device) ?? [],
-    ),
-  ];
-  const chosenMount = mount || (mounts.includes("/") ? "/" : (mounts[0] ?? ""));
-  const chosenNetwork = network || networkNames[0] || "",
-    chosenIO = io || ioNames[0] || "";
   const cards: [string, string, string, Snapshot | undefined, string?][] = [
     ["CPU", "cpu.total", "", f],
     ["1 分钟负载", "load.1", "", f],
     ["内存", "memory.percent", "", f],
     ["Swap", "swap.percent", "", f],
-    ["磁盘容量", "disk.percent", chosenMount, d],
-    ["网络接收", "network.recv", chosenNetwork, f, "network.sent"],
-    ["IO 读取", "io.read", chosenIO, f, "io.write"],
+    ["磁盘容量", "disk.percent", devices.mount, d],
+    ["网络接收", "network.recv", devices.network, f, "network.sent"],
+    ["IO 读取", "io.read", devices.io, f, "io.write"],
   ];
   return (
-    <section aria-label="主要资源状态" className="monitoring-overview">
-      <div className="toolbar monitoring-filters">
-        <label>
-          磁盘
-          <NativeSelect
-            aria-label="概览磁盘"
-            value={chosenMount}
-            onChange={(e) => setMount(e.target.value)}
+    <section aria-label="主要资源状态" className="monitoring-summary-grid">
+      {cards.map(([label, metric, device, s, secondary]) => {
+        const point = s?.series.find(
+          (p) => p.metric === metric && p.device === device,
+        );
+        const state = availability({
+          value: point?.value,
+          snapshot: s,
+          legacy: metric.startsWith("disk.") ? disks?.legacy : fast?.legacy,
+          row: point ?? { metric },
+        });
+        const value = point?.value;
+        const warning =
+          state.state === "ok" ? resourceWarning(metric, value, s) : null;
+        const high = !!warning;
+        const unavailable = state.state !== "ok";
+        const other = s?.series.find(
+          (p) => p.metric === secondary && p.device === device,
+        );
+        const otherState = availability({
+          value: other?.value,
+          snapshot: s,
+          legacy: fast?.legacy,
+          row: other ?? { metric: secondary },
+        });
+        const normalized = s?.series.find(
+          (p) => p.metric === "load.normalized",
+        )?.value;
+        const pairAvailable =
+          typeof value === "number" &&
+          typeof other?.value === "number" &&
+          otherState.state === "ok";
+        const ringValue =
+          metric === "load.1"
+            ? normalized
+            : secondary
+              ? pairAvailable
+                ? value
+                : null
+              : value;
+        const centerValue = ringValueLabel(value, point?.unit);
+        const otherValue = ringValueLabel(other?.value, other?.unit);
+        const ringTotal =
+          secondary && pairAvailable ? value + other!.value! : 100;
+        const meaning =
+          metric === "load.1"
+            ? `归一化负载 ${normalized == null ? "等待采样" : `${text(normalized)}%`}`
+            : secondary
+              ? pairAvailable && ringTotal === 0
+                ? metric.startsWith("network")
+                  ? "当前无收发流量"
+                  : "当前无读写 IO"
+                : metric.startsWith("network")
+                  ? "接收 / 发送占比"
+                  : "读取 / 写入占比"
+              : "占用 / 总量";
+        return (
+          <section
+            className="surface monitoring-summary-card"
+            data-metric={metric}
+            key={metric}
           >
-            {[...new Set([chosenMount, ...mounts])].map((n) => (
-              <option key={n} value={n}>
-                {n || "等待设备采样"}
-              </option>
-            ))}
-          </NativeSelect>
-        </label>
-        <label>
-          网卡
-          <NativeSelect
-            aria-label="概览网卡"
-            value={chosenNetwork}
-            onChange={(e) => setNetwork(e.target.value)}
-          >
-            {[...new Set([chosenNetwork, ...networkNames])].map((n) => (
-              <option key={n} value={n}>
-                {n || "等待设备采样"}
-              </option>
-            ))}
-          </NativeSelect>
-        </label>
-        <label>
-          IO 设备
-          <NativeSelect
-            aria-label="概览 IO 设备"
-            value={chosenIO}
-            onChange={(e) => setIO(e.target.value)}
-          >
-            {[...new Set([chosenIO, ...ioNames])].map((n) => (
-              <option key={n} value={n}>
-                {n || "等待设备采样"}
-              </option>
-            ))}
-          </NativeSelect>
-        </label>
-      </div>
-      <div className="monitoring-summary-grid">
-        {cards.map(([label, metric, device, s, secondary]) => {
-          const point = s?.series.find(
-            (p) => p.metric === metric && p.device === device,
-          );
-          const state = availability({
-            value: point?.value,
-            snapshot: s,
-            legacy: metric.startsWith("disk.") ? disks?.legacy : fast?.legacy,
-            row: point ?? { metric },
-          });
-          const value = point?.value;
-          const warning =
-            state.state === "ok" ? resourceWarning(metric, value, s) : null;
-          const high = !!warning;
-          const unavailable = state.state !== "ok";
-          const other = s?.series.find(
-            (p) => p.metric === secondary && p.device === device,
-          );
-          const otherState = availability({
-            value: other?.value,
-            snapshot: s,
-            legacy: fast?.legacy,
-            row: other ?? { metric: secondary },
-          });
-          const normalized = s?.series.find(
-            (p) => p.metric === "load.normalized",
-          )?.value;
-          const pairAvailable =
-            typeof value === "number" &&
-            typeof other?.value === "number" &&
-            otherState.state === "ok";
-          const ringValue =
-            metric === "load.1"
-              ? normalized
-              : secondary
-                ? pairAvailable
-                  ? value
-                  : null
-                : value;
-          const centerValue = ringValueLabel(value, point?.unit);
-          const ringTotal =
-            secondary && pairAvailable ? value + other!.value! : 100;
-          const meaning =
-            metric === "load.1"
-              ? `归一化负载 ${normalized == null ? "等待采样" : `${text(normalized)}%`}`
-              : secondary
-                ? pairAvailable && ringTotal === 0
-                  ? metric.startsWith("network")
-                    ? "当前无收发流量"
-                    : "当前无读写 IO"
-                  : metric.startsWith("network")
-                    ? "接收 / 发送占比"
-                    : "读取 / 写入占比"
-                : "占用 / 总量";
-          return (
-            <section className="surface monitoring-summary-card" key={metric}>
-              <span>
-                {label}
-                {device ? ` · ${device}` : ""}
-              </span>
-              <div className="monitoring-summary-visual">
-                <RingChart
-                  label={`${label}${device ? ` · ${device}` : ""}：${typeof value === "number" ? `${text(value)} ${point?.unit ?? ""}` : availabilityLabels[state.state]}；${meaning}；${warning ?? availabilityLabels[state.state]}`}
-                  value={ringValue}
-                  total={ringTotal}
-                  composition={!!secondary}
-                  muted={unavailable}
-                  danger={high}
-                >
-                  <strong className={high ? "error-text" : ""}>
-                    {centerValue?.value ?? availabilityLabels[state.state]}
-                  </strong>
-                  {typeof value === "number" && (
-                    <small>{centerValue?.unit || "负载"}</small>
-                  )}
-                </RingChart>
-                <span className="monitoring-ring-caption muted">{meaning}</span>
+            <div className="monitoring-summary-heading">
+              <div>
+                <h2>{label}</h2>
+                {device && <code title={device}>{device}</code>}
               </div>
-              <small
-                className={
-                  high ||
-                  ["failed", "permission_denied", "stale"].includes(state.state)
-                    ? "error-text"
-                    : "muted"
-                }
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onHistory({ metric, device })}
+                aria-label={`查看${label}${device ? ` · ${device}` : ""}历史`}
+                title="查看历史"
               >
-                {warning ?? availabilityLabels[state.state]}
-                {unavailable ? ` · ${state.reason}` : ""}
-              </small>
+                <History size={16} strokeWidth={1.5} aria-hidden="true" />
+              </Button>
+            </div>
+            <div className="monitoring-summary-visual">
+              <RingChart
+                label={`${label}${device ? ` · ${device}` : ""}：${typeof value === "number" ? `${text(value)} ${point?.unit ?? ""}` : availabilityLabels[state.state]}；${meaning}；${warning ?? availabilityLabels[state.state]}`}
+                value={ringValue}
+                total={ringTotal}
+                composition={!!secondary}
+                muted={unavailable}
+                danger={high}
+              >
+                <strong className={high ? "error-text" : ""}>
+                  {centerValue?.value ?? availabilityLabels[state.state]}
+                </strong>
+                {typeof value === "number" && (
+                  <small>{centerValue?.unit || "负载"}</small>
+                )}
+              </RingChart>
+              <span className="monitoring-ring-caption muted">{meaning}</span>
+            </div>
+            <div className="monitoring-summary-notes">
+              {(warning || unavailable) && (
+                <small
+                  className={
+                    high ||
+                    ["failed", "permission_denied", "stale"].includes(
+                      state.state,
+                    )
+                      ? "error-text"
+                      : "muted"
+                  }
+                >
+                  {warning ??
+                    (typeof value === "number"
+                      ? `${availabilityLabels[state.state]} · ${state.reason}`
+                      : state.reason)}
+                </small>
+              )}
               {metric === "load.1" && (
-                <small className="muted">
-                  5 / 15 分钟：
-                  {text(
-                    s?.series.find((p) => p.metric === "load.5")?.value,
-                  )} /{" "}
+                <small>
+                  5 / 15 分钟{" "}
+                  {text(s?.series.find((p) => p.metric === "load.5")?.value)} /{" "}
                   {text(s?.series.find((p) => p.metric === "load.15")?.value)}
                 </small>
               )}
@@ -631,23 +575,72 @@ function LiveSummary({
                       : "muted"
                   }
                 >
-                  {metric.startsWith("network") ? "发送" : "写入"}：
-                  {other?.value == null
-                    ? `${availabilityLabels[otherState.state]} · ${otherState.reason}`
-                    : `${text(other.value)} ${other.unit}`}
+                  {metric.startsWith("network") ? "发送" : "写入"}{" "}
+                  {otherValue
+                    ? `${otherValue.value} ${otherValue.unit}`
+                    : `${availabilityLabels[otherState.state]} · ${otherState.reason}`}
                 </small>
               )}
-              <Button
-                variant="link"
-                onClick={() => onHistory({ metric, device })}
-                aria-label={`${label}${device}查看历史`}
-              >
-                查看历史
-              </Button>
-            </section>
-          );
-        })}
-      </div>
+            </div>
+          </section>
+        );
+      })}
+    </section>
+  );
+}
+
+function ResourceDeviceFilters({
+  devices,
+  deviceRows,
+  onChange,
+}: {
+  devices: MonitoringDevices;
+  deviceRows: Record<keyof MonitoringDevices, Row[]>;
+  onChange: (key: keyof MonitoringDevices, value: string) => void;
+}) {
+  return (
+    <section
+      className="surface monitoring-device-filters"
+      aria-label="设备筛选"
+    >
+      {(
+        [
+          ["mount", "磁盘挂载点", "全部挂载点", "mountpoint"],
+          ["network", "网卡", "全部网卡", "name"],
+          ["io", "IO 设备", "全部设备", "name"],
+        ] as const
+      ).map(([key, label, all, field]) => {
+        const names = [
+          ...new Set(
+            deviceRows[key].flatMap((row) => {
+              const name = row[field];
+              return typeof name === "string" && name ? [name] : [];
+            }),
+          ),
+        ];
+        const selected = devices[key];
+        return (
+          <label key={key}>
+            {label}
+            <NativeSelect
+              value={selected}
+              title={selected || undefined}
+              disabled={!names.length && !selected}
+              onChange={(e) => onChange(key, e.target.value)}
+            >
+              <option value="">{names.length ? all : "暂无设备"}</option>
+              {selected && !names.includes(selected) && (
+                <option value={selected}>{selected}（未采集）</option>
+              )}
+              {names.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </NativeSelect>
+          </label>
+        );
+      })}
     </section>
   );
 }
@@ -665,6 +658,22 @@ export function NodeMonitoring({
 }) {
   const workspace = useMonitoringWorkspace();
   const [showRaw, setShowRaw] = useState(false);
+  const [localDevices, setLocalDevices] = useState<MonitoringDevices>({
+    mount: "",
+    network: "",
+    io: "",
+  });
+  const devices = workspace?.state.devices ?? localDevices;
+  const setDevice = (key: keyof MonitoringDevices, value: string) => {
+    if (workspace) {
+      workspace.setState((s) => ({
+        ...s,
+        devices: { ...s.devices, [key]: value },
+      }));
+    } else {
+      setLocalDevices((s) => ({ ...s, [key]: value }));
+    }
+  };
   const [localHistory, setLocalHistory] = useState<HistorySelection>({
     metric: "cpu.total",
     device: undefined,
@@ -682,15 +691,6 @@ export function NodeMonitoring({
   };
   const openHistory = (target: Pick<HistorySelection, "metric" | "device">) => {
     changeHistory({ ...selectedHistory, ...target });
-    const family = target.metric.split(".")[0];
-    if (target.device && ["disk", "network", "io"].includes(family))
-      workspace?.setState((s) => ({
-        ...s,
-        devices: {
-          ...s.devices,
-          [family === "disk" ? "mount" : family]: target.device!,
-        },
-      }));
     historyRef.current?.focus();
     historyRef.current?.scrollIntoView({ block: "start" });
   };
@@ -723,6 +723,32 @@ export function NodeMonitoring({
   );
   const p = q.data?.payload ?? {},
     f = fast.data?.payload ?? {};
+  const deviceRows = {
+    mount: rows(p.disk),
+    network: rows(fast.data?.legacy ? f.network : f.networkRates),
+    io: fast.data?.legacy
+      ? Object.entries(object(f.io)).map(([name, value]) => ({
+          ...object(value),
+          name,
+        }))
+      : rows(f.ioRates),
+  };
+  const mounts = rows(diskSummary.data?.payload.disk)
+    .map((row) => row.mountpoint)
+    .filter((mount): mount is string => typeof mount === "string");
+  const series = (view === "resources" ? fast.data : q.data)?.categories[0]
+    ?.series;
+  const chartDevices = {
+    mount: devices.mount || (mounts.includes("/") ? "/" : (mounts[0] ?? "")),
+    network:
+      devices.network ||
+      series?.find((point) => point.metric.startsWith("network."))?.device ||
+      "",
+    io:
+      devices.io ||
+      series?.find((point) => point.metric.startsWith("io."))?.device ||
+      "",
+  };
   const names: Record<string, string> = {
     total: "总量 B",
     available: "可用 B",
@@ -776,11 +802,19 @@ export function NodeMonitoring({
           <LiveSummary
             fast={q.data}
             disks={diskSummary.data}
+            devices={chartDevices}
             onHistory={openHistory}
           />
         )}
         {workspace?.state.returnTab === view && (
           <ObjectHistory nodeId={nodeId} />
+        )}
+        {view === "resources" && (
+          <ResourceDeviceFilters
+            devices={devices}
+            deviceRows={deviceRows}
+            onChange={setDevice}
+          />
         )}
         {view !== "live" && (
           <section className="panel" aria-label="采集诊断">
@@ -870,18 +904,8 @@ export function NodeMonitoring({
                 retry: () => void detailSummary.mutate(),
               }}
               all={allSummary.data}
-              network={
-                workspace?.state.devices.network ||
-                q.data?.categories[0]?.series.find(
-                  (p) => p.metric === "network.recv",
-                )?.device
-              }
-              io={
-                workspace?.state.devices.io ||
-                q.data?.categories[0]?.series.find(
-                  (p) => p.metric === "io.readIOPS",
-                )?.device
-              }
+              network={chartDevices.network || undefined}
+              io={chartDevices.io || undefined}
               hours={selectedHistory.hours}
               onHistory={openHistory}
               onNavigate={workspace?.navigate ?? (() => {})}
@@ -981,7 +1005,7 @@ export function NodeMonitoring({
                   ["network.recv", "接收"],
                   ["network.sent", "发送"],
                 ]}
-                device={workspace?.state.devices.network || undefined}
+                device={chartDevices.network || undefined}
                 hours={selectedHistory.hours}
                 title="网络吞吐 · B/s"
                 onHistory={openHistory}
@@ -992,7 +1016,7 @@ export function NodeMonitoring({
                   ["io.readIOPS", "读取"],
                   ["io.writeIOPS", "写入"],
                 ]}
-                device={workspace?.state.devices.io || undefined}
+                device={chartDevices.io || undefined}
                 hours={selectedHistory.hours}
                 title="磁盘 IOPS"
                 onHistory={openHistory}
@@ -1003,7 +1027,7 @@ export function NodeMonitoring({
                   ["io.readLatency", "读取延迟"],
                   ["io.writeLatency", "写入延迟"],
                 ]}
-                device={workspace?.state.devices.io || undefined}
+                device={chartDevices.io || undefined}
                 hours={selectedHistory.hours}
                 title="IO 延迟 · ms"
                 onHistory={openHistory}
@@ -1011,7 +1035,7 @@ export function NodeMonitoring({
               <MetricTrend
                 nodeId={nodeId}
                 metrics={[["io.queue", "队列深度"]]}
-                device={workspace?.state.devices.io || undefined}
+                device={chartDevices.io || undefined}
                 hours={selectedHistory.hours}
                 title="IO 平均队列深度"
                 onHistory={openHistory}
@@ -1021,9 +1045,10 @@ export function NodeMonitoring({
               legacy={q.data?.legacy}
               snapshot={q.data?.categories[0]}
               kind="disk"
+              device={devices.mount}
               onHistory={openHistory}
               title="文件系统容量与 inode"
-              values={rows(p.disk).map((row) =>
+              values={deviceRows.mount.map((row) =>
                 q.data?.legacy && !Object.hasOwn(row, "available")
                   ? { ...row, available: row.free, free: undefined }
                   : row,
@@ -1054,13 +1079,14 @@ export function NodeMonitoring({
                 legacy={fast.data?.legacy}
                 snapshot={fast.data?.categories[0]}
                 kind="network"
+                device={devices.network}
                 onHistory={openHistory}
                 title={
                   fast.data?.legacy
                     ? "网卡累计流量（速率见资源历史）"
                     : "网卡吞吐"
                 }
-                values={rows(fast.data?.legacy ? f.network : f.networkRates)}
+                values={deviceRows.network}
                 columns={
                   fast.data?.legacy
                     ? [
@@ -1089,20 +1115,14 @@ export function NodeMonitoring({
                 legacy={fast.data?.legacy}
                 snapshot={fast.data?.categories[0]}
                 kind="io"
+                device={devices.io}
                 onHistory={openHistory}
                 title={
                   fast.data?.legacy
                     ? "磁盘 IO 累计计数（速率见资源历史）"
                     : "磁盘 IO（多队列设备忙碌率不代表性能饱和度）"
                 }
-                values={
-                  fast.data?.legacy
-                    ? Object.entries(object(f.io)).map(([name, value]) => ({
-                        ...object(value),
-                        name,
-                      }))
-                    : rows(f.ioRates)
-                }
+                values={deviceRows.io}
                 columns={
                   fast.data?.legacy
                     ? [

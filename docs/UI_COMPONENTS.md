@@ -117,7 +117,9 @@ NodeMonitoring 兼容旧 Agent 的已上报基础指标：实时数值由服务�
 
 NodeMonitoring 在各分类上方组合 DataTable 展示采集诊断：当前状态、采样时间、最近完整成功、耗时、错误和截断处理建议；“采集详情”汇总所有分类，JSON 仅为辅助。`src/lib/monitoring-availability.ts` 统一九种指标可用性及原因；无采样、过期、旧 Agent、缺基线、无设备世代身份必须区分，有效零值仍显示零。容器无健康检查或 Compose 归属显示不适用，inspect 失败单独显示原因。已有数值系列允许可选 status/reason，不改变单位、null 或历史聚合含义。
 
-实时概览顶部按所选磁盘、网卡和 IO 设备展示七类资源摘要，明细与诊断位于下方。明细表组合 Input/NativeSelect/Checkbox 支持搜索、排序、设备及异常筛选；只针对已采集范围。`monitoring-explorer.ts` 维护筛选和准确设备历史目标。容器的异常判定与集群总览复用 `assessContainer`；累计重启保留在独立列，近 5 分钟窗口不完整时显示已知下界或无法确认，过期的判定标注上次采样。NodeMonitoring/NumericHistory 可接收受控 historySelection/selection 与更新回调；节点详情持有时间范围、指标及设备，兼容指标之间切换保留设备，跨类别清理无效设备。查看历史使用 Button，定位并聚焦页面下方历史区域；采样缺口和单位继续由现有 ResourceChart 处理。
+节点详情在标题下集中显示接入主机（取已配置 Agent 地址的主机部分）、在线状态及系统信息；文件夹归属仍在编辑节点中查看和修改。实时概览直接展示七类资源摘要，卡片右上角使用带可访问名称的图标 Button 查看历史，长设备名称不挤动环图。磁盘挂载点、网卡、IO 设备的 NativeSelect 集中在「磁盘 / 网络 / IO」标签页顶部，作用于对应明细及网卡、IO 趋势，选择由 MonitoringWorkspace 保持并同步概览。未指定设备时明细显示全部，概览和趋势使用根挂载点或首个采样设备，不把设备速率合计。明细表继续支持独立的搜索、排序与异常筛选，均只针对已采集范围。
+
+`monitoring-explorer.ts` 维护筛选和准确设备历史目标。容器的异常判定与集群总览复用 `assessContainer`；累计重启保留在独立列，近 5 分钟窗口不完整时显示已知下界或无法确认，过期的判定标注上次采样。NodeMonitoring/NumericHistory 可接收受控 historySelection/selection 与更新回调；节点详情持有时间范围、指标及历史设备，兼容指标之间切换保留设备，跨类别清理无效设备。查看历史定位并聚焦页面下方历史区域，不改动设备筛选；采样缺口和单位继续由现有 ResourceChart 处理。
 
 `@/components/cluster-monitoring` 的 ClusterMonitoring 用于集群总览，读取 nodes.monitoring 的授权紧凑投影，组合 Input、NativeSelect、DataTable、QueryState 和链接 Button。支持节点/标签/异常搜索、状态筛选、资源降序排行；无法确认的指标保留空值。节点详情接受经过白名单校验的 monitor 查询参数及纯文本 context，展示来源上下文并打开对应分类。
 

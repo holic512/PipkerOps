@@ -60,28 +60,37 @@
 }
 .monitoring-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: var(--space-2);
 }
 .monitoring-summary-card {
-  display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
-  align-content: start;
-  align-items: start;
-  gap: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   padding: var(--space-3);
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.monitoring-summary-card > span:first-child {
-  grid-column: 1 / -1;
+.monitoring-summary-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-1);
+  min-height: calc(var(--control-line-height) + var(--space-4));
 }
-.monitoring-summary-card > small,
-.monitoring-summary-card > .button {
-  grid-column: 2;
+.monitoring-summary-heading h2 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--control-line-height);
 }
-.monitoring-summary-card > .button {
-  justify-self: start;
+.monitoring-summary-heading code {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-xs);
+  line-height: var(--space-4);
 }
 .chart-container {
   width: 100%;
@@ -107,16 +116,20 @@
   font-variant-numeric: tabular-nums;
 }
 .monitoring-summary-visual {
-  grid-column: 1;
-  grid-row: 2 / span 5;
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 100%;
   gap: var(--space-1);
+  text-align: center;
+}
+.monitoring-summary-visual .ring-chart {
+  width: min(100%, 112px);
+  height: auto;
+  aspect-ratio: 1;
 }
 .monitoring-summary-card .ring-chart-center strong {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
   line-height: 1.2;
 }
 .ring-chart-center small,
@@ -127,8 +140,27 @@
 .ring-chart[data-state="unknown"] .ring-chart-center strong {
   font-size: var(--font-size-base);
 }
-.monitoring-summary-card strong {
-  font-size: var(--font-size-lg);
+.monitoring-summary-notes {
+  display: grid;
+  gap: var(--space-1);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.monitoring-summary-notes:empty {
+  display: none;
+}
+.monitoring-device-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+.monitoring-device-filters label {
+  min-width: 0;
+  gap: var(--space-1);
+}
+.monitoring-device-filters select {
+  text-overflow: ellipsis;
 }
 .monitoring-filters {
   padding: var(--space-3);
@@ -142,39 +174,42 @@
 .monitoring-filters input:not([type="checkbox"]) {
   width: 180px;
 }
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
   .monitoring-summary-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+  .monitoring-summary-card {
+    grid-column: span 3;
+  }
+  .monitoring-summary-card:nth-child(n + 5) {
+    grid-column: span 4;
   }
 }
 @media (max-width: 850px) {
   .monitoring-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .monitoring-summary-card,
+  .monitoring-summary-card:nth-child(n + 5) {
+    grid-column: auto;
+  }
+  .monitoring-summary-card[data-metric="disk.percent"] {
+    grid-column: 1 / -1;
+  }
   .monitoring-filters {
     padding: var(--space-2);
   }
 }
 @media (max-width: 560px) {
-  .monitoring-summary-card {
-    display: flex;
-    flex-direction: column;
+  .monitoring-device-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .monitoring-device-filters label:first-child {
+    grid-column: 1 / -1;
   }
   .ring-chart {
     width: 124px;
     height: 124px;
-  }
-  .monitoring-summary-card .ring-chart-center strong {
-    font-size: var(--font-size-lg);
-  }
-}
-@media (min-width: 1700px) {
-  .monitoring-summary-grid {
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-  }
-  .monitoring-summary-card {
-    display: flex;
-    flex-direction: column;
   }
 }
 :root {
@@ -1511,6 +1546,45 @@ svg {
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
+.node-detail-summary,
+.node-detail-fields {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.node-detail-summary {
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+.node-detail-fields {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.node-detail-fields > div {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.node-detail-fields dt {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.node-detail-fields dd {
+  min-width: 0;
+  margin: 0;
+}
+.node-detail-summary .node-labels {
+  margin-top: 0;
+}
+.node-detail-summary > p {
+  flex-basis: 100%;
+  margin: 0;
+}
 .back-link {
   display: inline-flex;
   align-items: center;
@@ -2512,13 +2586,6 @@ fieldset {
 .monitoring-state-legend [data-tone="warning"] { border-color: var(--warning); }
 .monitoring-raw-details > summary { padding: var(--space-3); cursor: pointer; }
 .monitoring-raw-details[open] { display: grid; gap: var(--space-3); }
-@media (min-width: 1101px) {
-  .monitoring-summary-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
-  .monitoring-summary-card { display: flex; flex-direction: column; align-items: stretch; padding: var(--space-2); }
-  .monitoring-summary-card .monitoring-summary-visual { width: 100%; }
-  .monitoring-summary-card .ring-chart { width: 112px; height: 112px; margin: auto; }
-  .monitoring-summary-card .ring-chart-center strong { font-size: var(--font-size-md); }
-}
 @media (max-width: 1100px) {
   .monitoring-dashboard-objects { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .monitoring-dashboard-objects > :first-child { grid-column: 1 / -1; }
@@ -2526,7 +2593,6 @@ fieldset {
 }
 @media (max-width: 560px) {
   .monitoring-dashboard-grid, .monitoring-dashboard-objects, .monitoring-quality-grid { grid-template-columns: minmax(0, 1fr); }
-  .monitoring-summary-grid { grid-template-columns: minmax(0, 1fr); }
   .monitoring-trend { height: 230px; }
 }
 @media (prefers-reduced-motion: reduce) {
