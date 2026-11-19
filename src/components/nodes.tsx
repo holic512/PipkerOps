@@ -3,7 +3,7 @@
  * @project PipkerOps
  * @module node-monitoring-ui
  * @description 集群概览、节点信息与分类编辑、实际指标历史及共用节点表格单元。
- * @logic 统一查询真实 API；详情信息区并排展示接入主机、状态和系统身份；文件夹归属留在编辑弹窗，未采样显示空态。
+ * @logic 总览同步刷新节点与排行；详情集中展示接入与系统信息；文件夹归属留在编辑弹窗，未采样显示空态。
  * @dependencies React, SWR, node services
  * @index_tags nodes, overview, metrics, ui
  * @author holic512
@@ -12,7 +12,10 @@
 import { NativeSelect } from "@/components/ui/native-select";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ClusterMonitoring } from "./cluster-monitoring";
+import {
+  ClusterMonitoring,
+  type ClusterNodeHealth,
+} from "./cluster-monitoring";
 import { useState, type ReactNode } from "react";
 import {
   Server,
@@ -57,13 +60,30 @@ export function Overview() {
     tasks: { status: string; _count: number }[];
     generatedAt: string;
   }>("overview");
+  const monitoring = useQuery<ClusterNodeHealth[]>("nodes.monitoring");
   const o = q.data;
+  const [refreshing, setRefreshing] = useState(false);
   return (
-    <>
+    <div className="cluster-overview">
       <PageTitle title="集群总览">
-        <Button variant="outline" onClick={() => void q.mutate()}>
+        {o && (
+          <time className="cluster-updated-at" dateTime={o.generatedAt}>
+            总览更新于 {date(o.generatedAt)}
+          </time>
+        )}
+        <Button
+          variant="outline"
+          aria-disabled={refreshing}
+          aria-busy={refreshing}
+          onClick={async () => {
+            if (refreshing) return;
+            setRefreshing(true);
+            await Promise.allSettled([q.mutate(), monitoring.mutate()]);
+            setRefreshing(false);
+          }}
+        >
           <RotateCw size={15} />
-          刷新
+          {refreshing ? "刷新中…" : "刷新"}
         </Button>
         <Button asChild>
           <Link href="/nodes">
@@ -83,82 +103,90 @@ export function Overview() {
               label: "节点总数",
               value: o?.total,
               icon: Server,
-              detail: "已登记的集群节点",
             },
             {
               label: "在线节点",
               value: o?.online,
               icon: Activity,
-              detail: "最近 60 秒收到心跳",
             },
             {
               label: "待接入",
               value: o?.pending,
               icon: ShieldCheck,
-              detail: "等待导入接入文件",
             },
             {
               label: "离线 / 吊销",
               value: o?.offline,
               icon: Clock,
-              detail: "检查节点与网络状态",
             },
           ].map((s) => (
-            <section className="summary-cell" key={s.label}>
+            <div className="summary-cell" key={s.label}>
               <div className="summary-label">
                 <span>{s.label}</span>
                 <s.icon size={19} />
               </div>
               <strong>{s.value ?? "—"}</strong>
-              <small>{s.detail}</small>
-            </section>
+            </div>
           ))}
         </div>
-        <ClusterMonitoring />
-        <div className="section-heading">
-          <h2>节点资源</h2>
-          <Link href="/nodes">
-            查看全部
-            <ArrowUpRight size={14} />
-          </Link>
-        </div>
-        <NodeTable nodes={o?.nodes ?? []} />
-        <div className="overview-bottom">
-          <section className="panel">
+        {o?.total === 0 ? (
+          <section className="panel" aria-labelledby="cluster-onboarding-title">
             <div className="panel-header">
-              <h2>执行任务</h2>
-              <Link href="/tasks">任务中心</Link>
-            </div>
-            {o?.tasks.length ? (
-              <div className="task-counts">
-                {o.tasks.map((t) => (
-                  <div key={t.status}>
-                    <Status value={t.status} />
-                    <strong>{t._count}</strong>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="panel-empty">
-                尚未执行任务。从节点详情发起第一次操作。
-              </p>
-            )}
-          </section>
-          <section className="panel">
-            <div className="panel-header">
-              <h2>接入流程</h2>
-              <Link href="/nodes">节点管理</Link>
+              <h2 id="cluster-onboarding-title">接入首个节点</h2>
             </div>
             <ol className="steps">
-              <li>安装并启动 Linux Agent，导出接入文件</li>
-              <li>上传接入文件，测试连接后确认添加节点</li>
-              <li>接收真实采样，统一管理应用和运维任务</li>
+              <li>安装并启动 Linux Agent，导出接入文件。</li>
+              <li>在节点管理中导入接入文件，测试连接后确认添加。</li>
             </ol>
           </section>
-        </div>
-        <p className="data-stamp">数据更新于 {date(o?.generatedAt)}</p>
+        ) : (
+          <>
+            <ClusterMonitoring monitoring={monitoring} />
+            <section
+              className="panel cluster-overview-section"
+              aria-labelledby="cluster-resources-title"
+            >
+              <div className="panel-header">
+                <h2 id="cluster-resources-title">节点资源快照</h2>
+                <Button variant="link" asChild>
+                  <Link href="/nodes">
+                    查看全部 <ArrowUpRight size={14} />
+                  </Link>
+                </Button>
+              </div>
+              <NodeTable nodes={o?.nodes ?? []} />
+            </section>
+          </>
+        )}
+        <section
+          className="panel cluster-overview-section"
+          aria-labelledby="cluster-tasks-title"
+        >
+          <div className="panel-header">
+            <h2 id="cluster-tasks-title">执行任务</h2>
+            <Button variant="link" asChild>
+              <Link href="/tasks">
+                任务中心 <ArrowUpRight size={14} />
+              </Link>
+            </Button>
+          </div>
+          {o?.tasks.length ? (
+            <dl className="task-counts">
+              {o.tasks.map((t) => (
+                <div key={t.status}>
+                  <dt>
+                    <Status value={t.status} />
+                  </dt>
+                  <dd>{t._count}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="panel-empty">暂无可查看的任务记录。</p>
+          )}
+        </section>
       </QueryState>
-    </>
+    </div>
   );
 }
 function NodeTable({ nodes }: { nodes: NodeData[] }) {
@@ -171,6 +199,7 @@ function NodeTable({ nodes }: { nodes: NodeData[] }) {
       emptyText="通过部署脚本安装并启动 Agent，然后导入接入文件。"
     >
       <DataTable
+        label="节点资源快照"
         headers={[
           "节点 / 主机",
           "连接状态",

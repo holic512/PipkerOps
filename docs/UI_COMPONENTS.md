@@ -21,7 +21,7 @@
 | `dialog` / `DialogOperation`                                                                 | busy、feedback、confirmation、confirm、back                                                                                                                       | useOperation(..., true) 可直接作为 BusinessDialog.operation                                                                |
 | `tabs` / `Tabs, TabsList, TabsTrigger, TabsContent`                                          | Radix 对应 props；value/onValueChange，Trigger/Content 的 value 必须配对                                                                                          | 复杂标签布局，Radix 提供方向键、Home/End、tablist/tab/tabpanel 关联                                                        |
 | `tabs` / `ViewTabs`                                                                          | value、onValueChange、label、items: {value,label}[]、children                                                                                                     | 普通业务视图；仅当前内容挂载，切换时沿用现有条件渲染；多终端分屏/跨页保活另见 RemoteWorkspace                              |
-| `popover` / `Popover, PopoverTrigger, PopoverContent`                                        | Radix Root/Trigger/Content props；Trigger asChild；Content 默认 align=start、sideOffset=5，自动 Portal                                                            | 含复选框/输入的筛选面板；自动 Escape、外部点击关闭、焦点恢复。必须提供可访问名称；不用于危险确认                           |
+| `popover` / `Popover, PopoverTrigger, PopoverContent`                                        | Radix Root/Trigger/Content props；Trigger asChild；Content 默认 align=start、sideOffset=5，自动 Portal                                                            | 轻量筛选或短明细；自动 Escape、外部点击关闭、焦点恢复。必须提供可访问名称；不用于危险确认                           |
 | `dropdown-menu` / `DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem` | Radix props；Root 默认 modal=false，行操作不隐藏整个工作区；Content 默认 align=end、sideOffset=5；Item 增加 destructive；动作使用 onSelect，支持 asChild/disabled | 操作菜单和链接菜单；统一键盘、焦点和关闭。含表单的筛选用 Popover，不能把菜单项当任意表单容器                               |
 
 Input / Textarea / NativeSelect 是项目按 shadcn 本地源码方式维护的薄封装；Checkbox 为保留既有浏览器契约的本地控件。不要声称它们是某版 CLI 原样生成的产物。所有外观复用 tokens 与 globals.css，不额外维护 Tailwind 默认色板。
@@ -121,6 +121,6 @@ NodeMonitoring 在各分类上方组合 DataTable 展示采集诊断：当前状
 
 `monitoring-explorer.ts` 维护筛选和准确设备历史目标。容器的异常判定与集群总览复用 `assessContainer`；累计重启保留在独立列，近 5 分钟窗口不完整时显示已知下界或无法确认，过期的判定标注上次采样。NodeMonitoring/NumericHistory 可接收受控 historySelection/selection 与更新回调；节点详情持有时间范围、指标及历史设备，兼容指标之间切换保留设备，跨类别清理无效设备。查看历史定位并聚焦页面下方历史区域，不改动设备筛选；采样缺口和单位继续由现有 ResourceChart 处理。
 
-`@/components/cluster-monitoring` 的 ClusterMonitoring 用于集群总览，读取 nodes.monitoring 的授权紧凑投影，组合 Input、NativeSelect、DataTable、QueryState 和链接 Button。支持节点/标签/异常搜索、状态筛选、资源降序排行；无法确认的指标保留空值。节点详情接受经过白名单校验的 monitor 查询参数及纯文本 context，展示来源上下文并打开对应分类。
+集群总览同时读取 `overview` 与 `nodes.monitoring`，手动刷新两者。`@/components/cluster-monitoring` 的 ClusterMonitoring 组合 Input、NativeSelect、DataTable、QueryState、Popover 和链接 Button。百分比统一展示一位小数，排序仍用原始数值、缺失置后；无采样、待确认、覆盖不完整与有效零值分别展示。异常原因按需展开，节点名称带 `monitor` 和纯文本 `context` 定位详情；节点详情校验目标分类白名单。
 
 监控状态追加约定：进程/网卡的 fieldErrors 用于显示实际字段失败原因；缺基线与其他对象失败隔离。实时概览按使用率 ≥85%、归一化负载 ≥100% 提示偏高。集群长期无采样按实时资源采样判断，CPU/内存排行进入实时概览；持久快照来源与是否过期分别展示，不将缓存回退本身当成指标过期。
